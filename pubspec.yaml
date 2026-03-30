@@ -1,0 +1,81 @@
+name: moneytracking
+description: "Application de gestion et d'automatisation de transactions Mobile Money"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Base de données
+  sqflite: ^2.4.2
+  path: ^1.9.1
+
+  # SMS & Téléphonie
+  another_telephony: ^0.3.0
+
+  # USSD
+  url_launcher: ^6.3.1
+
+  # Sécurité
+  local_auth: ^2.3.0
+  flutter_secure_storage: ^9.2.4
+
+  # UI & Thème
+  fl_chart: ^0.70.2
+  shared_preferences: ^2.3.5
+
+  # Notifications locales
+  flutter_local_notifications: ^18.0.1
+
+  # Utilitaires
+  intl: ^0.20.2
+  uuid: ^4.5.1
+  permission_handler: ^11.4.0
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Navigation
+  go_router: ^14.8.1
+
+  # Crypto (hash PIN)
+  crypto: ^3.0.6
+
+  # Export PDF / CSV
+  pdf: ^3.11.1
+  printing: ^5.13.3
+  csv: ^6.0.0
+  share_plus: ^10.1.4
+
+  # Sauvegarde / Restauration
+  path_provider: ^2.1.5
+  file_picker: ^8.1.7
+
+  # Encryption pour backup
+  encrypt: ^5.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon.png"
+  adaptive_icon_background: "#1565C0"
+  adaptive_icon_foreground: "assets/icon.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png
+    - assets/icon.png
