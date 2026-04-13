@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../database/database_helper.dart';
 import '../database/transaction_repository.dart';
 import '../notifications/notification_service.dart';
+import '../licence/licence_storage.dart';
 import 'sms_field_extractor.dart';
 
 /// Provider pour l'état du service SMS
@@ -157,7 +158,27 @@ class SmsListenerService {
     final operatorId = op['id'] as String;
     final operatorName = op['name'] as String;
 
-    // 4. Extraire les champs
+    // 4. Vérifier si le SMS correspond aux patterns de cet opérateur
+    final patterns = await db.query('sms_patterns',
+        where: 'operator_id = ?', whereArgs: [operatorId]);
+
+    final depositPatterns = patterns.where((p) => p['transaction_type'] == 'deposit').toList();
+    final withdrawalPatterns = patterns.where((p) => p['transaction_type'] == 'withdrawal').toList();
+
+    String? transactionType;
+    if (_matchesPattern(body, depositPatterns)) {
+      transactionType = 'deposit';
+    } else if (_matchesPattern(body, withdrawalPatterns)) {
+      transactionType = 'withdrawal';
+    }
+
+    // Si aucun pattern matché → ce n'est PAS une transaction, ignorer
+    if (transactionType == null) {
+      debugPrint('[SMS] Aucun pattern matché — pas une transaction, ignoré');
+      return;
+    }
+
+    // 5. Extraire les champs
     final extracted = SmsFieldExtractor.extractAll(body);
     if (!extracted.containsKey('montant')) {
       debugPrint('[SMS] Pas de montant détecté');
@@ -167,9 +188,6 @@ class SmsListenerService {
     final amount = SmsFieldExtractor.parseMontant(extracted['montant']);
     final clientPhone = SmsFieldExtractor.cleanPhone(extracted['numero_client']);
     if (amount == null || amount <= 0) return;
-
-    final transactionType = SmsFieldExtractor.detectTransactionType(body);
-    if (transactionType == null) return;
 
     // 5. Commission
     final tauxDep = (op['taux_commission_depot'] as num?)?.toDouble() ?? 0;
@@ -191,7 +209,26 @@ class SmsListenerService {
       }
     }
 
-    // 7. Créer la transaction (TOUJOURS — c'est le SMS qui crée)
+    // 7. Vérifier licence avant de créer la transaction
+    final licenceStatut = await LicenceStorage.verifierLocalement();
+    final peutCreer = licenceStatut == LicenceStatut.active ||
+        licenceStatut == LicenceStatut.essaiActif ||
+        licenceStatut == LicenceStatut.expireBientot;
+
+    if (!peutCreer) {
+      // SMS enregistré mais pas de transaction
+      debugPrint('[SMS] Licence inactive — SMS enregistré sans transaction');
+      await NotificationService().showPendingTransactionNotification(
+        transactionId: smsId,
+        type: transactionType,
+        amount: amount,
+        clientPhone: clientPhone ?? '',
+        operatorName: 'Licence requise',
+      );
+      return;
+    }
+
+    // Créer la transaction (licence active)
     final txId = _uuid.v4();
     final txData = {
       'id': txId,
@@ -240,5 +277,34 @@ class SmsListenerService {
 
     onTransactionDetected?.call({...txData, 'operator_name': operatorName});
     debugPrint('[SMS] ✅ $typeLabel ${amount.toInt()} FCFA — ${clientPhone ?? "?"} ($operatorName)');
+  }
+
+  /// Teste si un SMS matche les patterns configurés d'un opérateur
+  bool _matchesPattern(String body, List<Map<String, dynamic>> patterns) {
+    final bodyLower = body.toLowerCase();
+    for (final p in patterns) {
+      // 1. Regex généré
+      final regexStr = p['regex_generated'] as String?;
+      if (regexStr != null && regexStr.isNotEmpty) {
+        try {
+          if (RegExp(regexStr, caseSensitive: false).hasMatch(body)) return true;
+        } catch (_) {}
+      }
+      // 2. Comparaison structurelle avec l'exemple
+      final rawExample = (p['raw_example'] as String?) ?? '';
+      if (rawExample.length > 20) {
+        final discriminants = [
+          'vous avez transfere', 'vous avez envoye', 'depot de', 'transfert de',
+          'envoye a', 'transfere a', 'vous avez recu', 'retrait de',
+          'a retire', 'received from', 'vous a envoye', 'credit de',
+        ];
+        for (final d in discriminants) {
+          if (rawExample.toLowerCase().contains(d) && bodyLower.contains(d)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 }

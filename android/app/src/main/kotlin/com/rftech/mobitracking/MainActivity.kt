@@ -2,6 +2,7 @@ package com.rftech.mobitracking
 
 import android.content.Intent
 import android.content.IntentFilter
+import android.database.Cursor
 import android.net.Uri
 import android.provider.Telephony
 import androidx.annotation.NonNull
@@ -14,6 +15,7 @@ class MainActivity : FlutterActivity() {
 
     private val USSD_CHANNEL = "com.rftech.moneytracking/ussd"
     private val SMS_EVENT_CHANNEL = "com.rftech.moneytracking/sms"
+    private val SMS_INBOX_CHANNEL = "com.rftech.moneytracking/sms_inbox"
 
     private var smsReceiver: SmsReceiver? = null
     private var eventSink: EventChannel.EventSink? = null
@@ -34,6 +36,30 @@ class MainActivity : FlutterActivity() {
                     } else {
                         result.error("INVALID_CODE", "Code USSD null", null)
                     }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // === MethodChannel pour lire les SMS inbox (import historique) ===
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SMS_INBOX_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getInboxSms" -> {
+                    val dateFrom = call.argument<Long>("dateFrom") ?: 0L
+                    val dateTo = call.argument<Long>("dateTo") ?: System.currentTimeMillis()
+                    Thread {
+                        try {
+                            val smsList = readInboxSms(dateFrom, dateTo)
+                            runOnUiThread { result.success(smsList) }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                result.error("SMS_READ_ERROR", e.message, null)
+                            }
+                        }
+                    }.start()
                 }
                 else -> result.notImplemented()
             }
@@ -92,6 +118,44 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             result.error("USSD_ERROR", e.message, null)
         }
+    }
+
+    private fun readInboxSms(dateFrom: Long, dateTo: Long): List<Map<String, Any>> {
+        val smsList = mutableListOf<Map<String, Any>>()
+        val uri = Uri.parse("content://sms/inbox")
+        val projection = arrayOf("address", "body", "date")
+        val selection = "date >= ? AND date <= ?"
+        val selectionArgs = arrayOf(dateFrom.toString(), dateTo.toString())
+        val sortOrder = "date ASC"
+
+        var cursor: Cursor? = null
+        try {
+            cursor = contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+            if (cursor != null && cursor.moveToFirst()) {
+                val addressIdx = cursor.getColumnIndexOrThrow("address")
+                val bodyIdx = cursor.getColumnIndexOrThrow("body")
+                val dateIdx = cursor.getColumnIndexOrThrow("date")
+
+                do {
+                    val address = cursor.getString(addressIdx) ?: ""
+                    val body = cursor.getString(bodyIdx) ?: ""
+                    val date = cursor.getLong(dateIdx)
+
+                    if (body.isNotEmpty()) {
+                        smsList.add(mapOf(
+                            "address" to address,
+                            "body" to body,
+                            "date" to date
+                        ))
+                    }
+                } while (cursor.moveToNext())
+            }
+        } finally {
+            cursor?.close()
+        }
+
+        android.util.Log.d("MainActivity", "SMS Inbox: ${smsList.size} messages lus (${dateFrom} -> ${dateTo})")
+        return smsList
     }
 
     override fun onDestroy() {

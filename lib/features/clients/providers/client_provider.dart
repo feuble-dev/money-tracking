@@ -98,10 +98,31 @@ class ClientsNotifier extends StateNotifier<AsyncValue<List<ClientModel>>> {
     }
   }
 
-  Future<void> addClient(ClientModel client) async {
+  Future<ClientModel> addClient(ClientModel client) async {
     final db = await DatabaseHelper.instance.database;
+    // Vérifier si un client existe déjà avec ce numéro
+    final existing = await db.query('clients',
+        where: 'phone_number = ?',
+        whereArgs: [client.phoneNumber],
+        limit: 1);
+    if (existing.isNotEmpty) {
+      // Mettre à jour le client existant avec les nouvelles infos
+      final existingClient = ClientModel.fromMap(existing.first);
+      final updated = existingClient.copyWith(
+        firstName: client.firstName.isNotEmpty ? client.firstName : null,
+        lastName: client.lastName.isNotEmpty ? client.lastName : null,
+        cnibNumber: client.cnibNumber,
+        birthDate: client.birthDate,
+        operatorId: client.operatorId ?? existingClient.operatorId,
+      );
+      await db.update('clients', updated.toMap(),
+          where: 'id = ?', whereArgs: [existingClient.id]);
+      await loadClients();
+      return updated;
+    }
     await db.insert('clients', client.toMap());
     await loadClients();
+    return client;
   }
 
   Future<void> updateClient(ClientModel client) async {

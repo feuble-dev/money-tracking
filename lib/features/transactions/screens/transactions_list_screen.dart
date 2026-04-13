@@ -56,6 +56,11 @@ class _TransactionsListScreenState
               tooltip: '$pendingCount en attente',
             ),
           IconButton(
+            icon: const Icon(Icons.cancel_outlined),
+            tooltip: 'Transactions annulées',
+            onPressed: () => context.push('/transactions/cancelled'),
+          ),
+          IconButton(
             icon: const Icon(Icons.filter_list),
             onPressed: () => _showFilterSheet(context, ref, filter),
           ),
@@ -524,19 +529,24 @@ class _TransactionCard extends StatelessWidget {
                           style: TextStyle(
                               fontWeight: FontWeight.w600, color: color),
                         ),
-                        if (transaction.source == 'sms_auto') ...[
+                        if (transaction.source == 'sms_auto' || transaction.source == 'sms_import') ...[
                           const SizedBox(width: 6),
                           Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
-                              color: AppColors.accentColor.withAlpha(30),
+                              color: transaction.source == 'sms_import'
+                                  ? Colors.indigo.withAlpha(30)
+                                  : AppColors.accentColor.withAlpha(30),
                               borderRadius: BorderRadius.circular(4),
                             ),
-                            child: const Text('SMS',
+                            child: Text(
+                                transaction.source == 'sms_import' ? 'Import' : 'SMS',
                                 style: TextStyle(
                                     fontSize: 10,
-                                    color: AppColors.accentColor,
+                                    color: transaction.source == 'sms_import'
+                                        ? Colors.indigo
+                                        : AppColors.accentColor,
                                     fontWeight: FontWeight.w600)),
                           ),
                         ],
@@ -619,7 +629,9 @@ class _TransactionCard extends StatelessWidget {
                   _buildRow('Opérateur', transaction.operatorName ?? '-'),
                   _buildRow('Date', dateFormat.format(transaction.createdAt)),
                   _buildRow('Source',
-                      transaction.source == 'sms_auto' ? 'SMS Auto' : 'Manuel'),
+                      transaction.source == 'sms_auto' ? 'SMS Auto'
+                          : transaction.source == 'sms_import' ? 'Import SMS'
+                          : 'Manuel'),
                   if (transaction.commission > 0)
                     _buildRow('Commission',
                         currencyFormat.format(transaction.commission)),
@@ -650,6 +662,22 @@ class _TransactionCard extends StatelessWidget {
                     ),
                   ],
                   const SizedBox(height: 16),
+                  // Bouton modifier
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx2);
+                        context.push('/transactions/pending/${transaction.id}');
+                      },
+                      icon: const Icon(Icons.edit, size: 18),
+                      label: const Text('Modifier les infos'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryColor,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             );

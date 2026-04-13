@@ -40,10 +40,15 @@ class _ClientsListScreenState extends ConsumerState<ClientsListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.menu),
-          onPressed: () => mainScaffoldKey.currentState?.openDrawer(),
-        ),
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              )
+            : IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => mainScaffoldKey.currentState?.openDrawer(),
+              ),
         title: const Text('Clients'),
         actions: [
           IconButton(

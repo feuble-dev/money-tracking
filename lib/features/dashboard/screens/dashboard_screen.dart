@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/sms/sms_listener.dart';
+import '../../notifications/screens/notifications_screen.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets/main_shell.dart';
 import '../../operators/providers/operator_provider.dart';
@@ -84,10 +85,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   );
                 }),
               ),
-              IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                onPressed: () => context.push('/notifications'),
-              ),
+              Consumer(builder: (_, ref, _) {
+                final count = ref.watch(pendingNotifCountProvider);
+                return IconButton(
+                  icon: Badge(
+                    isLabelVisible: count > 0,
+                    label: Text(count.toString()),
+                    backgroundColor: AppColors.accentColor,
+                    child: const Icon(Icons.notifications_outlined),
+                  ),
+                  onPressed: () => context.push('/notifications'),
+                );
+              }),
               IconButton(
                 icon: const Icon(Icons.settings),
                 onPressed: () => context.push('/settings'),

@@ -42,21 +42,28 @@ class BarChartWidget extends StatelessWidget {
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
+              reservedSize: 30,
+              interval: displayData.length <= 7 ? 1
+                  : displayData.length <= 14 ? 2
+                  : displayData.length <= 30 ? 5
+                  : (displayData.length / 6).ceilToDouble(),
               getTitlesWidget: (value, meta) {
                 final index = value.toInt();
-                if (index >= 0 && index < displayData.length) {
-                  final date = displayData[index]['date'] as DateTime;
-                  final text = displayData.length <= 7
-                      ? dayFormat.format(date)
-                      : dateFormat.format(date);
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(text, style: const TextStyle(fontSize: 10)),
-                  );
+                if (index < 0 || index >= displayData.length) {
+                  return const SizedBox.shrink();
                 }
-                return const SizedBox.shrink();
+                final date = displayData[index]['date'] as DateTime;
+                final text = displayData.length <= 7
+                    ? dayFormat.format(date)
+                    : dateFormat.format(date);
+                return SideTitleWidget(
+                  meta: meta,
+                  child: Transform.rotate(
+                    angle: displayData.length > 10 ? -0.5 : 0,
+                    child: Text(text, style: const TextStyle(fontSize: 9)),
+                  ),
+                );
               },
-              interval: displayData.length > 10 ? 2 : 1,
             ),
           ),
           leftTitles: AxisTitles(

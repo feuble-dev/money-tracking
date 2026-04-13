@@ -26,73 +26,56 @@ class RatioChartWidget extends StatelessWidget {
     final currencyFormat = NumberFormat.currency(
         locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
 
-    return Row(
-      children: [
-        // Donut chart
-        Expanded(
-          flex: 2,
-          child: PieChart(
-            PieChartData(
-              sectionsSpace: 3,
-              centerSpaceRadius: 35,
-              sections: [
-                PieChartSectionData(
-                  color: AppColors.depositColor,
-                  value: deposits,
-                  title: '${depPercent.toStringAsFixed(0)}%',
-                  titleStyle: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 110,
+            child: PieChart(
+              PieChartData(
+                sectionsSpace: 3,
+                centerSpaceRadius: 22,
+                sections: [
+                  PieChartSectionData(
+                    color: AppColors.depositColor,
+                    value: deposits,
+                    title: '${depPercent.toStringAsFixed(0)}%',
+                    titleStyle: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11,
+                    ),
+                    radius: 32,
+                    titlePositionPercentageOffset: 0.55,
                   ),
-                  radius: 45,
-                ),
-                PieChartSectionData(
-                  color: AppColors.withdrawColor,
-                  value: withdrawals,
-                  title: '${witPercent.toStringAsFixed(0)}%',
-                  titleStyle: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                  PieChartSectionData(
+                    color: AppColors.withdrawColor,
+                    value: withdrawals,
+                    title: '${witPercent.toStringAsFixed(0)}%',
+                    titleStyle: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11,
+                    ),
+                    radius: 32,
+                    titlePositionPercentageOffset: 0.55,
                   ),
-                  radius: 45,
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        // Légende
-        Expanded(
-          flex: 3,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _legendRow(
-                'Dépôts',
-                AppColors.depositColor,
-                currencyFormat.format(deposits),
-                '${depPercent.toStringAsFixed(1)}%',
-              ),
-              const SizedBox(height: 12),
-              _legendRow(
-                'Retraits',
-                AppColors.withdrawColor,
-                currencyFormat.format(withdrawals),
-                '${witPercent.toStringAsFixed(1)}%',
-              ),
-              const SizedBox(height: 12),
-              const Divider(height: 1),
-              const SizedBox(height: 8),
-              Text(
-                'Volume total: ${currencyFormat.format(total)}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-            ],
+          const SizedBox(height: 8),
+          _legendRow('Dépôts', AppColors.depositColor,
+              currencyFormat.format(deposits), '${depPercent.toStringAsFixed(1)}%'),
+          const SizedBox(height: 4),
+          _legendRow('Retraits', AppColors.withdrawColor,
+              currencyFormat.format(withdrawals), '${witPercent.toStringAsFixed(1)}%'),
+          const SizedBox(height: 6),
+          const Divider(height: 1),
+          const SizedBox(height: 4),
+          Text(
+            'Volume: ${currencyFormat.format(total)}',
+            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

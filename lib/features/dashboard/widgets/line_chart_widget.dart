@@ -14,6 +14,13 @@ class LineChartWidget extends StatelessWidget {
     this.showBothLines = true,
   });
 
+  double _calcInterval() {
+    if (data.length <= 7) return 1;
+    if (data.length <= 14) return 2;
+    if (data.length <= 30) return 5;
+    return (data.length / 6).ceilToDouble();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (data.isEmpty) {
@@ -53,19 +60,24 @@ class LineChartWidget extends StatelessWidget {
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              interval: data.length > 14 ? (data.length / 5).ceilToDouble() : 1,
+              reservedSize: 28,
+              interval: _calcInterval(),
               getTitlesWidget: (value, meta) {
                 final index = value.toInt();
-                if (index >= 0 && index < data.length) {
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      DateFormat('dd/MM').format(data[index]['date'] as DateTime),
-                      style: const TextStyle(fontSize: 10),
-                    ),
-                  );
+                if (index < 0 || index >= data.length) {
+                  return const SizedBox.shrink();
                 }
-                return const SizedBox.shrink();
+                final date = data[index]['date'] as DateTime;
+                return SideTitleWidget(
+                  meta: meta,
+                  child: Transform.rotate(
+                    angle: data.length > 10 ? -0.5 : 0,
+                    child: Text(
+                      DateFormat('dd/MM').format(date),
+                      style: const TextStyle(fontSize: 9),
+                    ),
+                  ),
+                );
               },
             ),
           ),

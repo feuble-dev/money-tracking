@@ -131,4 +131,27 @@ class NotificationService {
       payload: transactionId,
     );
   }
+
+  /// Notification générale (envoyée par l'admin)
+  Future<void> showGeneralNotification({
+    required int id,
+    required String titre,
+    required String message,
+  }) async {
+    await _plugin.show(
+      id + 100000, // offset pour éviter collision avec les IDs transaction
+      titre,
+      message,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'mobitracking_general',
+          'Notifications générales',
+          channelDescription: 'Notifications envoyées par l\'administrateur',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+      ),
+    );
+  }
 }

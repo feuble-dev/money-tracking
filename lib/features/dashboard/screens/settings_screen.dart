@@ -1,8 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_notifier.dart';
+
+/// Provider pour le device ID
+final deviceIdProvider = FutureProvider<String>((ref) async {
+  final info = DeviceInfoPlugin();
+  final android = await info.androidInfo;
+  return android.id;
+});
 
 /// Écran des paramètres (accessible via l'icône engrenage dans l'AppBar)
 class SettingsScreen extends ConsumerWidget {
@@ -122,6 +131,40 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
 
+          // === Import Historique ===
+          _sectionTitle(context, 'Import'),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.history, color: AppColors.accentColor),
+                  title: const Text('Import Historique SMS'),
+                  subtitle: const Text('Importer les anciens SMS'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/historique/import'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // === Licence ===
+          _sectionTitle(context, 'Licence'),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.vpn_key, color: AppColors.primaryColor),
+                  title: const Text('Ma Licence'),
+                  subtitle: const Text('Statut et renouvellement'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/licence/statut'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
           // === À propos ===
           _sectionTitle(context, 'À propos'),
           Card(
@@ -165,6 +208,38 @@ class SettingsScreen extends ConsumerWidget {
                           fontSize: 11,
                         ),
                   ),
+                  const SizedBox(height: 8),
+                  Consumer(builder: (context, ref, _) {
+                    final deviceId = ref.watch(deviceIdProvider);
+                    return deviceId.when(
+                      data: (id) => InkWell(
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: id));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Device ID copié')),
+                          );
+                        },
+                        child: Row(
+                          children: [
+                            const Icon(Icons.smartphone, size: 14, color: Colors.grey),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Device ID: $id',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontSize: 10,
+                                      fontFamily: 'monospace',
+                                    ),
+                              ),
+                            ),
+                            const Icon(Icons.copy, size: 12, color: Colors.grey),
+                          ],
+                        ),
+                      ),
+                      loading: () => const SizedBox.shrink(),
+                      error: (_, _) => const SizedBox.shrink(),
+                    );
+                  }),
                   const SizedBox(height: 4),
                   Text(
                     'FEUBLE-TechBuilder © 2026',

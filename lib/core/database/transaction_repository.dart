@@ -56,6 +56,43 @@ class TransactionRepository {
         where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Annule une transaction confirmée (completed → cancelled)
+  Future<void> cancel(String id) async {
+    final db = await DatabaseHelper.instance.database;
+    final tx = await db.query('transactions', where: 'id = ?', whereArgs: [id]);
+    await db.update('transactions', {'status': 'cancelled'},
+        where: 'id = ?', whereArgs: [id]);
+    // Rafraîchir le cache car la transaction sort des completed
+    if (tx.isNotEmpty) {
+      await _refreshCache(db, tx.first['operator_id'] as String,
+          DateTime.parse(tx.first['created_at'] as String));
+    }
+  }
+
+  /// Revalide une transaction annulée (cancelled/rejected → completed)
+  Future<void> revalidate(String id, {Map<String, dynamic>? updates}) async {
+    final db = await DatabaseHelper.instance.database;
+    final data = {'status': 'completed', ...?updates};
+    await db.update('transactions', data, where: 'id = ?', whereArgs: [id]);
+    final tx = await db.query('transactions', where: 'id = ?', whereArgs: [id]);
+    if (tx.isNotEmpty) {
+      await _refreshCache(db, tx.first['operator_id'] as String,
+          DateTime.parse(tx.first['created_at'] as String));
+    }
+  }
+
+  /// Récupère les transactions annulées
+  Future<List<Map<String, dynamic>>> getCancelled() async {
+    final db = await DatabaseHelper.instance.database;
+    return db.rawQuery('''
+      SELECT t.*, o.name as operator_name
+      FROM transactions t
+      LEFT JOIN operators o ON t.operator_id = o.id
+      WHERE t.status IN ('cancelled', 'rejected')
+      ORDER BY t.created_at DESC
+    ''');
+  }
+
   /// Récupère les résumés quotidiens depuis le cache (ultra rapide)
   Future<List<Map<String, dynamic>>> getDailySummaries({
     required String startDate,

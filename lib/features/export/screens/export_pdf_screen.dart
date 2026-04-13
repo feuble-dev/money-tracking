@@ -126,7 +126,7 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
             pw.TableHelper.fromTextArray(
               headers: [
                 'Date', 'Type', 'Montant', 'Commission',
-                'Client', 'Téléphone', 'CNIB',
+                'Client', 'Téléphone', 'CNIB', 'Naissance',
                 'Opérateur', 'Source', 'ID Transaction',
               ],
               data: transactions.map((tx) {
@@ -143,6 +143,7 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
                   (tx['client_phone'] as String?) ?? '',
                   (tx['client_cnib'] as String?) ??
                       (tx['client_cnib_num'] as String?) ?? '',
+                  (tx['client_birth_date'] as String?) ?? '',
                   (tx['operator_name'] as String?) ?? '',
                   tx['source'] == 'sms_auto' ? 'SMS' : 'Manuel',
                   (tx['operator_transaction_id'] as String?) ?? '',

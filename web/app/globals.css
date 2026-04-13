@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply text-dark antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .gradient-hero {
+    background: linear-gradient(135deg, #0D47A1 0%, #1565C0 40%, #1E88E5 70%, #42A5F5 100%);
+  }
+  .gradient-text {
+    background: linear-gradient(135deg, #1565C0, #42A5F5);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .glass-card {
+    @apply bg-white/80 backdrop-blur-lg border border-white/20 shadow-xl;
+  }
+  .glow-blue {
+    box-shadow: 0 0 40px rgba(21, 101, 192, 0.15), 0 10px 40px rgba(21, 101, 192, 0.1);
+  }
+  .glow-orange {
+    box-shadow: 0 0 40px rgba(255, 107, 53, 0.15), 0 10px 40px rgba(255, 107, 53, 0.1);
+  }
+  .card-hover {
+    @apply transition-all duration-300;
+  }
+  .card-hover:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+  }
+  .shimmer {
+    background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.4) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .float-animation {
+    animation: float 6s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-20px); }
+  }
+  .pulse-dot {
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.5); }
+  }
+}

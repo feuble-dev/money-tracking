@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/licence/licence_storage.dart';
 import '../../core/theme/app_colors.dart';
 import '../../features/transactions/providers/transaction_provider.dart';
 import 'app_drawer.dart';
@@ -22,7 +23,63 @@ class MainShell extends ConsumerWidget {
     return Scaffold(
       key: mainScaffoldKey,
       drawer: const AppDrawer(),
-      body: navigationShell,
+      body: Column(
+        children: [
+          // Bannière licence expiration
+          FutureBuilder<int>(
+            future: LicenceStorage.getJoursRestants(),
+            builder: (context, snapshot) {
+              final jours = snapshot.data ?? 999;
+              if (jours > 7) return const SizedBox.shrink();
+
+              return Container(
+                width: double.infinity,
+                color: jours > 0
+                    ? Colors.orange.shade700
+                    : Colors.red.shade700,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 8,
+                  horizontal: 16,
+                ),
+                child: SafeArea(
+                  bottom: false,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning,
+                          color: Colors.white, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          jours > 0
+                              ? 'Licence expire dans $jours jours'
+                              : 'Licence expirée',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => context.push('/licence/statut'),
+                        child: const Text(
+                          'Renouveler',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+          // Contenu principal
+          Expanded(child: navigationShell),
+        ],
+      ),
       floatingActionButton: pendingCount > 0 && navigationShell.currentIndex == 0
           ? FloatingActionButton.extended(
               heroTag: 'pending_fab',

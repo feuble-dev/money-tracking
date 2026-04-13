@@ -97,12 +97,28 @@ final commissionsStatsProvider =
   };
 });
 
-/// Écran Commissions
-class CommissionsScreen extends ConsumerWidget {
+/// Écran Commissions avec filtre opérateur
+class CommissionsScreen extends ConsumerStatefulWidget {
   const CommissionsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CommissionsScreen> createState() => _CommissionsScreenState();
+}
+
+class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
+  String? _selectedOperatorId;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-refresh à chaque ouverture
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.invalidate(commissionsStatsProvider);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final statsAsync = ref.watch(commissionsStatsProvider);
     final currFmt =
         NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
@@ -115,6 +131,10 @@ class CommissionsScreen extends ConsumerWidget {
         ),
         title: const Text('Commissions'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => ref.invalidate(commissionsStatsProvider),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 4),
             child: Consumer(builder: (_, ref, _) {
@@ -199,13 +219,42 @@ class CommissionsScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 24),
 
-                // Par opérateur
+                // Filtre opérateur
                 Text('Par opérateur',
                     style: Theme.of(context).textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 38,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: FilterChip(
+                          label: const Text('Tous', style: TextStyle(fontSize: 12)),
+                          selected: _selectedOperatorId == null,
+                          onSelected: (_) => setState(() => _selectedOperatorId = null),
+                          selectedColor: AppColors.primaryColor.withAlpha(30),
+                        ),
+                      ),
+                      ...perOperator.map((op) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: FilterChip(
+                          label: Text(op['name'] as String, style: const TextStyle(fontSize: 12)),
+                          selected: _selectedOperatorId == op['id'],
+                          onSelected: (_) => setState(() => _selectedOperatorId = op['id'] as String),
+                          selectedColor: AppColors.primaryColor.withAlpha(30),
+                        ),
+                      )),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 12),
 
-                ...perOperator.map((op) {
+                ...perOperator.where((op) =>
+                    _selectedOperatorId == null || op['id'] == _selectedOperatorId
+                ).map((op) {
                   final opId = op['id'] as String;
                   final name = op['name'] as String;
                   final opComm = (op['total_commission'] as num).toDouble();

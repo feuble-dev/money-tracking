@@ -48,6 +48,11 @@ dependencies:
   # Crypto (hash PIN)
   crypto: ^3.0.6
 
+  # Licence system
+  device_info_plus: ^9.0.0
+  http: ^1.1.0
+  connectivity_plus: ^5.0.0
+
   # Export PDF / CSV
   pdf: ^3.11.1
   printing: ^5.13.3

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 import '../models/client_model.dart';
 import '../providers/client_provider.dart';
+import '../../../core/licence/licence_guard.dart';
 
 /// Écran d'ajout/modification de client
 class ClientFormScreen extends ConsumerStatefulWidget {
@@ -51,6 +52,11 @@ class _ClientFormScreenState extends ConsumerState<ClientFormScreen> {
   }
 
   Future<void> _saveClient() async {
+    final action = _existingClient != null
+        ? ActionType.modifierClient
+        : ActionType.ajouterClient;
+    final autorise = await LicenceGuard.verifier(context, action);
+    if (!autorise || !mounted) return;
     if (!_formKey.currentState!.validate()) return;
 
     final client = ClientModel(

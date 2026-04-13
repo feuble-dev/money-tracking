@@ -25,8 +25,12 @@ import '../features/operators/screens/sms_config_screen.dart';
 import '../features/transactions/screens/new_transaction_screen.dart';
 import '../features/transactions/screens/pending_list_screen.dart';
 import '../features/transactions/screens/pending_transaction_screen.dart';
+import '../features/transactions/screens/cancelled_transactions_screen.dart';
 import '../features/transactions/screens/transactions_list_screen.dart';
 import '../shared/widgets/main_shell.dart';
+import 'historique/screens/import_historique_screen.dart';
+import 'licence/screens/activation_screen.dart';
+import 'licence/screens/licence_status_screen.dart';
 
 /// Clé de navigation globale
 final rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -169,6 +173,10 @@ final routerProvider = Provider<GoRouter>((ref) {
               transactionId: state.pathParameters['id']!);
         },
       ),
+      GoRoute(
+        path: '/transactions/cancelled',
+        builder: (context, state) => const CancelledTransactionsScreen(),
+      ),
 
       // Opérateurs
       GoRoute(
@@ -221,6 +229,20 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/security/lock-timeout',
         builder: (context, state) => const LockTimeoutScreen(),
+      ),
+
+      // Licence
+      GoRoute(
+        path: '/activation',
+        builder: (context, state) => const ActivationScreen(),
+      ),
+      GoRoute(
+        path: '/licence/statut',
+        builder: (context, state) => const LicenceStatusScreen(),
+      ),
+      GoRoute(
+        path: '/historique/import',
+        builder: (context, state) => const ImportHistoriqueScreen(),
       ),
     ],
   );

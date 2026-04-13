@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -160,6 +160,26 @@ class DatabaseHelper {
       )
     ''');
 
+    await db.execute('''
+      CREATE TABLE general_notifications (
+        id INTEGER PRIMARY KEY,
+        titre TEXT NOT NULL,
+        message TEXT NOT NULL,
+        cible TEXT DEFAULT 'all',
+        is_read INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )
+    ''');
+
+    // Vue optimisée transactions + opérateur
+    await db.execute('''
+      CREATE VIEW v_transactions_with_operator AS
+      SELECT t.*, o.name as operator_name
+      FROM transactions t
+      LEFT JOIN operators o ON t.operator_id = o.id
+    ''');
+
     await _createIndexes(db);
   }
 
@@ -184,6 +204,12 @@ class DatabaseHelper {
         'CREATE INDEX IF NOT EXISTS idx_daily_summaries_day ON daily_summaries(day)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sms_messages_processed ON sms_messages(processed, received_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_gen_notif_read ON general_notifications(is_read, created_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_tx_cancelled ON transactions(status) WHERE status IN (\'cancelled\', \'rejected\')');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_tx_source_status ON transactions(source, status, created_at)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -254,6 +280,36 @@ class DatabaseHelper {
       try {
         await db.execute('ALTER TABLE transactions ADD COLUMN sms_id TEXT');
       } catch (_) {}
+    }
+    if (oldVersion < 8) {
+      // Table notifications générales (depuis le backend)
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS general_notifications (
+          id INTEGER PRIMARY KEY,
+          titre TEXT NOT NULL,
+          message TEXT NOT NULL,
+          cible TEXT DEFAULT 'all',
+          is_read INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL,
+          fetched_at TEXT NOT NULL
+        )
+      ''');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_gen_notif_read ON general_notifications(is_read, created_at)');
+      // Index pour les transactions annulées (filtré)
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_tx_cancelled ON transactions(status) WHERE status IN (\'cancelled\', \'rejected\')');
+      // Index pour source sms_auto (utilisé par notifications)
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_tx_source_status ON transactions(source, status, created_at)');
+      // Vue optimisée pour les transactions récentes avec opérateur
+      await db.execute('DROP VIEW IF EXISTS v_transactions_with_operator');
+      await db.execute('''
+        CREATE VIEW v_transactions_with_operator AS
+        SELECT t.*, o.name as operator_name
+        FROM transactions t
+        LEFT JOIN operators o ON t.operator_id = o.id
+      ''');
     }
   }
 

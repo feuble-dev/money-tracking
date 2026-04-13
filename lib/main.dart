@@ -9,6 +9,8 @@ import 'core/router.dart';
 import 'core/sms/sms_listener.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_notifier.dart';
+import 'features/commissions/screens/commissions_screen.dart';
+import 'features/notifications/screens/notifications_screen.dart';
 import 'features/transactions/providers/transaction_provider.dart';
 import 'features/dashboard/providers/dashboard_provider.dart';
 
@@ -50,16 +52,24 @@ class MoneyTrackingApp extends ConsumerStatefulWidget {
 }
 
 class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
+  // ignore: cancel_subscriptions
+  dynamic _pollSub;
+
   @override
   void initState() {
     super.initState();
     debugPrint('[MoneyTracking] initState');
     _initPermissionsAndSms();
     _initNotificationHandler();
+    // Polling toutes les 60s pour notifs générales
+    _pollSub = Stream.periodic(const Duration(seconds: 60)).listen((_) {
+      ref.invalidate(generalNotificationsProvider);
+    });
   }
 
   @override
   void dispose() {
+    _pollSub?.cancel();
     SmsListenerService().stopListening();
     NotificationService().onNotificationTapped = null;
     super.dispose();
@@ -91,10 +101,12 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
       if (granted) {
         final smsService = SmsListenerService();
         smsService.onTransactionDetected = (_) {
-          // Rafraîchir toutes les listes après détection SMS
+          // Rafraîchir TOUT après détection SMS
           ref.read(transactionsProvider.notifier).loadTransactions();
           ref.read(pendingTransactionsProvider.notifier).loadPending();
           ref.invalidate(dashboardStatsProvider(null));
+          ref.invalidate(recentActivityProvider);
+          ref.invalidate(commissionsStatsProvider);
         };
         await smsService.startListening();
         ref.read(smsServiceActiveProvider.notifier).state = true;

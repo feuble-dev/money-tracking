@@ -13,6 +13,7 @@ import '../../operators/models/operator_model.dart';
 import '../../operators/providers/operator_provider.dart';
 import '../models/transaction_model.dart';
 import '../providers/transaction_provider.dart';
+import '../../../core/licence/licence_guard.dart';
 
 /// Écran de nouvelle transaction
 /// Deux modes : "Lancer USSD" (la transaction sera créée par le SMS)
@@ -85,6 +86,9 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
   /// Lance le USSD — PAS de création de transaction ici
   /// C'est le SMS entrant qui va créer la transaction automatiquement
   Future<void> _launchUssd() async {
+    final autorise = await LicenceGuard.verifier(
+      context, ActionType.lancerUSSD);
+    if (!autorise || !mounted) return;
     if (!_formKey.currentState!.validate()) return;
     if (_selectedOperator == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -159,6 +163,9 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
 
   /// Création manuelle — uniquement si pas de SMS
   Future<void> _createManual() async {
+    final autorise = await LicenceGuard.verifier(
+      context, ActionType.creerTransactionManuelle);
+    if (!autorise || !mounted) return;
     if (!_formKey.currentState!.validate()) return;
     if (_selectedOperator == null) {
       ScaffoldMessenger.of(context).showSnackBar(
