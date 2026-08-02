@@ -21,7 +21,7 @@ migrate_working_dir/
 # VS Code
 .vscode/
 
-# Flutter/Dart/Pub related
+# ── Flutter/Dart (mobile/) ──
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
@@ -29,7 +29,11 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.metadata
 /coverage/
 
 # Symbolication related
@@ -39,9 +43,9 @@ app.*.symbols
 app.*.map.json
 
 # Android Studio build artifacts
-/android/app/debug
-/android/app/profile
-/android/app/release
+mobile/android/app/debug
+mobile/android/app/profile
+mobile/android/app/release
 
 # ── Backend Django ──
 backend/db.sqlite3

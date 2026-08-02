@@ -8,7 +8,7 @@ import '../sms/sms_field_extractor.dart';
 import 'historique_storage.dart';
 
 // Même URL que licence_service
-const String _baseUrl = 'http://192.168.11.107:8000/api/licence';
+const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
 
 class HistoriqueImportService {
   static const _smsChannel = MethodChannel('com.rftech.moneytracking/sms_inbox');

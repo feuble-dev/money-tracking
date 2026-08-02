@@ -7,7 +7,7 @@ import 'licence_validator.dart';
 
 // Changer par l'URL réelle du backend en production
 // const String _baseUrl = 'https://moneytracking.rf.gd/api/licence';
-const String _baseUrl = 'http://192.168.11.107:8000/api/licence';
+const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
 
 class LicenceService {
   // ── Device ID unique Android ──────────────────────────────
