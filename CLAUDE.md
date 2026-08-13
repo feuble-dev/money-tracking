@@ -148,9 +148,11 @@ web/
 Primary blue     : #1565C0 (bleu roi)
 Primary light    : #42A5F5
 Primary dark     : #0D47A1
-Accent orange    : #FF6B35 (badges, alerts only)
-Deposit green    : #2E7D32
-Withdrawal red   : #C62828
+Accent green     : #2E7D32 (buttons, badges, accents)
+Accent light     : #4CAF50
+Accent dark      : #1B5E20
+Deposit blue     : #1565C0 (argent sort de l'agent)
+Withdrawal green : #2E7D32 (argent entre chez l'agent)
 Light background : #F5F7FA
 Dark background  : #0F1923
 Dark surface     : #1A2535
@@ -159,8 +161,8 @@ Dark surface     : #1A2535
 ### Theme Rules
 - Light mode: soft grey background, white cards, dark text
 - Dark mode: deep navy background, marine blue cards, light text
-- Orange only for badges, alerts, and occasional accents
-- Green for deposits, red for withdrawals — in both modes
+- Green accent for buttons, badges, and CTA elements (replaced former orange)
+- Blue for deposits, green for withdrawals — in both modes
 - Theme preference stored in `SharedPreferences`, toggled from Settings
 
 ## SMS Pattern Configuration (dynamic parsing)

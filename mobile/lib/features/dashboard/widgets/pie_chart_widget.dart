@@ -10,7 +10,7 @@ class PieChartWidget extends StatelessWidget {
 
   static const _colors = [
     Color(0xFF1565C0),
-    Color(0xFFFF6B35),
+    Color(0xFF4CAF50),
     Color(0xFF2E7D32),
     Color(0xFFC62828),
     Color(0xFF6A1B9A),

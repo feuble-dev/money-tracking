@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import Features from '@/components/site/Features';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -7,218 +8,162 @@ export const metadata: Metadata = {
   description: 'Decouvrez toutes les fonctionnalites de MoneyTracking pour la gestion de votre agence Mobile Money.',
 };
 
-const features = [
+const details = [
   {
-    emoji: '📨',
     title: 'Detection SMS automatique',
     description:
-      "L'application capte automatiquement les SMS de confirmation d'Orange Money, Moov Money et Coris Money. Elle extrait intelligemment le montant, le numero du client, l'identifiant de transaction et votre solde operateur.",
-    details: [
-      "Reconnaissance automatique de l'expediteur SMS de chaque operateur",
-      "Extraction des champs : montant, numero client, ID transaction, solde",
-      "Creation automatique de la transaction en statut \"en attente\"",
-      "Notification pour confirmer ou rejeter chaque transaction detectee",
+      "L'application capte les SMS de confirmation d'Orange Money, Moov Money et Coris Money en arriere-plan. Elle extrait le montant, le numero du client, l'identifiant de transaction et le solde operateur.",
+    points: [
+      "Reconnaissance automatique de l'expediteur SMS",
+      "Extraction des champs : montant, numero, ID transaction, solde",
+      "Creation de la transaction en statut \"en attente\"",
+      "Notification pour confirmer ou rejeter",
     ],
-    gradient: 'from-blue-500 to-blue-700',
   },
   {
-    emoji: '📱',
     title: 'Depot & Retrait via USSD',
     description:
-      "Lancez les codes USSD directement depuis l'application. Pour un depot, MoneyTracking compose automatiquement *144*{numero}*{montant}# sur l'operateur selectionne. Le SMS de confirmation qui arrive cree la transaction automatiquement.",
-    details: [
-      "Composition automatique du code USSD avec numero et montant pre-remplis",
-      "Support des templates USSD par operateur (depot et retrait)",
-      "Le SMS de confirmation finalise la transaction sans saisie manuelle",
-      "Possibilite de creer une transaction manuellement si necessaire",
+      "Lancez les codes USSD depuis l'app. Le numero et montant sont pre-remplis. Le SMS de confirmation qui arrive cree la transaction automatiquement.",
+    points: [
+      "Composition automatique du code USSD",
+      "Support des templates par operateur",
+      "Le SMS de confirmation finalise la transaction",
+      "Creation manuelle possible",
     ],
-    gradient: 'from-orange-500 to-orange-700',
   },
   {
-    emoji: '👥',
     title: 'Gestion clients avec CNIB',
     description:
-      "Un annuaire complet de vos clients reguliers. Enregistrez prenom, nom, numero de telephone et numero CNIB. Consultez l'historique complet des transactions de chaque client en un clic.",
-    details: [
-      "Fiche client : prenom, nom, telephone, numero CNIB",
+      "Un annuaire de vos clients reguliers. Enregistrez prenom, nom, telephone et CNIB. Consultez l'historique des transactions par client.",
+    points: [
+      "Fiche client complete avec CNIB",
       "Historique des transactions par client",
-      "Recherche rapide par nom ou numero de telephone",
-      "Filtrage des clients par operateur",
+      "Recherche par nom ou telephone",
+      "Filtrage par operateur",
     ],
-    gradient: 'from-green-500 to-green-700',
   },
   {
-    emoji: '📊',
     title: 'Dashboard & statistiques',
     description:
-      "Plus de 7 graphiques pour analyser votre activite en detail. Visualisez l'evolution des depots et retraits, le ratio entre les deux, le volume quotidien, les heures de pointe et la repartition par operateur.",
-    details: [
-      "Graphiques : evolution depots/retraits, ratio, volume quotidien, heures de pointe, repartition operateur",
-      "Filtres temporels : Aujourd'hui, Hier, 7 jours, 30 jours, 3 mois",
-      "Onglets par operateur pour une analyse ciblee",
-      "Indicateurs de tendance (hausse/baisse) par rapport a la periode precedente",
+      "Plus de 7 graphiques : evolution depots/retraits, ratio, volume quotidien, heures de pointe, repartition par operateur.",
+    points: [
+      "Filtres : aujourd'hui, 7j, 30j, 3 mois",
+      "Onglets par operateur",
+      "Indicateurs de tendance",
+      "Vue globale et detaillee",
     ],
-    gradient: 'from-purple-500 to-purple-700',
   },
   {
-    emoji: '💰',
-    title: 'Calcul automatique des commissions',
+    title: 'Commissions automatiques',
     description:
-      "Les taux de commission sont configurables par operateur. MoneyTracking calcule automatiquement vos gains sur chaque transaction et vous offre un suivi par jour, semaine ou mois.",
-    details: [
-      "Taux de commission configurable pour chaque operateur",
-      "Suivi des commissions par jour, semaine et mois",
-      "Solde operateur extrait directement des SMS de confirmation",
-      "Vue globale et vue detaillee par operateur",
+      "Taux de commission configurables par operateur. Calcul automatique sur chaque transaction, suivi par jour, semaine ou mois.",
+    points: [
+      "Taux configurable depot/retrait",
+      "Suivi par jour, semaine, mois",
+      "Solde operateur extrait des SMS",
+      "Vue globale et par operateur",
     ],
-    gradient: 'from-yellow-500 to-yellow-700',
   },
   {
-    emoji: '🏦',
-    title: 'Gestion de caisse par operateur',
+    title: 'Gestion de caisse',
     description:
-      "Suivez le solde de chaque operateur separement. Definissez un seuil d'alerte pour etre prevenu quand votre caisse est basse. Enregistrez vos rechargements pour garder un historique precis.",
-    details: [
+      "Suivez le solde de chaque operateur. Seuil d'alerte configurable. Enregistrement des rechargements.",
+    points: [
       "Solde en temps reel par operateur",
-      "Seuil d'alerte configurable par operateur",
-      "Enregistrement des rechargements de caisse",
-      "Alertes automatiques quand le solde passe sous le seuil",
+      "Alertes de solde bas",
+      "Historique des rechargements",
+      "Seuil d'alerte configurable",
     ],
-    gradient: 'from-indigo-500 to-indigo-700',
   },
   {
-    emoji: '📄',
     title: 'Export PDF & CSV',
     description:
-      "Generez des rapports professionnels au format PDF A4 paysage ou CSV compatible Excel. Selectionnez la periode souhaitee et partagez directement via WhatsApp ou email.",
-    details: [
-      "PDF A4 paysage avec mise en page professionnelle",
-      "CSV compatible Excel pour analyses personnalisees",
-      "Selection de la periode d'export",
-      "Partage direct via WhatsApp, email ou autre application",
+      "Rapports PDF A4 paysage ou CSV Excel. Selection de la periode, partage via WhatsApp ou email.",
+    points: [
+      "PDF A4 paysage professionnel",
+      "CSV compatible Excel",
+      "Selection de la periode",
+      "Partage direct",
     ],
-    gradient: 'from-red-500 to-red-700',
   },
   {
-    emoji: '🔒',
-    title: 'Securite PIN + empreinte',
+    title: 'Securite PIN & biometrie',
     description:
-      "Protegez l'acces a votre application avec un code PIN a 4 chiffres et l'authentification biometrique par empreinte digitale. Le delai de verrouillage automatique est configurable.",
-    details: [
-      "Code PIN a 4 chiffres avec hash securise",
-      "Authentification biometrique (empreinte digitale)",
-      "Delai de verrouillage automatique configurable",
-      "Ecran de verrouillage avec clavier numerique personnalise",
+      "Code PIN 4 chiffres stocke en hash securise et authentification biometrique. Verrouillage automatique configurable.",
+    points: [
+      "PIN avec hash securise",
+      "Empreinte digitale",
+      "Verrouillage automatique configurable",
+      "Clavier numerique personnalise",
     ],
-    gradient: 'from-teal-500 to-teal-700',
   },
   {
-    emoji: '☁️',
     title: 'Sauvegarde & restauration',
     description:
-      "Sauvegardez toutes vos donnees dans un fichier .mmtbak. Les 7 dernieres sauvegardes sont conservees automatiquement. Partagez le fichier pour le stocker en securite ou restaurer sur un autre appareil.",
-    details: [
-      "Format de sauvegarde proprietaire .mmtbak",
-      "Conservation automatique des 7 dernieres sauvegardes",
-      "Restauration complete des donnees en un clic",
-      "Partage du fichier de sauvegarde via WhatsApp, Drive, etc.",
+      "Sauvegardez en fichier .mmtbak. Les 7 dernieres sauvegardes conservees. Partage du fichier via WhatsApp, Drive, etc.",
+    points: [
+      "Format .mmtbak",
+      "7 sauvegardes conservees",
+      "Restauration en un clic",
+      "Partage du fichier",
     ],
-    gradient: 'from-cyan-500 to-cyan-700',
   },
 ];
 
 export default function FeaturesPage() {
   return (
     <>
-      {/* Hero Header */}
-      <section className="gradient-hero py-20 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute top-10 left-10 w-72 h-72 bg-white rounded-full blur-3xl" />
-          <div className="absolute bottom-10 right-10 w-96 h-96 bg-blue-300 rounded-full blur-3xl" />
-        </div>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
-          <span className="inline-block px-4 py-1.5 bg-white/10 backdrop-blur-sm text-blue-100 text-sm font-medium rounded-full mb-6 border border-white/20">
-            9 fonctionnalites puissantes
-          </span>
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white mb-6">
-            Tout ce dont un agent{' '}
-            <span className="gradient-text bg-gradient-to-r from-orange-300 to-orange-500 bg-clip-text text-transparent">
-              Mobile Money
-            </span>{' '}
-            a besoin
-          </h1>
-          <p className="text-lg sm:text-xl text-blue-100 max-w-3xl mx-auto leading-relaxed">
-            MoneyTracking automatise votre quotidien : detection SMS, calcul des commissions,
-            gestion de caisse, statistiques avancees et bien plus encore.
+      {/* Header */}
+      <section className="gradient-hero py-16">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+          <h1 className="text-3xl sm:text-4xl font-bold text-white">Fonctionnalites</h1>
+          <p className="mt-3 text-blue-200 max-w-lg">
+            Tout ce dont un agent Mobile Money a besoin pour automatiser sa gestion quotidienne.
           </p>
         </div>
       </section>
 
-      {/* Features Grid */}
-      <section className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-8">
-            {features.map((feature, index) => (
-              <div
-                key={feature.title}
-                className="group relative bg-white rounded-3xl border border-gray-100 hover:border-transparent hover:shadow-2xl hover:shadow-primary/10 transition-all duration-500 overflow-hidden card-hover"
-              >
-                {/* Top gradient bar */}
-                <div className={`h-1.5 bg-gradient-to-r ${feature.gradient}`} />
+      {/* Grid resume */}
+      <Features />
 
-                <div className="p-8">
-                  {/* Emoji + Number */}
-                  <div className="flex items-center justify-between mb-5">
-                    <span className="text-5xl float-animation" style={{ animationDelay: `${index * 0.2}s` }}>
-                      {feature.emoji}
-                    </span>
-                    <span className="text-6xl font-black text-gray-100 group-hover:text-primary/10 transition-colors">
-                      {String(index + 1).padStart(2, '0')}
-                    </span>
-                  </div>
-
-                  {/* Title */}
-                  <h3 className="text-xl font-bold text-[#0F1923] mb-3 group-hover:text-[#1565C0] transition-colors">
-                    {feature.title}
-                  </h3>
-
-                  {/* Description */}
-                  <p className="text-[#64748B] leading-relaxed text-sm mb-5">
-                    {feature.description}
-                  </p>
-
-                  {/* Detail list */}
-                  <ul className="space-y-2.5">
-                    {feature.details.map((detail) => (
-                      <li key={detail} className="flex items-start gap-2.5 text-sm">
-                        <svg className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-600">{detail}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+      {/* Details */}
+      <section className="py-16 bg-soft">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6">
+          <h2 className="text-2xl font-bold text-dark mb-10">En detail</h2>
+          <div className="space-y-10">
+            {details.map((d, i) => (
+              <div key={i}>
+                <h3 className="text-lg font-semibold text-dark mb-2">{d.title}</h3>
+                <p className="text-sm text-muted leading-relaxed mb-3">{d.description}</p>
+                <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                  {d.points.map((p) => (
+                    <li key={p} className="flex items-start gap-2 text-sm text-gray-600">
+                      <svg className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {p}
+                    </li>
+                  ))}
+                </ul>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-16 bg-[#F5F7FA]">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+      {/* Stats */}
+      <section className="py-14 bg-white border-t border-gray-100">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
             {[
-              { value: '3', label: 'Operateurs supportes', sub: 'Orange, Moov, Coris' },
-              { value: '7+', label: 'Graphiques', sub: 'Statistiques detaillees' },
-              { value: '100%', label: 'Hors ligne', sub: 'Aucune connexion requise' },
-              { value: '30j', label: "Essai gratuit", sub: 'Sans engagement' },
-            ].map((stat) => (
-              <div key={stat.label} className="glass-card text-center p-6 rounded-2xl">
-                <p className="text-3xl sm:text-4xl font-black text-[#1565C0] mb-1">{stat.value}</p>
-                <p className="text-sm font-semibold text-[#0F1923] mb-0.5">{stat.label}</p>
-                <p className="text-xs text-[#64748B]">{stat.sub}</p>
+              { value: '3', label: 'Operateurs' },
+              { value: '7+', label: 'Graphiques' },
+              { value: '100%', label: 'Hors ligne' },
+              { value: '30j', label: 'Essai gratuit' },
+            ].map((s) => (
+              <div key={s.label}>
+                <p className="text-2xl font-bold text-primary">{s.value}</p>
+                <p className="text-xs text-muted mt-0.5">{s.label}</p>
               </div>
             ))}
           </div>
@@ -226,30 +171,17 @@ export default function FeaturesPage() {
       </section>
 
       {/* CTA */}
-      <section className="py-20 bg-white">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <div className="relative p-10 sm:p-16 rounded-3xl overflow-hidden gradient-hero">
-            <div className="absolute inset-0 opacity-10">
-              <div className="absolute -top-20 -right-20 w-80 h-80 bg-orange-400 rounded-full blur-3xl" />
-            </div>
-            <div className="relative z-10">
-              <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-                Pret a simplifier votre gestion ?
-              </h2>
-              <p className="text-blue-100 mb-8 text-lg max-w-xl mx-auto">
-                Essayez gratuitement pendant 30 jours. Toutes les fonctionnalites incluses, aucune carte requise.
-              </p>
-              <Link
-                href="/download"
-                className="inline-flex items-center gap-3 px-10 py-5 bg-[#FF6B35] text-white text-lg font-bold rounded-2xl hover:brightness-110 transition-all shadow-2xl shadow-orange-500/30 hover:-translate-y-1 glow-orange"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Telecharger MoneyTracking
-              </Link>
-            </div>
-          </div>
+      <section className="py-16 gradient-hero">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
+          <h2 className="text-2xl font-bold text-white mb-3">Pret a simplifier votre gestion ?</h2>
+          <p className="text-blue-200 text-sm mb-6">Essai gratuit 30 jours. Toutes les fonctionnalites incluses.</p>
+          <Link href="/download"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-white font-semibold text-sm rounded-lg hover:bg-accent-hover transition-colors">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Telecharger MoneyTracking
+          </Link>
         </div>
       </section>
     </>

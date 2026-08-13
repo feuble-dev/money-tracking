@@ -10,7 +10,7 @@ class AppColors {
   static const Color primaryDark = Color(0xFF0D47A1);
 
   // Couleur secondaire (accents uniquement)
-  static const Color accentColor = Color(0xFFFF6B35);
+  static const Color accentColor = Color(0xFF2E7D32);
 
   // Dépôt = bleu (argent sort de l'agent)
   static const Color depositColor = Color(0xFF1565C0);

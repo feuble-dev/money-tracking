@@ -180,7 +180,7 @@ export default function DashboardPage() {
                     strokeDasharray={`${annuelPct * circumference} ${circumference}`} strokeDashoffset="0" strokeLinecap="round" />
                 )}
                 {mensuelPct > 0 && (
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="#FF6B35" strokeWidth="12"
+                  <circle cx="50" cy="50" r="38" fill="none" stroke="#2E7D32" strokeWidth="12"
                     strokeDasharray={`${mensuelPct * circumference} ${circumference}`}
                     strokeDashoffset={`${-annuelPct * circumference}`} strokeLinecap="round" />
                 )}
