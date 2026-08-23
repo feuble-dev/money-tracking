@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -8,9 +7,11 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../providers/operator_provider.dart';
+import '../providers/transaction_type_provider.dart';
 import '../models/operator_model.dart';
 import '../models/sms_pattern_model.dart';
-import '../../../core/sms/sms_field_extractor.dart';
+import '../widgets/sms_zone_tagger.dart';
+import '../../../core/sms/sms_pattern_builder.dart';
 import '../../../core/licence/licence_guard.dart';
 import '../../../core/theme/app_colors.dart';
 
@@ -43,8 +44,8 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
   String? _logoPath;
 
   int _currentStep = 0;
-  Map<String, String> _depotDetected = {};
-  Map<String, String> _retraitDetected = {};
+  List<TaggedZone> _depotZones = [];
+  List<TaggedZone> _retraitZones = [];
 
   bool get isEditing => widget.operatorId != null;
 
@@ -89,18 +90,6 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
     setState(() => _logoPath = destPath);
   }
 
-  void _detectDepot() {
-    setState(() {
-      _depotDetected = SmsFieldExtractor.extractAll(_smsDepotController.text);
-    });
-  }
-
-  void _detectRetrait() {
-    setState(() {
-      _retraitDetected = SmsFieldExtractor.extractAll(_smsRetraitController.text);
-    });
-  }
-
   Future<void> _save() async {
     final autorise = await LicenceGuard.verifier(
       context, ActionType.configurerOperateur);
@@ -134,30 +123,59 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
     } else {
       await notifier.addOperator(operator_);
 
-      // Sauvegarder les patterns SMS si fournis
-      final patternJson = jsonEncode(SmsFieldExtractor.fieldPatterns);
-      if (_smsDepotController.text.trim().isNotEmpty && _depotDetected.containsKey('montant')) {
+      // Sauvegarder les patterns SMS si fournis — toujours une vraie regex
+      // compilée depuis les zones taguées (jamais 'auto_detect'), rattachée
+      // à un operator_transaction_type_id réel, pour qu'un pattern de dépôt
+      // ne puisse jamais matcher un SMS de retrait (ou d'achat de crédit).
+      final senderFilter = _smsSenderController.text.trim().isEmpty
+          ? null : _smsSenderController.text.trim();
+
+      if (_smsDepotController.text.trim().isNotEmpty &&
+          _depotZones.any((z) => z.fieldName == 'montant')) {
+        final linkId = await TransactionTypeRepository.attachExistingTypeToOperator(
+          operatorId: operatorId,
+          code: 'deposit',
+          ussdCode: _ussdDepositController.text.trim().isEmpty ? null : _ussdDepositController.text.trim(),
+          commissionTaux: double.tryParse(_commissionDepotController.text) ?? 0,
+        );
+        final rawExample = _smsDepotController.text.trim();
+        final regex = SmsPatternBuilder.buildRegex(rawExample, _depotZones);
         await SmsPatternRepository.savePattern(SmsPatternModel(
           id: const Uuid().v4(),
           operatorId: operatorId,
           transactionType: 'deposit',
-          senderFilter: _smsSenderController.text.trim().isEmpty
-              ? null : _smsSenderController.text.trim(),
-          rawExample: _smsDepotController.text.trim(),
-          patternJson: patternJson,
-          regexGenerated: 'auto_detect',
+          operatorTransactionTypeId: linkId,
+          direction: 'in',
+          taggedZonesJson: SmsPatternBuilder.zonesToJson(_depotZones),
+          source: 'custom',
+          senderFilter: senderFilter,
+          rawExample: rawExample,
+          patternJson: SmsPatternBuilder.zonesToJson(_depotZones),
+          regexGenerated: regex,
         ));
       }
-      if (_smsRetraitController.text.trim().isNotEmpty && _retraitDetected.containsKey('montant')) {
+      if (_smsRetraitController.text.trim().isNotEmpty &&
+          _retraitZones.any((z) => z.fieldName == 'montant')) {
+        final linkId = await TransactionTypeRepository.attachExistingTypeToOperator(
+          operatorId: operatorId,
+          code: 'withdrawal',
+          ussdCode: _ussdWithdrawController.text.trim().isEmpty ? null : _ussdWithdrawController.text.trim(),
+          commissionTaux: double.tryParse(_commissionRetraitController.text) ?? 0,
+        );
+        final rawExample = _smsRetraitController.text.trim();
+        final regex = SmsPatternBuilder.buildRegex(rawExample, _retraitZones);
         await SmsPatternRepository.savePattern(SmsPatternModel(
           id: const Uuid().v4(),
           operatorId: operatorId,
           transactionType: 'withdrawal',
-          senderFilter: _smsSenderController.text.trim().isEmpty
-              ? null : _smsSenderController.text.trim(),
-          rawExample: _smsRetraitController.text.trim(),
-          patternJson: patternJson,
-          regexGenerated: 'auto_detect',
+          operatorTransactionTypeId: linkId,
+          direction: 'out',
+          taggedZonesJson: SmsPatternBuilder.zonesToJson(_retraitZones),
+          source: 'custom',
+          senderFilter: senderFilter,
+          rawExample: rawExample,
+          patternJson: SmsPatternBuilder.zonesToJson(_retraitZones),
+          regexGenerated: regex,
         ));
       }
     }
@@ -237,7 +255,12 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
             subtitle: const Text('Collez un SMS de dépôt'),
             isActive: _currentStep >= 1,
             state: _currentStep > 1 ? StepState.complete : StepState.indexed,
-            content: _buildSmsStep('deposit', _smsDepotController, _depotDetected, _detectDepot),
+            content: _buildSmsStep(
+              'deposit',
+              _smsDepotController,
+              _depotZones,
+              (z) => setState(() => _depotZones = z),
+            ),
           ),
           // Étape 3 — SMS Retrait
           Step(
@@ -245,7 +268,12 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
             subtitle: const Text('Collez un SMS de retrait'),
             isActive: _currentStep >= 2,
             state: _currentStep > 2 ? StepState.complete : StepState.indexed,
-            content: _buildSmsStep('withdrawal', _smsRetraitController, _retraitDetected, _detectRetrait),
+            content: _buildSmsStep(
+              'withdrawal',
+              _smsRetraitController,
+              _retraitZones,
+              (z) => setState(() => _retraitZones = z),
+            ),
           ),
           // Étape 4 — USSD + Commissions
           Step(
@@ -282,14 +310,11 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
           );
           return;
         }
-        if (!_depotDetected.containsKey('montant')) {
-          _detectDepot();
-          if (!_depotDetected.containsKey('montant')) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Impossible de détecter le montant dans le SMS')),
-            );
-            return;
-          }
+        if (!_depotZones.any((z) => z.fieldName == 'montant')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Taguez au moins la zone "montant" dans le SMS')),
+          );
+          return;
         }
         break;
       case 2:
@@ -299,14 +324,11 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
           );
           return;
         }
-        if (!_retraitDetected.containsKey('montant')) {
-          _detectRetrait();
-          if (!_retraitDetected.containsKey('montant')) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Impossible de détecter le montant dans le SMS')),
-            );
-            return;
-          }
+        if (!_retraitZones.any((z) => z.fieldName == 'montant')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Taguez au moins la zone "montant" dans le SMS')),
+          );
+          return;
         }
         break;
       case 3:
@@ -376,15 +398,14 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
     );
   }
 
-  // === Étape SMS (dépôt ou retrait) ===
+  // === Étape SMS (dépôt ou retrait) — tagging réel, vraie regex (D2) ===
   Widget _buildSmsStep(
     String type,
     TextEditingController controller,
-    Map<String, String> detected,
-    VoidCallback onDetect,
+    List<TaggedZone> zones,
+    ValueChanged<List<TaggedZone>> onZonesChange,
   ) {
     final isDeposit = type == 'deposit';
-    final color = isDeposit ? AppColors.depositColor : AppColors.withdrawColor;
     final label = isDeposit ? 'dépôt' : 'retrait';
 
     return Column(
@@ -404,61 +425,18 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
             alignLabelWithHint: true,
           ),
           onChanged: (_) {
-            if (detected.isNotEmpty) setState(() => detected.clear());
+            if (zones.isNotEmpty) onZonesChange([]);
+            setState(() {});
           },
         ),
-        const SizedBox(height: 12),
-        ElevatedButton.icon(
-          onPressed: onDetect,
-          icon: const Icon(Icons.auto_fix_high),
-          label: const Text('Détecter les champs'),
-          style: ElevatedButton.styleFrom(backgroundColor: color),
-        ),
-
-        if (detected.isNotEmpty) ...[
+        if (controller.text.trim().isNotEmpty) ...[
           const SizedBox(height: 16),
-          ...detected.entries.map((e) {
-            final fieldLabel = {
-              'montant': 'Montant',
-              'numero_client': 'N° Client',
-              'operator_transaction_id': 'ID Transaction',
-              'solde': 'Solde',
-              'nom_client': 'Nom Client',
-            }[e.key] ?? e.key;
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: color.withAlpha(15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle, size: 16, color: color),
-                  const SizedBox(width: 8),
-                  Text(fieldLabel,
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                  const Spacer(),
-                  Flexible(
-                    child: Text(e.value,
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                        overflow: TextOverflow.ellipsis),
-                  ),
-                ],
-              ),
-            );
-          }),
-        ],
-
-        if (detected.isEmpty && controller.text.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(
-              'Appuyez sur "Détecter les champs" pour analyser le SMS',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
+          SmsZoneTagger(
+            rawExample: controller.text,
+            zones: zones,
+            onZonesChange: onZonesChange,
           ),
+        ],
       ],
     );
   }

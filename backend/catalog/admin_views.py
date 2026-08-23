@@ -1,3 +1,4 @@
+from django.db.models import RestrictedError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -8,6 +9,22 @@ from .serializers import (
     AdminCountrySerializer, AdminOperatorSerializer, AdminTransactionTypeSerializer,
     AdminOperatorTransactionTypeSerializer, AdminSmsPatternSerializer,
 )
+
+
+def safe_delete(instance):
+    """
+    Toutes les FK du catalogue sont en RESTRICT (jamais de suppression en
+    cascade silencieuse) — ce helper transforme le RestrictedError levé par
+    Django en réponse HTTP claire plutôt qu'un 500.
+    """
+    try:
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    except RestrictedError:
+        return Response(
+            {'erreur': "Impossible de supprimer : des éléments en dépendent encore. Supprimez-les d'abord."},
+            status=status.HTTP_409_CONFLICT,
+        )
 
 
 class AdminCountriesView(APIView):
@@ -46,8 +63,7 @@ class AdminCountryDetailView(APIView):
             country = Country.objects.get(id=pk)
         except Country.DoesNotExist:
             return Response({'erreur': 'Pays introuvable'}, status=status.HTTP_404_NOT_FOUND)
-        country.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return safe_delete(country)
 
 
 class AdminOperatorsView(APIView):
@@ -99,8 +115,7 @@ class AdminOperatorDetailView(APIView):
             operator = Operator.objects.get(id=pk)
         except Operator.DoesNotExist:
             return Response({'erreur': 'Opérateur introuvable'}, status=status.HTTP_404_NOT_FOUND)
-        operator.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return safe_delete(operator)
 
 
 class AdminTransactionTypesView(APIView):
@@ -142,8 +157,7 @@ class AdminTransactionTypeDetailView(APIView):
             t = TransactionType.objects.get(id=pk)
         except TransactionType.DoesNotExist:
             return Response({'erreur': 'Type introuvable'}, status=status.HTTP_404_NOT_FOUND)
-        t.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return safe_delete(t)
 
 
 class AdminOperatorTransactionTypesView(APIView):
@@ -189,8 +203,7 @@ class AdminOperatorTransactionTypeDetailView(APIView):
             link = OperatorTransactionType.objects.get(id=pk)
         except OperatorTransactionType.DoesNotExist:
             return Response({'erreur': 'Association introuvable'}, status=status.HTTP_404_NOT_FOUND)
-        link.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return safe_delete(link)
 
 
 class AdminSmsPatternsView(APIView):
@@ -234,5 +247,4 @@ class AdminSmsPatternDetailView(APIView):
             pattern = SmsPattern.objects.get(id=pk)
         except SmsPattern.DoesNotExist:
             return Response({'erreur': 'Pattern introuvable'}, status=status.HTTP_404_NOT_FOUND)
-        pattern.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return safe_delete(pattern)

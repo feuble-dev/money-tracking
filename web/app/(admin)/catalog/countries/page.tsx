@@ -4,8 +4,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import CreateCountryModal from '@/components/admin/CreateCountryModal';
+import EditCountryModal from '@/components/admin/EditCountryModal';
+import ConfirmModal from '@/components/admin/ConfirmModal';
 import CatalogTabs from '@/components/admin/CatalogTabs';
-import { getCountries } from '@/lib/api';
+import { getCountries, deleteCountry } from '@/lib/api';
 
 interface Country {
   id: number;
@@ -20,6 +22,8 @@ export default function CountriesPage() {
   const [countries, setCountries] = useState<Country[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Country | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Country | null>(null);
 
   const loadCountries = useCallback(async () => {
     setLoading(true);
@@ -67,12 +71,13 @@ export default function CountriesPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Version catalogue</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Statut</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Opérateurs</th>
+                  <th className="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {countries.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-12 text-gray-400 text-sm">
+                    <td colSpan={7} className="text-center py-12 text-gray-400 text-sm">
                       Aucun pays configuré
                     </td>
                   </tr>
@@ -96,6 +101,16 @@ export default function CountriesPage() {
                           Voir les opérateurs
                         </a>
                       </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-3">
+                          <button onClick={() => setEditTarget(country)} className="text-sm font-medium text-primary hover:underline">
+                            Modifier
+                          </button>
+                          <button onClick={() => setDeleteTarget(country)} className="text-sm font-medium text-red-600 hover:underline">
+                            Supprimer
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -106,6 +121,23 @@ export default function CountriesPage() {
       </div>
 
       <CreateCountryModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={loadCountries} />
+
+      <EditCountryModal
+        isOpen={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={loadCountries}
+        country={editTarget}
+      />
+
+      {deleteTarget && (
+        <ConfirmModal
+          isOpen={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async () => { await deleteCountry(deleteTarget.id); await loadCountries(); }}
+          title={`Supprimer ${deleteTarget.name} ?`}
+          message="Impossible si des opérateurs sont encore rattachés à ce pays — supprimez-les d'abord."
+        />
+      )}
     </div>
   );
 }

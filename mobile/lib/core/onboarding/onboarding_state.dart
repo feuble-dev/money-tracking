@@ -52,3 +52,13 @@ final isOnboardingCompleteProvider = FutureProvider<bool>((ref) async {
   final service = ref.read(onboardingStatusServiceProvider);
   return service.isComplete();
 });
+
+/// Type de compte choisi à l'onboarding ('particulier'|'agence') — pilote
+/// les différences d'interface mobile entre les deux profils (D7), ex:
+/// onglet Commissions masqué pour un compte Particulier. Défaut 'agence'
+/// tant que la valeur n'a pas encore été persistée (comptes déjà actifs
+/// avant l'introduction de ce champ, migration v8 -> v9).
+final accountTypeProvider = FutureProvider<String>((ref) async {
+  final service = ref.read(onboardingStatusServiceProvider);
+  return (await service.getAccountType()) ?? 'agence';
+});

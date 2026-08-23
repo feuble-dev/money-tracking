@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../licence/licence_service.dart';
 import '../../theme/app_colors.dart';
+import '../affiliation_service.dart';
 import '../catalog_sync_service.dart';
 import '../models/catalog_models.dart';
 import '../onboarding_state.dart';
@@ -28,6 +29,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   String? _countryCode;
   final _agenceNomController =
       TextEditingController(text: 'Agence principale');
+  // 'creer' = premier appareil sur ce compte ; 'rejoindre' = rattacher cet
+  // appareil à un compte existant (patron multi-agence OU second téléphone
+  // d'un même Particulier — mécanisme identique, copie différente, D7).
+  String _setupMode = 'creer';
+  final _linkTelephoneController = TextEditingController();
   List<CatalogOperator> _operators = [];
   final Set<int> _selectedOperatorIds = {};
   String? _localAgenceId;
@@ -44,6 +50,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   void dispose() {
     _telephoneController.dispose();
     _agenceNomController.dispose();
+    _linkTelephoneController.dispose();
     super.dispose();
   }
 
@@ -111,6 +118,98 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     });
   }
 
+  /// Rattachement à un compte existant (D-affiliation) au lieu de créer un
+  /// nouvel espace — même mécanisme pour les deux profils, deux usages
+  /// différents : un agent qui rejoint une agence de son patron, ou un
+  /// Particulier qui relie son second téléphone à son compte principal
+  /// (D7 : jamais de vocabulaire "agence" côté Particulier, mais sous le
+  /// capot c'est la même AffiliationRequest/Agence cachée).
+  Future<void> _rejoindreCompte() async {
+    if (_telephoneController.text.trim().isEmpty) {
+      setState(() => _error = 'Entrez votre numéro de téléphone');
+      return;
+    }
+    if (_linkTelephoneController.text.trim().isEmpty) {
+      setState(() => _error = _accountType == 'particulier'
+          ? 'Entrez le numéro de votre autre téléphone'
+          : 'Entrez le numéro de votre patron');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final resultat = await AffiliationService.demander(
+      demandeurTelephone: _telephoneController.text.trim(),
+      patronTelephone: _linkTelephoneController.text.trim(),
+    );
+
+    if (!resultat.reussi) {
+      setState(() {
+        _loading = false;
+        _error = resultat.message;
+      });
+      return;
+    }
+
+    await ref.read(onboardingStatusServiceProvider).saveAccountType(_accountType);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _step = 4;
+    });
+    _pollApprobation();
+  }
+
+  void _pollApprobation() {
+    AffiliationService.attendreApprobation().listen((poll) async {
+      if (!mounted) return;
+      if (poll.statut == 'approuve') {
+        final ok = await AffiliationService.recupererLicencePourAgence(
+          telephone: _telephoneController.text.trim(),
+          agenceId: poll.agenceId!,
+        );
+        if (!mounted) return;
+        if (!ok) {
+          setState(() => _error = 'Licence introuvable pour cette agence — réessayez.');
+          return;
+        }
+        final localAgenceId = await _catalogService.createLocalAgence(
+          nom: poll.agenceNom!,
+          backendAgenceId: poll.agenceId!,
+          isDefault: true,
+        );
+        if (_countryCode != null) {
+          try {
+            final ops = await _catalogService.fetchOperators(
+              _countryCode!,
+              accountType: _accountType,
+            );
+            if (mounted) setState(() => _operators = ops);
+          } catch (_) {}
+        }
+        if (!mounted) return;
+        setState(() {
+          _localAgenceId = localAgenceId;
+          _step = 3;
+        });
+      } else if (poll.statut == 'rejete') {
+        setState(() {
+          _error = _accountType == 'particulier'
+              ? 'Votre demande a été refusée depuis votre autre téléphone.'
+              : 'Votre demande d\'affiliation a été refusée par le patron.';
+          _step = 2;
+        });
+      } else if (poll.statut == 'timeout') {
+        setState(() {
+          _error = 'Délai d\'attente dépassé — réessayez.';
+          _step = 2;
+        });
+      }
+    });
+  }
+
   Future<void> _finishImport() async {
     if (_localAgenceId == null) return;
     setState(() {
@@ -161,6 +260,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   _buildPhoneCountryStep(),
                   _buildAgenceStep(),
                   _buildOperatorsStep(),
+                  _buildWaitingApprovalStep(),
                 ],
               ),
             ),
@@ -170,13 +270,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
+  /// Un compte Particulier n'a pas besoin de nommer une agence (D7) — le
+  /// libellé de l'étape 3 reste générique ("Configuration"), jamais
+  /// "Agence", mais les deux profils traversent les mêmes étapes.
+  List<String> get _stepLabels => _accountType == 'particulier'
+      ? const ['Compte', 'Téléphone', 'Configuration', 'Opérateurs']
+      : const ['Compte', 'Téléphone', 'Agence', 'Opérateurs'];
+
+  int get _displayStep => _step;
+
   Widget _buildHeader() {
-    const labels = ['Compte', 'Téléphone', 'Agence', 'Opérateurs'];
+    final labels = _stepLabels;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       child: Row(
         children: List.generate(labels.length, (i) {
-          final active = i <= _step;
+          final active = i <= _displayStep;
           return Expanded(
             child: Column(
               children: [
@@ -236,6 +345,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       title: 'Votre numéro et votre pays',
       subtitle:
           'Ça détermine les opérateurs mobile money qu\'on va vous proposer.',
+      onBack: () => setState(() => _step = 0),
+      onNext: _loading ? null : () => setState(() => _step = 2),
+      nextLabel: _loading ? 'Création...' : 'Continuer',
       child: Column(
         children: [
           TextField(
@@ -270,25 +382,123 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             ),
         ],
       ),
-      onBack: () => setState(() => _step = 0),
-      onNext: () => setState(() => _step = 2),
     );
   }
 
   Widget _buildAgenceStep() {
+    return _accountType == 'particulier' ? _buildParticulierSetupStep() : _buildAgenceSetupStep();
+  }
+
+  /// Compte Agence : créer une nouvelle agence (nommée), ou rejoindre une
+  /// agence existante d'un patron via son numéro (D-affiliation).
+  Widget _buildAgenceSetupStep() {
+    final rejoindre = _setupMode == 'rejoindre';
     return _StepScaffold(
-      title: 'Nommez votre agence',
-      subtitle:
-          'Vous pourrez en ajouter d\'autres plus tard. Chaque agence démarre avec un essai gratuit.',
+      title: rejoindre ? 'Rejoindre une agence existante' : 'Nommez votre agence',
+      subtitle: rejoindre
+          ? 'Entrez le numéro de votre patron — il devra approuver votre demande et vous assigner une agence.'
+          : 'Vous pourrez en ajouter d\'autres plus tard. Chaque agence démarre avec un essai gratuit.',
       onBack: () => setState(() => _step = 1),
-      onNext: _loading ? null : _createAgenceAndTrial,
-      nextLabel: _loading ? 'Création...' : 'Créer et continuer',
-      child: TextField(
-        controller: _agenceNomController,
-        decoration: const InputDecoration(
-          labelText: 'Nom de l\'agence',
-          border: OutlineInputBorder(),
-        ),
+      onNext: _loading ? null : (rejoindre ? _rejoindreCompte : _createAgenceAndTrial),
+      nextLabel: _loading
+          ? (rejoindre ? 'Envoi...' : 'Création...')
+          : (rejoindre ? 'Envoyer la demande' : 'Créer et continuer'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'creer', label: Text('Créer')),
+              ButtonSegment(value: 'rejoindre', label: Text('Rejoindre')),
+            ],
+            selected: {_setupMode},
+            onSelectionChanged: (v) => setState(() => _setupMode = v.first),
+          ),
+          const SizedBox(height: 16),
+          if (rejoindre)
+            TextField(
+              controller: _linkTelephoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Numéro de téléphone du patron',
+                hintText: '70123456',
+                border: OutlineInputBorder(),
+              ),
+            )
+          else
+            TextField(
+              controller: _agenceNomController,
+              decoration: const InputDecoration(
+                labelText: 'Nom de l\'agence',
+                border: OutlineInputBorder(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Compte Particulier : aucun vocabulaire "agence" — juste "premier
+  /// téléphone" (cas par défaut, un tap) ou "relier à un compte existant"
+  /// pour quelqu'un qui a déjà MoneyTracking sur un autre téléphone (même
+  /// mécanisme D-affiliation, copie différente, D7).
+  Widget _buildParticulierSetupStep() {
+    final relier = _setupMode == 'rejoindre';
+    return _StepScaffold(
+      title: relier ? 'Relier à votre compte existant' : 'Configuration de votre suivi',
+      subtitle: relier
+          ? 'Entrez le numéro de votre autre téléphone MoneyTracking — vous devrez approuver la demande depuis cet appareil.'
+          : 'Si vous utilisez déjà MoneyTracking sur un autre téléphone, vous pouvez relier celui-ci au lieu d\'en repartir de zéro.',
+      onBack: () => setState(() => _step = 1),
+      onNext: _loading
+          ? null
+          : (relier
+              ? _rejoindreCompte
+              : () {
+                  _agenceNomController.text = 'Mon suivi personnel';
+                  _createAgenceAndTrial();
+                }),
+      nextLabel: _loading
+          ? (relier ? 'Envoi...' : 'Création...')
+          : (relier ? 'Envoyer la demande' : 'Continuer'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'creer', label: Text('Premier téléphone')),
+              ButtonSegment(value: 'rejoindre', label: Text('J\'ai déjà un compte')),
+            ],
+            selected: {_setupMode},
+            onSelectionChanged: (v) => setState(() => _setupMode = v.first),
+          ),
+          if (relier) ...[
+            const SizedBox(height: 16),
+            TextField(
+              controller: _linkTelephoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Numéro de votre autre téléphone',
+                hintText: '70123456',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWaitingApprovalStep() {
+    return _StepScaffold(
+      title: 'En attente d\'approbation',
+      subtitle:
+          'Votre demande a été envoyée à ${_linkTelephoneController.text.trim()}. '
+          'Cet écran se mettra à jour automatiquement dès qu\'il aura répondu.',
+      onBack: () => setState(() => _step = 2),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator()),
       ),
     );
   }

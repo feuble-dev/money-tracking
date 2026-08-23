@@ -18,6 +18,9 @@ import '../features/dashboard/screens/sms_journal_screen.dart';
 import '../features/notifications/screens/notifications_screen.dart';
 import '../features/dashboard/screens/sms_test_screen.dart';
 import '../features/commissions/screens/commissions_screen.dart';
+import '../features/agences/screens/mes_agences_screen.dart';
+import '../features/agences/screens/mes_telephones_screen.dart';
+import '../features/agences/screens/agence_sync_detail_screen.dart';
 import '../features/export/screens/export_csv_screen.dart';
 import '../features/export/screens/export_pdf_screen.dart';
 import '../features/operators/screens/operator_form_screen.dart';
@@ -44,6 +47,7 @@ final routerProvider = Provider<GoRouter>((ref) {
   final isPinSet = isPinSetAsync.valueOrNull ?? false;
   final isOnboardingCompleteAsync = ref.watch(isOnboardingCompleteProvider);
   final isOnboardingComplete = isOnboardingCompleteAsync.valueOrNull ?? false;
+  final accountType = ref.watch(accountTypeProvider).valueOrNull ?? 'agence';
 
   return GoRouter(
     navigatorKey: rootNavigatorKey,
@@ -71,6 +75,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       }
 
       if (isAuthRoute || currentPath == '/onboarding') {
+        return '/dashboard';
+      }
+
+      // Commissions n'a pas de sens pour un compte Particulier (pas de
+      // notion de commission, D7) — masqué du shell ET bloqué en accès
+      // direct (deep link, ancien favori, etc.).
+      if (accountType == 'particulier' && currentPath == '/commissions') {
         return '/dashboard';
       }
 
@@ -158,6 +169,26 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/notifications',
         builder: (context, state) => const NotificationsScreen(),
+      ),
+
+      // Multi-agence (D-affiliation) — vue "patron" en lecture seule
+      GoRoute(
+        path: '/agences/mes-agences',
+        builder: (context, state) => const MesAgencesScreen(),
+      ),
+      GoRoute(
+        path: '/agences/mes-agences/:id',
+        builder: (context, state) => AgenceSyncDetailScreen(
+          agenceId: int.parse(state.pathParameters['id']!),
+          title: state.uri.queryParameters['title'],
+        ),
+      ),
+
+      // Multi-téléphone Particulier — même mécanisme D-affiliation, jamais
+      // de vocabulaire "agence" côté UI (D7).
+      GoRoute(
+        path: '/telephones/mes-telephones',
+        builder: (context, state) => const MesTelephonesScreen(),
       ),
 
       // Export

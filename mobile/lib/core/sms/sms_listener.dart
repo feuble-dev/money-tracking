@@ -2,14 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
-import '../database/database_helper.dart';
-import '../database/transaction_repository.dart';
-import '../notifications/notification_service.dart';
-import '../licence/licence_storage.dart';
-import 'commission_calculator.dart';
-import 'sms_field_extractor.dart';
-import 'sms_matching_engine.dart';
+import 'sms_processing_pipeline.dart';
 
 /// Provider pour l'état du service SMS
 final smsServiceActiveProvider = StateProvider<bool>((ref) => false);
@@ -22,7 +15,6 @@ class SmsListenerService {
   SmsListenerService._();
 
   static const _smsChannel = EventChannel('com.rftech.moneytracking/sms');
-  final _uuid = const Uuid();
 
   ValueChanged<Map<String, dynamic>>? onTransactionDetected;
   void Function(String sender, String body)? onSmsRawReceived;
@@ -112,164 +104,6 @@ class SmsListenerService {
   }
 
   Future<void> _handleSms(String sender, String body) async {
-    final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now();
-
-    // 1. Vérifier si ce SMS est déjà en base (déduplication DB)
-    final existing = await db.query('sms_messages',
-      where: 'sender = ? AND body = ? AND received_at > ?',
-      whereArgs: [sender, body, now.subtract(const Duration(minutes: 2)).toIso8601String()],
-      limit: 1,
-    );
-    if (existing.isNotEmpty) {
-      debugPrint('[SMS] Déjà en base, ignoré');
-      return;
-    }
-
-    // 2. Enregistrer le SMS
-    final smsId = _uuid.v4();
-    await db.insert('sms_messages', {
-      'id': smsId,
-      'sender': sender,
-      'body': body,
-      'received_at': now.toIso8601String(),
-      'processed': 0,
-      'created_at': now.toIso8601String(),
-    });
-
-    // 3. Chercher l'opérateur par sender
-    var operators = await db.query('operators',
-      where: 'LOWER(sms_sender) = LOWER(?) AND is_active = 1',
-      whereArgs: [sender.trim()],
-    );
-    if (operators.isEmpty) {
-      operators = await db.rawQuery('''
-        SELECT * FROM operators
-        WHERE is_active = 1 AND sms_sender IS NOT NULL AND sms_sender != ''
-          AND (LOWER(?) LIKE '%' || LOWER(sms_sender) || '%'
-               OR LOWER(sms_sender) LIKE '%' || LOWER(?) || '%')
-      ''', [sender.trim(), sender.trim()]);
-    }
-
-    if (operators.isEmpty) {
-      debugPrint('[SMS] Aucun opérateur pour: "$sender"');
-      return;
-    }
-
-    final op = operators.first;
-    final operatorId = op['id'] as String;
-    final operatorName = op['name'] as String;
-
-    // 4. Vérifier si le SMS correspond à un des patterns de cet opérateur
-    // (moteur unique, partagé avec l'import historique — SmsMatchingEngine)
-    final patterns = await SmsMatchingEngine.loadPatternsForOperator(db, operatorId);
-    final smsMatch = SmsMatchingEngine.match(body, patterns);
-
-    // Si aucun pattern matché → ce n'est PAS une transaction, ignorer
-    if (smsMatch == null) {
-      debugPrint('[SMS] Aucun pattern matché — pas une transaction, ignoré');
-      return;
-    }
-    final transactionType = smsMatch.transactionTypeCode;
-    final extracted = smsMatch.extractedFields;
-
-    final amount = SmsFieldExtractor.parseMontant(extracted['montant']);
-    final clientPhone = SmsFieldExtractor.cleanPhone(extracted['numero_client']);
-    if (amount == null || amount <= 0) return;
-
-    // 5. Commission
-    final commission = CommissionCalculator.compute(
-      amount: amount,
-      commissionTaux: smsMatch.commissionTaux,
-    );
-
-    // 6. Chercher le client
-    String? clientId;
-    String? clientName = extracted['nom_client'];
-    bool clientExists = false;
-
-    if (clientPhone != null && clientPhone.isNotEmpty) {
-      final clients = await db.query('clients',
-          where: 'phone_number = ?', whereArgs: [clientPhone]);
-      if (clients.isNotEmpty) {
-        clientId = clients.first['id'] as String;
-        clientName ??= '${clients.first['first_name']} ${clients.first['last_name']}';
-        clientExists = true;
-      }
-    }
-
-    // 7. Vérifier licence avant de créer la transaction
-    final licenceStatut = await LicenceStorage.verifierLocalement();
-    final peutCreer = licenceStatut == LicenceStatut.active ||
-        licenceStatut == LicenceStatut.essaiActif ||
-        licenceStatut == LicenceStatut.expireBientot;
-
-    if (!peutCreer) {
-      // SMS enregistré mais pas de transaction
-      debugPrint('[SMS] Licence inactive — SMS enregistré sans transaction');
-      await NotificationService().showPendingTransactionNotification(
-        transactionId: smsId,
-        type: transactionType,
-        typeLabel: smsMatch.typeLabel,
-        amount: amount,
-        clientPhone: clientPhone ?? '',
-        operatorName: 'Licence requise',
-      );
-      return;
-    }
-
-    // Créer la transaction (licence active)
-    final txId = _uuid.v4();
-    final txData = {
-      'id': txId,
-      'operator_id': operatorId,
-      'client_id': clientId,
-      'transaction_type': transactionType,
-      'transaction_type_id': smsMatch.transactionTypeId,
-      'direction': smsMatch.direction,
-      'amount': amount,
-      'commission': commission,
-      'client_phone': clientPhone ?? '',
-      'client_name': clientName,
-      'operator_transaction_id': extracted['operator_transaction_id'],
-      'status': 'pending',
-      'source': 'sms_auto',
-      'sms_id': smsId,
-      'sms_raw': body,
-      'created_at': now.toIso8601String(),
-    };
-    await TransactionRepository.instance.insert(txData);
-
-    await db.update('sms_messages', {'processed': 1, 'transaction_id': txId},
-        where: 'id = ?', whereArgs: [smsId]);
-
-    final typeLabel = smsMatch.typeLabel;
-
-    // 8. Notification selon client connu ou inconnu
-    if (clientExists) {
-      // Client connu → notification simple
-      await NotificationService().showPendingTransactionNotification(
-        transactionId: txId,
-        type: transactionType,
-        typeLabel: typeLabel,
-        amount: amount,
-        clientPhone: clientPhone ?? '',
-        operatorName: '$typeLabel — $clientName',
-      );
-    } else {
-      // Client INCONNU → notification invite à créer le client
-      // Le payload contient l'ID transaction pour ouvrir le formulaire client
-      await NotificationService().showPendingTransactionNotification(
-        transactionId: txId,
-        type: transactionType,
-        typeLabel: typeLabel,
-        amount: amount,
-        clientPhone: clientPhone ?? 'inconnu',
-        operatorName: '$typeLabel — Nouveau client. Appuyez pour compléter.',
-      );
-    }
-
-    onTransactionDetected?.call({...txData, 'operator_name': operatorName});
-    debugPrint('[SMS] ✅ $typeLabel ${amount.toInt()} FCFA — ${clientPhone ?? "?"} ($operatorName)');
+    await processIncomingSms(sender, body, onTransactionDetected: onTransactionDetected);
   }
 }

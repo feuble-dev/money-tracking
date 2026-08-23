@@ -165,6 +165,38 @@ class LicenceService:
         )
         return {'agence': agence, 'licence': licence}
 
+    @staticmethod
+    def cloner_licence_pour_device(agence, device_id: str):
+        """
+        Émet une licence pour un second appareil opérant la même agence
+        (agent affilié — voir sync.AffiliationRequest). Reprend le statut et
+        la date de fin de la licence active de l'agence : c'est la même
+        agence, donc le même cycle de vie de licence (D8), juste un
+        deuxième device_id autorisé à l'opérer. Ne consomme pas un nouvel
+        essai (D10 ne s'applique qu'à la création d'une agence).
+        """
+        from .models import Licence
+
+        reference = agence.licences.filter(
+            statut__in=['active', 'essai']
+        ).order_by('-date_fin').first()
+        if reference is None:
+            return None
+
+        code = LicenceService.generer_code(
+            device_id, agence.client.telephone, reference.date_fin, agence.id
+        )
+        return Licence.objects.create(
+            agence=agence,
+            code=code,
+            device_id=device_id,
+            date_debut=reference.date_debut,
+            date_fin=reference.date_fin,
+            duree_mois=reference.duree_mois,
+            montant_paye=0,
+            statut=reference.statut,
+        )
+
 
 class HistoriqueService:
 

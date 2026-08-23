@@ -1,10 +1,8 @@
 package com.rftech.mobitracking
 
 import android.content.Intent
-import android.content.IntentFilter
 import android.database.Cursor
 import android.net.Uri
-import android.provider.Telephony
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -17,7 +15,6 @@ class MainActivity : FlutterActivity() {
     private val SMS_EVENT_CHANNEL = "com.rftech.moneytracking/sms"
     private val SMS_INBOX_CHANNEL = "com.rftech.moneytracking/sms_inbox"
 
-    private var smsReceiver: SmsReceiver? = null
     private var eventSink: EventChannel.EventSink? = null
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
@@ -66,15 +63,21 @@ class MainActivity : FlutterActivity() {
         }
 
         // === EventChannel pour recevoir les SMS en temps réel ===
+        // Le BroadcastReceiver lui-même (.SmsReceiver) est déclaré une seule
+        // fois dans AndroidManifest.xml et reste actif tant que le process
+        // vit (premier plan ou arrière-plan) — ici on ne fait que
+        // brancher/débrancher le callback statique qui relaie vers l'
+        // EventSink Flutter. Registrer un DEUXIÈME receiver dynamique en
+        // plus du receiver déclaré dans le manifest ferait recevoir chaque
+        // SMS deux fois (même callback statique invoqué par les deux
+        // instances) — la déduplication côté Dart existe, mais autant ne
+        // pas dupliquer l'enregistrement du receiver pour rien.
         EventChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             SMS_EVENT_CHANNEL
         ).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                 eventSink = events
-
-                // Enregistrer le BroadcastReceiver
-                smsReceiver = SmsReceiver()
                 SmsReceiver.onSmsReceived = { sender, body ->
                     // Envoyer vers Flutter via l'EventSink (thread UI)
                     runOnUiThread {
@@ -85,20 +88,11 @@ class MainActivity : FlutterActivity() {
                         ))
                     }
                 }
-
-                val filter = IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION)
-                filter.priority = 999
-                registerReceiver(smsReceiver, filter)
-
                 android.util.Log.d("MainActivity", "SMS EventChannel: listening")
             }
 
             override fun onCancel(arguments: Any?) {
                 SmsReceiver.onSmsReceived = null
-                smsReceiver?.let {
-                    try { unregisterReceiver(it) } catch (_: Exception) {}
-                }
-                smsReceiver = null
                 eventSink = null
                 android.util.Log.d("MainActivity", "SMS EventChannel: cancelled")
             }
@@ -160,9 +154,6 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         SmsReceiver.onSmsReceived = null
-        smsReceiver?.let {
-            try { unregisterReceiver(it) } catch (_: Exception) {}
-        }
         super.onDestroy()
     }
 }

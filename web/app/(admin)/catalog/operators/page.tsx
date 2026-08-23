@@ -5,8 +5,10 @@ import { useSearchParams } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import CreateOperatorModal from '@/components/admin/CreateOperatorModal';
+import EditOperatorModal from '@/components/admin/EditOperatorModal';
+import ConfirmModal from '@/components/admin/ConfirmModal';
 import CatalogTabs from '@/components/admin/CatalogTabs';
-import { getOperators, getCountries } from '@/lib/api';
+import { getOperators, getCountries, deleteOperator } from '@/lib/api';
 
 interface Operator {
   id: number;
@@ -32,6 +34,8 @@ export default function OperatorsPage() {
   const [countryFilter, setCountryFilter] = useState<number | ''>(countryIdParam ? Number(countryIdParam) : '');
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Operator | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Operator | null>(null);
 
   const loadOperators = useCallback(async () => {
     setLoading(true);
@@ -93,12 +97,13 @@ export default function OperatorsPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Expéditeur SMS</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Statut</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Configuration</th>
+                  <th className="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {operators.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center py-12 text-gray-400 text-sm">
+                    <td colSpan={6} className="text-center py-12 text-gray-400 text-sm">
                       Aucun opérateur trouvé
                     </td>
                   </tr>
@@ -128,6 +133,16 @@ export default function OperatorsPage() {
                           Gérer les types &amp; patterns
                         </a>
                       </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-3">
+                          <button onClick={() => setEditTarget(op)} className="text-sm font-medium text-primary hover:underline">
+                            Modifier
+                          </button>
+                          <button onClick={() => setDeleteTarget(op)} className="text-sm font-medium text-red-600 hover:underline">
+                            Supprimer
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -143,6 +158,23 @@ export default function OperatorsPage() {
         onCreated={loadOperators}
         defaultCountryId={countryFilter || undefined}
       />
+
+      <EditOperatorModal
+        isOpen={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={loadOperators}
+        operator={editTarget}
+      />
+
+      {deleteTarget && (
+        <ConfirmModal
+          isOpen={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async () => { await deleteOperator(deleteTarget.id); await loadOperators(); }}
+          title={`Supprimer ${deleteTarget.name} ?`}
+          message="Impossible si des types de transaction ou patterns SMS sont encore rattachés à cet opérateur — supprimez-les d'abord."
+        />
+      )}
     </div>
   );
 }

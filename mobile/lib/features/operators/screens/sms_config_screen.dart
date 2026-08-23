@@ -1,23 +1,21 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
-import '../../../core/sms/sms_field_extractor.dart';
+import '../../../core/sms/sms_pattern_builder.dart';
 import '../../../core/theme/app_colors.dart';
 import '../models/sms_pattern_model.dart';
 import '../providers/operator_provider.dart';
+import '../providers/transaction_type_provider.dart';
+import '../widgets/sms_zone_tagger.dart';
 
-/// Champs extractibles avec leur label et icône
-const _fieldLabels = {
-  'montant': ('Montant', Icons.attach_money, AppColors.depositColor),
-  'numero_client': ('N. Client', Icons.phone_android, AppColors.primaryColor),
-  'operator_transaction_id': ('ID Trans.', Icons.bookmark, AppColors.accentColor),
-  'solde': ('Solde', Icons.account_balance_wallet, Colors.teal),
-  'nom_client': ('Nom Client', Icons.person, Colors.purple),
-};
-
-/// Écran de configuration SMS simplifié avec auto-détection
+/// Écran de configuration SMS — tagging réel de zones (montant, numéro
+/// client, etc.) sur un SMS exemple, rattaché à un type de transaction
+/// précis de cet opérateur (operator_transaction_type_id). Produit toujours
+/// une vraie regex compilée (SmsPatternBuilder), jamais l'ancien
+/// 'auto_detect' heuristique — c'est ce dernier qui permettait à un SMS
+/// d'achat de crédit d'être pris pour un transfert, faute de discriminant
+/// réel entre types de transaction.
 class SmsConfigScreen extends ConsumerStatefulWidget {
   final String operatorId;
 
@@ -30,12 +28,12 @@ class SmsConfigScreen extends ConsumerStatefulWidget {
 class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
   final _smsController = TextEditingController();
   final _testSmsController = TextEditingController();
-  String _transactionType = 'deposit';
-  int _currentStep = 0;
 
-  // Résultats de l'auto-détection
-  Map<String, String> _detectedFields = {};
-  Map<String, String> _testDetectedFields = {};
+  OperatorTransactionTypeOption? _selectedType;
+  String? _directionOverride; // null = sens par défaut du type
+  List<TaggedZone> _zones = [];
+  Map<String, String>? _testResult;
+  int _currentStep = 0;
 
   @override
   void dispose() {
@@ -44,46 +42,112 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
     super.dispose();
   }
 
-  /// Lance l'auto-détection sur le SMS exemple
-  void _autoDetect() {
-    final sms = _smsController.text.trim();
-    if (sms.isEmpty) return;
+  Future<void> _createCustomType() async {
+    final labelController = TextEditingController();
+    String direction = 'in';
+    final created = await showDialog<OperatorTransactionTypeOption>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Nouveau type de transaction'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: labelController,
+                decoration: const InputDecoration(labelText: 'Libellé (ex: Paiement marchand)'),
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'in', label: Text('Entrant')),
+                  ButtonSegment(value: 'out', label: Text('Sortant')),
+                ],
+                selected: {direction},
+                onSelectionChanged: (v) => setDialogState(() => direction = v.first),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton(
+              onPressed: () async {
+                if (labelController.text.trim().isEmpty) return;
+                final option = await TransactionTypeRepository.createCustomTypeForOperator(
+                  operatorId: widget.operatorId,
+                  label: labelController.text.trim(),
+                  defaultDirection: direction,
+                );
+                if (ctx.mounted) Navigator.pop(ctx, option);
+              },
+              child: const Text('Créer'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (created != null) {
+      ref.invalidate(operatorTransactionTypesProvider(widget.operatorId));
+      setState(() => _selectedType = created);
+    }
+  }
 
-    final detected = SmsFieldExtractor.extractAll(sms);
-    final type = SmsFieldExtractor.detectTransactionType(sms);
-
+  void _runTest() {
+    final regex = SmsPatternBuilder.buildRegex(_smsController.text, _zones);
     setState(() {
-      _detectedFields = detected;
-      if (type != null) _transactionType = type;
+      _testResult = SmsPatternBuilder.parseSms(_testSmsController.text, regex);
     });
   }
 
-  /// Teste sur un autre SMS
-  void _runTest() {
-    final sms = _testSmsController.text.trim();
-    if (sms.isEmpty) return;
+  Future<void> _savePattern() async {
+    final type = _selectedType;
+    if (type == null) return;
+    final regex = SmsPatternBuilder.buildRegex(_smsController.text, _zones);
 
-    setState(() {
-      _testDetectedFields = SmsFieldExtractor.extractAll(sms);
-    });
+    final pattern = SmsPatternModel(
+      id: const Uuid().v4(),
+      operatorId: widget.operatorId,
+      transactionType: type.code,
+      operatorTransactionTypeId: type.linkId,
+      direction: _directionOverride ?? type.defaultDirection,
+      taggedZonesJson: SmsPatternBuilder.zonesToJson(_zones),
+      source: 'custom',
+      rawExample: _smsController.text,
+      patternJson: SmsPatternBuilder.zonesToJson(_zones),
+      regexGenerated: regex,
+    );
+
+    await SmsPatternRepository.savePattern(pattern);
+    ref.invalidate(smsPatternsProvider(widget.operatorId));
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Pattern SMS sauvegardé'),
+          backgroundColor: AppColors.withdrawColor,
+        ),
+      );
+      context.pop();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final patternsAsync = ref.watch(smsPatternsProvider(widget.operatorId));
+    final typesAsync = ref.watch(operatorTransactionTypesProvider(widget.operatorId));
 
     return Scaffold(
       appBar: AppBar(title: const Text('Configuration SMS')),
       body: Column(
         children: [
-          // Patterns existants
           patternsAsync.when(
             loading: () => const SizedBox.shrink(),
             error: (_, _) => const SizedBox.shrink(),
             data: (patterns) {
               if (patterns.isEmpty) return const SizedBox.shrink();
               return Container(
-                height: 80,
+                height: 56,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
@@ -93,18 +157,12 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
                     return Container(
                       margin: const EdgeInsets.only(right: 8),
                       child: Chip(
-                        label: Text(
-                          '${p.transactionType == 'deposit' ? 'Dépôt' : 'Retrait'} — ${p.senderFilter ?? 'Tous'}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
+                        label: Text(p.transactionType, style: const TextStyle(fontSize: 12)),
                         deleteIcon: const Icon(Icons.close, size: 16),
                         onDeleted: () async {
                           await SmsPatternRepository.deletePattern(p.id);
                           ref.invalidate(smsPatternsProvider(widget.operatorId));
                         },
-                        backgroundColor: p.transactionType == 'deposit'
-                            ? AppColors.depositColor.withAlpha(30)
-                            : AppColors.withdrawColor.withAlpha(30),
                       ),
                     );
                   },
@@ -112,15 +170,11 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
               );
             },
           ),
-
-          // Stepper
           Expanded(
             child: Stepper(
               currentStep: _currentStep,
-              onStepContinue: _onStepContinue,
-              onStepCancel: _currentStep > 0
-                  ? () => setState(() => _currentStep--)
-                  : null,
+              onStepContinue: () => _onStepContinue(typesAsync.value ?? []),
+              onStepCancel: _currentStep > 0 ? () => setState(() => _currentStep--) : null,
               controlsBuilder: (context, details) {
                 return Padding(
                   padding: const EdgeInsets.only(top: 16),
@@ -128,50 +182,38 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
                     children: [
                       ElevatedButton(
                         onPressed: details.onStepContinue,
-                        child: Text(
-                          _currentStep == 3 ? 'Sauvegarder' : 'Suivant',
-                        ),
+                        child: Text(_currentStep == 3 ? 'Sauvegarder' : 'Suivant'),
                       ),
                       if (_currentStep > 0) ...[
                         const SizedBox(width: 12),
-                        TextButton(
-                          onPressed: details.onStepCancel,
-                          child: const Text('Retour'),
-                        ),
+                        TextButton(onPressed: details.onStepCancel, child: const Text('Retour')),
                       ],
                     ],
                   ),
                 );
               },
               steps: [
-                // Étape 1 — Coller le SMS
                 Step(
-                  title: const Text('SMS exemple'),
-                  subtitle: const Text('Collez un SMS de l\'opérateur'),
+                  title: const Text('Type & SMS exemple'),
+                  subtitle: const Text('Choisissez le type visé et collez un SMS'),
                   isActive: _currentStep >= 0,
                   state: _currentStep > 0 ? StepState.complete : StepState.indexed,
-                  content: _buildStep1(),
+                  content: _buildStep1(typesAsync),
                 ),
-
-                // Étape 2 — Auto-détection
                 Step(
-                  title: const Text('Détection automatique'),
-                  subtitle: const Text('Vérifiez les champs détectés'),
+                  title: const Text('Tagger les zones'),
+                  subtitle: const Text('Montant obligatoire, le reste optionnel'),
                   isActive: _currentStep >= 1,
                   state: _currentStep > 1 ? StepState.complete : StepState.indexed,
                   content: _buildStep2(),
                 ),
-
-                // Étape 3 — Test
                 Step(
                   title: const Text('Test'),
-                  subtitle: const Text('Testez avec un autre SMS'),
+                  subtitle: const Text('Vérifiez avec un second SMS'),
                   isActive: _currentStep >= 2,
                   state: _currentStep > 2 ? StepState.complete : StepState.indexed,
                   content: _buildStep3(),
                 ),
-
-                // Étape 4 — Sauvegarder
                 Step(
                   title: const Text('Sauvegarder'),
                   isActive: _currentStep >= 3,
@@ -185,32 +227,62 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
     );
   }
 
-  /// Étape 1 — Type + SMS exemple
-  Widget _buildStep1() {
+  Widget _buildStep1(AsyncValue<List<OperatorTransactionTypeOption>> typesAsync) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SegmentedButton<String>(
-          segments: const [
-            ButtonSegment(
-              value: 'deposit',
-              label: Text('Dépôt'),
-              icon: Icon(Icons.arrow_downward),
-            ),
-            ButtonSegment(
-              value: 'withdrawal',
-              label: Text('Retrait'),
-              icon: Icon(Icons.arrow_upward),
-            ),
-          ],
-          selected: {_transactionType},
-          onSelectionChanged: (v) =>
-              setState(() => _transactionType = v.first),
+        typesAsync.when(
+          loading: () => const CircularProgressIndicator(),
+          error: (_, _) => const Text('Erreur de chargement des types'),
+          data: (types) {
+            if (types.isEmpty) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Aucun type de transaction activé pour cet opérateur.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _createCustomType,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Créer un type'),
+                  ),
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedType?.linkId,
+                  decoration: const InputDecoration(labelText: 'Type de transaction *'),
+                  items: types
+                      .map((t) => DropdownMenuItem(
+                            value: t.linkId,
+                            child: Text('${t.label} (${t.defaultDirection == 'in' ? 'entrant' : 'sortant'})'),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setState(() {
+                    _selectedType = types.firstWhere((t) => t.linkId == v);
+                  }),
+                ),
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: _createCustomType,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Nouveau type'),
+                ),
+              ],
+            );
+          },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         TextFormField(
           controller: _smsController,
           maxLines: 6,
+          onChanged: (_) => setState(() => _zones = []),
           decoration: const InputDecoration(
             labelText: 'SMS exemple *',
             hintText: 'Collez ici un SMS de confirmation de l\'opérateur...',
@@ -221,121 +293,17 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
     );
   }
 
-  /// Étape 2 — Résultat de l'auto-détection
   Widget _buildStep2() {
-    if (_detectedFields.isEmpty) {
-      return Column(
-        children: [
-          const Text('Appuyez sur "Détecter" pour analyser le SMS.'),
-          const SizedBox(height: 12),
-          ElevatedButton.icon(
-            onPressed: _autoDetect,
-            icon: const Icon(Icons.auto_fix_high),
-            label: const Text('Détecter automatiquement'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primaryColor,
-            ),
-          ),
-        ],
-      );
+    if (_smsController.text.trim().isEmpty) {
+      return const Text('Retournez à l\'étape précédente pour coller un SMS.');
     }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Résultats
-        ..._fieldLabels.entries.map((entry) {
-          final fieldName = entry.key;
-          final (label, icon, color) = entry.value;
-          final value = _detectedFields[fieldName];
-          final found = value != null;
-
-          return Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: found
-                  ? AppColors.withdrawColor.withAlpha(15)
-                  : Colors.grey.withAlpha(15),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: found
-                    ? AppColors.withdrawColor.withAlpha(40)
-                    : Colors.grey.withAlpha(40),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  found ? Icons.check_circle : Icons.radio_button_unchecked,
-                  color: found ? AppColors.withdrawColor : Colors.grey,
-                  size: 20,
-                ),
-                const SizedBox(width: 10),
-                Icon(icon, size: 16, color: color),
-                const SizedBox(width: 6),
-                Text(label,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 13)),
-                const Spacer(),
-                if (found)
-                  Flexible(
-                    child: Text(
-                      value,
-                      style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                if (!found)
-                  const Text('Non détecté',
-                      style: TextStyle(
-                          color: Colors.grey,
-                          fontSize: 12,
-                          fontStyle: FontStyle.italic)),
-              ],
-            ),
-          );
-        }),
-
-        const SizedBox(height: 12),
-        // Bouton re-détecter
-        OutlinedButton.icon(
-          onPressed: _autoDetect,
-          icon: const Icon(Icons.refresh, size: 18),
-          label: const Text('Re-détecter'),
-        ),
-
-        if (!_detectedFields.containsKey('montant'))
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.red.withAlpha(15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning_amber, color: Colors.red, size: 18),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Le montant n\'a pas été détecté. Vérifiez que le SMS est bien un SMS de transaction.',
-                      style: TextStyle(fontSize: 12, color: Colors.red),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
+    return SmsZoneTagger(
+      rawExample: _smsController.text,
+      zones: _zones,
+      onZonesChange: (z) => setState(() => _zones = z),
     );
   }
 
-  /// Étape 3 — Test avec un autre SMS
   Widget _buildStep3() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -354,98 +322,49 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
           onPressed: _runTest,
           icon: const Icon(Icons.play_arrow),
           label: const Text('Tester'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryLight,
-          ),
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryLight),
         ),
-        if (_testDetectedFields.isNotEmpty) ...[
+        if (_testResult != null) ...[
           const SizedBox(height: 16),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppColors.withdrawColor.withAlpha(20),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.withdrawColor.withAlpha(60)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.check_circle,
-                        color: AppColors.withdrawColor, size: 20),
-                    SizedBox(width: 8),
-                    Text('Valeurs extraites :',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.withdrawColor)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                ..._testDetectedFields.entries.map((e) {
-                  final fieldInfo = _fieldLabels[e.key];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      children: [
-                        Icon(fieldInfo?.$2 ?? Icons.label,
-                            size: 16, color: fieldInfo?.$3),
-                        const SizedBox(width: 8),
-                        Text('${fieldInfo?.$1 ?? e.key}: ',
-                            style: const TextStyle(fontWeight: FontWeight.w500)),
-                        Flexible(
-                          child: Text(e.value,
-                              style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontWeight: FontWeight.w600)),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-        ],
-        if (_testDetectedFields.isEmpty &&
-            _testSmsController.text.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.withdrawColor.withAlpha(20),
+              color: (_testResult!.isEmpty ? Colors.orange : AppColors.withdrawColor).withAlpha(20),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.error_outline,
-                    color: Colors.orange, size: 20),
-                SizedBox(width: 8),
-                Text('Aucun champ détecté',
-                    style: TextStyle(color: Colors.orange)),
-              ],
-            ),
+            child: _testResult!.isEmpty
+                ? const Text('Aucun champ détecté sur ce SMS de test.', style: TextStyle(color: Colors.orange))
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _testResult!.entries
+                        .map((e) => Text('${e.key}: ${e.value}', style: const TextStyle(fontFamily: 'monospace')))
+                        .toList(),
+                  ),
           ),
         ],
       ],
     );
   }
 
-  /// Étape 4 — Résumé et sauvegarde
   Widget _buildStep4() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _summaryRow('Type',
-            _transactionType == 'deposit' ? 'Dépôt' : 'Retrait'),
-        _summaryRow('Champs détectés',
-            _detectedFields.keys.map((k) => _fieldLabels[k]?.$1 ?? k).join(', ')),
-        const SizedBox(height: 8),
-        const Text(
-          'Le pattern sera utilisé pour détecter automatiquement les transactions depuis les SMS entrants.',
-          style: TextStyle(fontSize: 13, color: Colors.grey),
+        _summaryRow('Type', _selectedType?.label ?? '—'),
+        _summaryRow('Zones taguées', _zones.map((z) => z.fieldName).join(', ')),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String?>(
+          initialValue: _directionOverride,
+          decoration: InputDecoration(
+            labelText: 'Sens (optionnel — défaut : ${_selectedType?.defaultDirection == 'in' ? 'entrant' : 'sortant'})',
+          ),
+          items: const [
+            DropdownMenuItem(value: null, child: Text('Utiliser le sens par défaut')),
+            DropdownMenuItem(value: 'in', child: Text('Entrant')),
+            DropdownMenuItem(value: 'out', child: Text('Sortant')),
+          ],
+          onChanged: (v) => setState(() => _directionOverride = v),
         ),
       ],
     );
@@ -457,34 +376,33 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 120,
-            child: Text(label,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-          ),
+          SizedBox(width: 120, child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
           Expanded(child: Text(value)),
         ],
       ),
     );
   }
 
-  void _onStepContinue() {
+  void _onStepContinue(List<OperatorTransactionTypeOption> types) {
     switch (_currentStep) {
       case 0:
+        if (_selectedType == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Choisissez un type de transaction')),
+          );
+          return;
+        }
         if (_smsController.text.trim().isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Veuillez coller un SMS exemple')),
           );
           return;
         }
-        // Auto-détecter automatiquement à l'étape 2
-        _autoDetect();
         break;
       case 1:
-        if (!_detectedFields.containsKey('montant')) {
+        if (!_zones.any((z) => z.fieldName == 'montant')) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Le montant doit être détecté pour continuer')),
+            const SnackBar(content: Text('Taguez au moins la zone "montant"')),
           );
           return;
         }
@@ -497,33 +415,5 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
     setState(() {
       if (_currentStep < 3) _currentStep++;
     });
-  }
-
-  Future<void> _savePattern() async {
-    // Sauvegarder les patterns utilisés pour cette détection
-    final patternJson = jsonEncode(SmsFieldExtractor.fieldPatterns);
-
-    final pattern = SmsPatternModel(
-      id: const Uuid().v4(),
-      operatorId: widget.operatorId,
-      transactionType: _transactionType,
-      senderFilter: null,
-      rawExample: _smsController.text,
-      patternJson: patternJson,
-      regexGenerated: 'auto_detect', // Plus de regex monolithique
-    );
-
-    await SmsPatternRepository.savePattern(pattern);
-    ref.invalidate(smsPatternsProvider(widget.operatorId));
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Configuration SMS sauvegardée'),
-          backgroundColor: AppColors.withdrawColor,
-        ),
-      );
-      context.pop();
-    }
   }
 }

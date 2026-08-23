@@ -100,6 +100,11 @@ export async function updateCountry(id: number, data: Partial<{ name: string; di
   return res.data;
 }
 
+export async function deleteCountry(id: number) {
+  const res = await api.delete(`/admin/catalog/countries/${id}/`);
+  return res.data;
+}
+
 // Catalogue — Opérateurs (POST en FormData pour le logo)
 export async function getOperators(countryId?: number) {
   const params = countryId ? { country_id: countryId } : {};
@@ -122,6 +127,11 @@ export async function updateOperator(id: number, data: FormData | Partial<{ name
   return res.data;
 }
 
+export async function deleteOperator(id: number) {
+  const res = await api.delete(`/admin/catalog/operators/${id}/`);
+  return res.data;
+}
+
 // Catalogue — Types de transaction (catalogue GLOBAL, D3)
 export async function getTransactionTypes() {
   const res = await api.get('/admin/catalog/transaction-types/');
@@ -135,6 +145,11 @@ export async function createTransactionType(data: { code: string; label: string;
 
 export async function updateTransactionType(id: number, data: Partial<{ label: string; default_direction: string; is_active: boolean }>) {
   const res = await api.patch(`/admin/catalog/transaction-types/${id}/`, data);
+  return res.data;
+}
+
+export async function deleteTransactionType(id: number) {
+  const res = await api.delete(`/admin/catalog/transaction-types/${id}/`);
   return res.data;
 }
 

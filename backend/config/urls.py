@@ -9,6 +9,7 @@ urlpatterns = [
     path('api/admin/', include('licences.admin_urls')),
     path('api/catalog/', include('catalog.urls')),
     path('api/admin/catalog/', include('catalog.admin_urls')),
+    path('api/sync/', include('sync.urls')),
 ]
 
 if settings.DEBUG:

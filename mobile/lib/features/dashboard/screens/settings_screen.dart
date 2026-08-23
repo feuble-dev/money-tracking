@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_notifier.dart';
 
@@ -83,6 +84,14 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: const Text('Vérifier si les SMS sont captés'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => context.push('/settings/sms-test'),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.battery_charging_full, color: AppColors.accentColor),
+                  title: const Text('Fonctionnement en arrière-plan'),
+                  subtitle: const Text('Autoriser la détection même app fermée'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _demanderExemptionBatterie(context),
                 ),
               ],
             ),
@@ -252,6 +261,55 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Demande l'exemption d'optimisation batterie — nécessaire sur beaucoup
+  /// d'appareils (Xiaomi, Tecno, Infinix, Samsung...) pour que la détection
+  /// SMS continue de fonctionner quand l'app est fermée. Toujours précédé
+  /// d'une explication : jamais demandé silencieusement.
+  Future<void> _demanderExemptionBatterie(BuildContext context) async {
+    final statut = await Permission.ignoreBatteryOptimizations.status;
+    if (statut.isGranted) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Déjà autorisé — l\'app peut fonctionner en arrière-plan')),
+        );
+      }
+      return;
+    }
+
+    if (!context.mounted) return;
+    final confirme = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Fonctionnement en arrière-plan'),
+        content: const Text(
+          'Pour que MoneyTracking détecte vos SMS même quand l\'app est '
+          'fermée, Android doit être autorisé à ne pas la mettre en veille '
+          'forcée. Sans ça, certains téléphones (Xiaomi, Tecno, Infinix, '
+          'Samsung...) coupent la détection après quelques minutes.\n\n'
+          'L\'écran suivant vient d\'Android — choisissez "Autoriser" ou '
+          '"Ne pas optimiser".',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Continuer')),
+        ],
+      ),
+    );
+    if (confirme != true) return;
+
+    final resultat = await Permission.ignoreBatteryOptimizations.request();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          resultat.isGranted
+              ? 'Autorisé — MoneyTracking peut fonctionner en arrière-plan'
+              : 'Non autorisé — la détection pourrait s\'arrêter app fermée sur certains téléphones',
+        ),
       ),
     );
   }

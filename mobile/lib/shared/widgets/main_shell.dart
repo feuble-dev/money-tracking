@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/licence/licence_storage.dart';
+import '../../core/onboarding/onboarding_state.dart';
 import '../../core/theme/app_colors.dart';
 import '../../features/transactions/providers/transaction_provider.dart';
 import 'app_drawer.dart';
@@ -19,6 +20,13 @@ class MainShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final pendingCount = ref.watch(pendingCountProvider);
+    // Commissions n'a pas de sens pour un compte Particulier (D7) — masqué
+    // du shell (le router bloque aussi l'accès direct à /commissions).
+    final accountType = ref.watch(accountTypeProvider).valueOrNull ?? 'agence';
+    final showCommissions = accountType != 'particulier';
+    final currentIndex = showCommissions
+        ? navigationShell.currentIndex
+        : navigationShell.currentIndex.clamp(0, 1);
 
     return Scaffold(
       key: mainScaffoldKey,
@@ -90,7 +98,7 @@ class MainShell extends ConsumerWidget {
             )
           : null,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
+        selectedIndex: currentIndex,
         onDestinationSelected: (index) {
           navigationShell.goBranch(
             index,
@@ -118,11 +126,12 @@ class MainShell extends ConsumerWidget {
             ),
             label: 'Transactions',
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.monetization_on_outlined),
-            selectedIcon: Icon(Icons.monetization_on),
-            label: 'Commissions',
-          ),
+          if (showCommissions)
+            const NavigationDestination(
+              icon: Icon(Icons.monetization_on_outlined),
+              selectedIcon: Icon(Icons.monetization_on),
+              label: 'Commissions',
+            ),
         ],
       ),
     );

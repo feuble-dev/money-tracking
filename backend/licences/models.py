@@ -35,7 +35,7 @@ class Agence(models.Model):
     chacune avec son propre cycle de vie de licence (essai/active/expirée).
     """
     client = models.ForeignKey(
-        Client, on_delete=models.CASCADE,
+        Client, on_delete=models.RESTRICT,
         related_name='agences'
     )
     nom = models.CharField(max_length=100)
@@ -102,7 +102,7 @@ class Licence(models.Model):
     ]
 
     agence = models.ForeignKey(
-        Agence, on_delete=models.CASCADE,
+        Agence, on_delete=models.RESTRICT,
         related_name='licences'
     )
     code = models.CharField(
@@ -225,7 +225,7 @@ class AchatHistorique(models.Model):
     puis 200 FCFA par année supplémentaire (voir HistoriqueService.calculer_cout).
     """
     client = models.ForeignKey(
-        Client, on_delete=models.CASCADE,
+        Client, on_delete=models.RESTRICT,
         related_name='achats_historique'
     )
     device_id = models.CharField(max_length=200)

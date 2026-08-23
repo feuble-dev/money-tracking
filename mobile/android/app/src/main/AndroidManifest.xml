@@ -7,6 +7,10 @@
     <!-- Permission biométrie -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
+    <!-- Exemption d'optimisation batterie — la détection SMS/sync doit
+         continuer même app fermée (demandée explicitement à l'utilisateur
+         depuis les paramètres, jamais silencieusement) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <application
         android:label="MoneyTracking"
@@ -40,9 +44,27 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- BroadcastReceiver pour les SMS entrants -->
+        <!-- BroadcastReceiver natif pour les SMS entrants — app au premier
+             plan ou en arrière-plan mais processus vivant (relié à
+             SmsListenerService via EventChannel, core/sms/sms_listener.dart) -->
         <receiver
             android:name=".SmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- BroadcastReceiver du package another_telephony — c'est celui-ci
+             qui permet la détection même quand l'app est totalement fermée
+             ou vient de rebooter : SMS_RECEIVED est une broadcast protégée,
+             exemptée des restrictions Android 8+ sur les broadcasts
+             implicites, donc Android relance un process minimal pour la
+             délivrer même processus tué (core/sms/background_sms_handler.dart) -->
+        <receiver
+            android:name="com.shounakmulay.telephony.sms.IncomingSmsReceiver"
+            android:enabled="true"
             android:exported="true"
             android:permission="android.permission.BROADCAST_SMS">
             <intent-filter android:priority="999">

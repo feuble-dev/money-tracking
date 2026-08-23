@@ -4,8 +4,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import CreateTransactionTypeModal from '@/components/admin/CreateTransactionTypeModal';
+import EditTransactionTypeModal from '@/components/admin/EditTransactionTypeModal';
+import ConfirmModal from '@/components/admin/ConfirmModal';
 import CatalogTabs from '@/components/admin/CatalogTabs';
-import { getTransactionTypes } from '@/lib/api';
+import { getTransactionTypes, deleteTransactionType } from '@/lib/api';
 
 interface TransactionType {
   id: number;
@@ -19,6 +21,8 @@ export default function TransactionTypesPage() {
   const [types, setTypes] = useState<TransactionType[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<TransactionType | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TransactionType | null>(null);
 
   const loadTypes = useCallback(async () => {
     setLoading(true);
@@ -66,12 +70,13 @@ export default function TransactionTypesPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Libellé</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Sens par défaut</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Statut</th>
+                  <th className="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {types.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="text-center py-12 text-gray-400 text-sm">
+                    <td colSpan={5} className="text-center py-12 text-gray-400 text-sm">
                       Aucun type créé
                     </td>
                   </tr>
@@ -90,6 +95,16 @@ export default function TransactionTypesPage() {
                           {t.is_active ? 'Actif' : 'Inactif'}
                         </Badge>
                       </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-3">
+                          <button onClick={() => setEditTarget(t)} className="text-sm font-medium text-primary hover:underline">
+                            Modifier
+                          </button>
+                          <button onClick={() => setDeleteTarget(t)} className="text-sm font-medium text-red-600 hover:underline">
+                            Supprimer
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -100,6 +115,23 @@ export default function TransactionTypesPage() {
       </div>
 
       <CreateTransactionTypeModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={loadTypes} />
+
+      <EditTransactionTypeModal
+        isOpen={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={loadTypes}
+        transactionType={editTarget}
+      />
+
+      {deleteTarget && (
+        <ConfirmModal
+          isOpen={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async () => { await deleteTransactionType(deleteTarget.id); await loadTypes(); }}
+          title={`Supprimer ${deleteTarget.label} ?`}
+          message="Impossible si ce type est encore attaché à un opérateur — détachez-le d'abord depuis la fiche opérateur."
+        />
+      )}
     </div>
   );
 }

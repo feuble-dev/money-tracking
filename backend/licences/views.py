@@ -195,6 +195,13 @@ class RecupererLicenceView(APIView):
     """
     POST /api/licence/recuperer/
     Body: { telephone, device_id, agence_id }
+
+    Le filtre n'exige PAS que `telephone` corresponde au client propriétaire
+    de l'agence : un agent affilié (voir sync.AffiliationRequest) opère une
+    agence dont le propriétaire ("patron") a un numéro différent du sien.
+    L'autorisation réelle est device_id+agence_id — c'est justement pour ça
+    que LicenceService.cloner_licence_pour_device émet une Licence dédiée au
+    device de l'agent affilié plutôt que de réutiliser celle du patron.
     """
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
@@ -209,7 +216,6 @@ class RecupererLicenceView(APIView):
 
         licence = Licence.objects.filter(
             agence_id=agence_id,
-            agence__client__telephone=telephone,
             device_id=device_id,
             statut__in=['active', 'essai'],
             date_fin__gte=date.today()

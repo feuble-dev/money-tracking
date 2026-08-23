@@ -7,7 +7,9 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import AttachTransactionTypeModal from '@/components/admin/AttachTransactionTypeModal';
 import CreateSmsPatternModal from '@/components/admin/CreateSmsPatternModal';
-import { getOperatorDetail, getSmsPatterns, deleteSmsPattern } from '@/lib/api';
+import EditOperatorTypeModal from '@/components/admin/EditOperatorTypeModal';
+import ConfirmModal from '@/components/admin/ConfirmModal';
+import { getOperatorDetail, getSmsPatterns, deleteSmsPattern, deleteOperatorType } from '@/lib/api';
 
 interface OperatorTypeLink {
   id: number;
@@ -46,6 +48,8 @@ export default function OperatorDetailPage() {
   const [loading, setLoading] = useState(true);
   const [attachModalOpen, setAttachModalOpen] = useState(false);
   const [patternModalLink, setPatternModalLink] = useState<OperatorTypeLink | null>(null);
+  const [editLink, setEditLink] = useState<OperatorTypeLink | null>(null);
+  const [deleteLink, setDeleteLink] = useState<OperatorTypeLink | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,9 +128,25 @@ export default function OperatorDetailPage() {
                     {link.is_active ? 'Actif' : 'Inactif'}
                   </Badge>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setPatternModalLink(link)}>
-                  + Pattern SMS
-                </Button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditLink(link)}
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    Modifier
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteLink(link)}
+                    className="text-sm font-medium text-red-600 hover:underline"
+                  >
+                    Supprimer
+                  </button>
+                  <Button variant="ghost" size="sm" onClick={() => setPatternModalLink(link)}>
+                    + Pattern SMS
+                  </Button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
                 <div>
@@ -194,6 +214,23 @@ export default function OperatorDetailPage() {
           onCreated={load}
           operatorTransactionTypeId={patternModalLink.id}
           defaultDirection={patternModalLink.transaction_type_direction}
+        />
+      )}
+
+      <EditOperatorTypeModal
+        isOpen={!!editLink}
+        onClose={() => setEditLink(null)}
+        onUpdated={load}
+        link={editLink}
+      />
+
+      {deleteLink && (
+        <ConfirmModal
+          isOpen={!!deleteLink}
+          onClose={() => setDeleteLink(null)}
+          onConfirm={async () => { await deleteOperatorType(deleteLink.id); await load(); }}
+          title={`Retirer ${deleteLink.transaction_type_label} de cet opérateur ?`}
+          message="Impossible si des patterns SMS sont encore rattachés à cette association — supprimez-les d'abord."
         />
       )}
     </div>

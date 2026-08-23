@@ -32,7 +32,7 @@ class Country(models.Model):
 
 class Operator(models.Model):
     country = models.ForeignKey(
-        Country, on_delete=models.CASCADE, related_name='operators'
+        Country, on_delete=models.RESTRICT, related_name='operators'
     )
     name = models.CharField(max_length=100)
     logo = models.ImageField(
@@ -95,10 +95,10 @@ class OperatorTransactionType(models.Model):
     un type conceptuellement identique.
     """
     operator = models.ForeignKey(
-        Operator, on_delete=models.CASCADE, related_name='operator_types'
+        Operator, on_delete=models.RESTRICT, related_name='operator_types'
     )
     transaction_type = models.ForeignKey(
-        TransactionType, on_delete=models.CASCADE, related_name='operator_links'
+        TransactionType, on_delete=models.RESTRICT, related_name='operator_links'
     )
     ussd_code = models.CharField(max_length=100, blank=True)
     commission_taux = models.DecimalField(
@@ -132,7 +132,7 @@ class SmsPattern(models.Model):
     ]
 
     operator_transaction_type = models.ForeignKey(
-        OperatorTransactionType, on_delete=models.CASCADE, related_name='sms_patterns'
+        OperatorTransactionType, on_delete=models.RESTRICT, related_name='sms_patterns'
     )
     raw_example = models.TextField(help_text="Exemple de SMS réel (anonymisé si besoin)")
     tagged_zones = models.JSONField(

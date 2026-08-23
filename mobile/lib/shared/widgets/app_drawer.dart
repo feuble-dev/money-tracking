@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/onboarding/onboarding_state.dart';
 import '../../core/theme/app_colors.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/operators/providers/operator_provider.dart';
@@ -13,6 +14,7 @@ class AppDrawer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final operatorsAsync = ref.watch(operatorsProvider);
+    final accountType = ref.watch(accountTypeProvider).valueOrNull ?? 'agence';
     final theme = Theme.of(context);
 
     return Drawer(
@@ -180,6 +182,42 @@ class AppDrawer extends ConsumerWidget {
                       context.push('/clients/add');
                     },
                   ),
+
+                  if (accountType == 'agence') ...[
+                    const Divider(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(
+                        'MULTI-AGENCE',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.primary,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.store_outlined),
+                      title: const Text('Mes agences'),
+                      dense: true,
+                      onTap: () {
+                        Navigator.pop(context);
+                        context.push('/agences/mes-agences');
+                      },
+                    ),
+                  ] else if (accountType == 'particulier') ...[
+                    const Divider(height: 24),
+                    ListTile(
+                      leading: const Icon(Icons.phone_android),
+                      title: const Text('Mes téléphones'),
+                      dense: true,
+                      onTap: () {
+                        Navigator.pop(context);
+                        context.push('/telephones/mes-telephones');
+                      },
+                    ),
+                  ],
 
                   const Divider(height: 24),
 
