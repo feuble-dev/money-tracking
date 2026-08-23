@@ -174,7 +174,7 @@ export default function FeaturesPage() {
       <section className="py-16 gradient-hero">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
           <h2 className="text-2xl font-bold text-white mb-3">Pret a simplifier votre gestion ?</h2>
-          <p className="text-blue-200 text-sm mb-6">Essai gratuit 30 jours. Toutes les fonctionnalites incluses.</p>
+          <p className="text-blue-200 text-sm mb-6">Essai gratuit 3 mois par agence. Toutes les fonctionnalites incluses.</p>
           <Link href="/download"
             className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-white font-semibold text-sm rounded-lg hover:bg-accent-hover transition-colors">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

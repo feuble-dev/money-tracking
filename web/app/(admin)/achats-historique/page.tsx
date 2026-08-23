@@ -60,7 +60,10 @@ export default function AchatsHistoriquePage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-extrabold text-dark">Achats Import Historique SMS</h1>
-        <p className="text-muted text-sm mt-1">Gérez les demandes d&apos;achat import historique (2 000 FCFA)</p>
+        <p className="text-muted text-sm mt-1">
+          Gratuit jusqu&apos;à 1 an en arrière (activé automatiquement) — les demandes ci-dessous concernent
+          un import plus ancien, facturé 200 FCFA par année supplémentaire.
+        </p>
       </div>
 
       {/* Token affiché après validation */}
@@ -87,7 +90,7 @@ export default function AchatsHistoriquePage() {
             <p className="text-sm text-muted mt-0.5">{enAttente.length} demande(s)</p>
           </div>
           <span className="px-3 py-1 bg-orange-50 text-orange-600 text-xs font-semibold rounded-lg">
-            2 000 FCFA / achat
+            200 FCFA / année au-delà d&apos;1 an
           </span>
         </div>
 

@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
-import { genererLicence } from '@/lib/api';
+import { genererLicence, getAgences, getPricingTiers } from '@/lib/api';
 
 interface GenerateLicenceModalProps {
   isOpen: boolean;
@@ -11,44 +11,73 @@ interface GenerateLicenceModalProps {
   onGenerated: () => void;
 }
 
+interface AgenceOption {
+  id: number;
+  nom: string;
+  telephone_client: string;
+}
+
+interface TierOption {
+  id: number;
+  duree_mois: number;
+  montant: number;
+  is_essai: boolean;
+}
+
 export default function GenerateLicenceModal({
   isOpen,
   onClose,
   onGenerated,
 }: GenerateLicenceModalProps) {
-  const [telephone, setTelephone] = useState('');
-  const [deviceId, setDeviceId] = useState('');
-  const [duree, setDuree] = useState('mensuel');
-  const [montant, setMontant] = useState(1000);
+  const [agences, setAgences] = useState<AgenceOption[]>([]);
+  const [tiers, setTiers] = useState<TierOption[]>([]);
+  const [agenceId, setAgenceId] = useState<number | ''>('');
+  const [dureeMois, setDureeMois] = useState<number>(1);
+  const [montant, setMontant] = useState(450);
   const [loading, setLoading] = useState(false);
   const [generatedCode, setGeneratedCode] = useState('');
   const [error, setError] = useState('');
 
-  const dureeOptions = [
-    { value: 'essai', label: 'Essai gratuit (30 jours)', montant: 0 },
-    { value: 'mensuel', label: 'Mensuel', montant: 1000 },
-    { value: 'annuel', label: 'Annuel', montant: 10000 },
-  ];
+  useEffect(() => {
+    if (!isOpen) return;
+    (async () => {
+      try {
+        const [agencesData, tiersData] = await Promise.all([getAgences(), getPricingTiers()]);
+        setAgences(agencesData);
+        const payantsTiers = (tiersData as TierOption[]).filter((t) => !t.is_essai);
+        setTiers(payantsTiers);
+        if (payantsTiers.length > 0) {
+          setDureeMois(payantsTiers[0].duree_mois);
+          setMontant(payantsTiers[0].montant);
+        }
+      } catch {
+        setError("Impossible de charger les agences/tarifs");
+      }
+    })();
+  }, [isOpen]);
 
-  const handleDureeChange = (value: string) => {
-    setDuree(value);
-    const option = dureeOptions.find((o) => o.value === value);
-    if (option) setMontant(option.montant);
+  const handleDureeChange = (value: number) => {
+    setDureeMois(value);
+    const tier = tiers.find((t) => t.duree_mois === value);
+    if (tier) setMontant(tier.montant);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!agenceId) {
+      setError('Sélectionnez une agence');
+      return;
+    }
     setLoading(true);
     setError('');
 
     try {
       const result = await genererLicence({
-        telephone,
-        device_id: deviceId,
-        duree,
-        montant,
+        agence_id: Number(agenceId),
+        duree_mois: dureeMois,
+        montant_paye: montant,
       });
-      setGeneratedCode(result.code || result.licence_key || 'XXXX-XXXX-XXXX');
+      setGeneratedCode(result.code || 'XXXX-XXXX-XXXX');
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : 'Erreur lors de la génération';
@@ -62,10 +91,7 @@ export default function GenerateLicenceModal({
     if (generatedCode) {
       onGenerated();
     }
-    setTelephone('');
-    setDeviceId('');
-    setDuree('mensuel');
-    setMontant(1000);
+    setAgenceId('');
     setGeneratedCode('');
     setError('');
     onClose();
@@ -99,39 +125,35 @@ export default function GenerateLicenceModal({
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Téléphone</label>
-            <input
-              type="tel"
-              value={telephone}
-              onChange={(e) => setTelephone(e.target.value)}
-              placeholder="+226 70 00 00 00"
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Agence</label>
+            <select
+              value={agenceId}
+              onChange={(e) => setAgenceId(e.target.value ? Number(e.target.value) : '')}
               required
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Device ID</label>
-            <input
-              type="text"
-              value={deviceId}
-              onChange={(e) => setDeviceId(e.target.value)}
-              placeholder="Identifiant de l'appareil"
-              required
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm"
-            />
+              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm bg-white"
+            >
+              <option value="">Sélectionner une agence...</option>
+              {agences.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.nom} — {a.telephone_client}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              La licence est facturée par agence (D8) — l&apos;appareil est repris de sa dernière licence.
+            </p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Durée</label>
             <select
-              value={duree}
-              onChange={(e) => handleDureeChange(e.target.value)}
+              value={dureeMois}
+              onChange={(e) => handleDureeChange(Number(e.target.value))}
               className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm bg-white"
             >
-              {dureeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
+              {tiers.map((tier) => (
+                <option key={tier.id} value={tier.duree_mois}>
+                  {tier.duree_mois} mois — {tier.montant.toLocaleString('fr-FR')} FCFA
                 </option>
               ))}
             </select>

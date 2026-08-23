@@ -20,12 +20,12 @@ export default function HomePage() {
               {
                 step: '1',
                 title: 'Installez l\'app',
-                description: 'Telechargez le fichier APK sur votre Android et creez votre code PIN.',
+                description: 'Telechargez le fichier APK sur votre Android, indiquez votre pays et creez votre agence.',
               },
               {
                 step: '2',
-                title: 'Configurez vos operateurs',
-                description: 'Ajoutez Orange Money, Moov Money ou Coris Money. Collez un SMS exemple, l\'app genere le modele de detection.',
+                title: 'Selectionnez vos operateurs',
+                description: 'Orange Money, Moov Money, Coris Money... deja configures par MoneyTracking pour votre pays. Cochez, c\'est importe.',
               },
               {
                 step: '3',
@@ -49,7 +49,7 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <Link href="/features"
             className="text-sm text-accent font-medium hover:underline">
-            Voir les 12 fonctionnalites &rarr;
+            Voir toutes les fonctionnalites &rarr;
           </Link>
         </div>
       </div>
@@ -69,7 +69,7 @@ export default function HomePage() {
               </div>
             ))}
             <div className="px-5 py-3 rounded-lg border border-dashed border-gray-300 text-sm text-muted">
-              + tout operateur configurable
+              + tout operateur ajoute au catalogue par pays
             </div>
           </div>
         </div>
@@ -82,7 +82,7 @@ export default function HomePage() {
             Pret a simplifier votre gestion ?
           </h2>
           <p className="text-blue-200 mb-8 max-w-md mx-auto text-sm">
-            Essai gratuit 30 jours. Aucune carte requise.
+            Essai gratuit 3 mois par agence. Aucune carte requise.
           </p>
           <Link href="/download"
             className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-white font-semibold text-sm rounded-lg hover:bg-accent-hover transition-colors">

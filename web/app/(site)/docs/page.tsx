@@ -19,8 +19,10 @@ const sections: DocSection[] = [
         <ol className="space-y-3">
           {[
             { title: 'Installer l\'application', desc: 'Telechargez le fichier APK et installez-le sur votre telephone Android (6.0 minimum).' },
-            { title: 'Creer votre code PIN', desc: 'Au premier lancement, definissez un code PIN a 4 chiffres. Vous pourrez activer l\'empreinte digitale plus tard.' },
-            { title: 'Configurer votre premier operateur', desc: 'Allez dans Operateurs et ajoutez Orange Money, Moov Money ou Coris Money. Suivez l\'assistant en 4 etapes.' },
+            { title: 'Choisir Particulier ou Agence', desc: 'Au premier lancement, indiquez votre numero, votre pays, et le type de compte : Particulier (suivi personnel) ou Agence (usage professionnel avec commissions).' },
+            { title: 'Nommer votre agence', desc: 'Chaque agence demarre avec 3 mois d\'essai gratuit. Vous pourrez en ajouter d\'autres plus tard.' },
+            { title: 'Selectionner vos operateurs', desc: 'Les operateurs de votre pays (Orange Money, Moov Money, Coris Money...) sont deja configures par MoneyTracking — cochez ceux que vous utilisez, ils s\'importent automatiquement.' },
+            { title: 'Creer votre code PIN', desc: 'Definissez un code PIN a 4 chiffres. Vous pourrez activer l\'empreinte digitale plus tard.' },
             { title: 'Accorder la permission SMS', desc: 'Autorisez MoneyTracking a lire vos SMS. Indispensable pour la detection automatique.' },
           ].map((s, i) => (
             <li key={i} className="flex gap-3">
@@ -37,26 +39,32 @@ const sections: DocSection[] = [
   },
   {
     id: 'operateurs',
-    title: 'Configuration des operateurs',
+    title: 'Operateurs et types de transaction',
     content: (
       <div className="space-y-4">
-        <p className="text-sm text-muted">La configuration se fait via un assistant en 4 etapes :</p>
+        <p className="text-sm text-muted">
+          Les operateurs (Orange Money, Moov Money, Coris Money...), leurs types de transaction
+          (Depot, Retrait, Transfert, Paiement marchand, Envoi d&apos;unites...) et leurs modeles de
+          SMS sont configures centralement par MoneyTracking, par pays. Vous n&apos;avez rien a
+          parametrer manuellement au depart :
+        </p>
         <div className="grid sm:grid-cols-2 gap-3">
           {[
-            { title: 'Informations generales', desc: 'Nom de l\'operateur, couleur d\'identification et expediteur SMS.' },
-            { title: 'Configuration SMS', desc: 'Collez un SMS exemple de depot et de retrait. L\'app identifie les champs automatiquement.' },
-            { title: 'Templates USSD', desc: 'Definissez le code USSD pour les depots et retraits.' },
-            { title: 'Commissions', desc: 'Configurez les taux de commission depot et retrait.' },
+            { title: 'Import automatique', desc: 'Selectionnez vos operateurs a l\'inscription : tous leurs types et modeles de detection SMS sont importes d\'un coup.' },
+            { title: 'Types configurables', desc: 'Un operateur peut avoir plusieurs types de transaction, chacun avec son propre code USSD et taux de commission.' },
+            { title: 'Activer / desactiver', desc: 'Depuis les parametres, desactivez un type que vous n\'utilisez pas sans le supprimer.' },
+            { title: 'Personnalisation possible', desc: 'Besoin d\'un type ou d\'un modele SMS specifique ? Ajoutez-le manuellement ou corrigez un modele existant depuis l\'app.' },
           ].map((s, i) => (
             <div key={i} className="p-3 bg-soft rounded-lg border border-gray-100">
-              <p className="text-xs text-primary font-semibold mb-0.5">Etape {i + 1}</p>
               <p className="font-medium text-dark text-sm">{s.title}</p>
               <p className="text-sm text-muted">{s.desc}</p>
             </div>
           ))}
         </div>
         <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200 text-sm text-yellow-800">
-          <strong>Conseil :</strong> Pour l&apos;expediteur SMS, notez exactement le nom qui apparait a la reception (ex: &quot;OrangeMoney&quot;, pas &quot;Orange Money&quot;).
+          <strong>Bon a savoir :</strong> un type de transaction (ex. Transfert) peut etre entrant ou
+          sortant selon le SMS reel — c&apos;est le modele de detection qui determine le sens, pas
+          le type lui-meme.
         </div>
       </div>
     ),
@@ -250,31 +258,33 @@ const sections: DocSection[] = [
       <div className="space-y-4">
         <p className="text-sm text-muted">
           Systeme <strong className="text-dark">non bloquant</strong> : meme sans licence, la lecture reste possible.
+          La licence est facturee <strong className="text-dark">par agence</strong> — un compte avec
+          plusieurs agences paie un abonnement par agence.
         </p>
         <div className="p-3 bg-soft rounded-lg border border-gray-100">
           <p className="font-medium text-dark text-sm mb-2">3 modes d&apos;activation</p>
           <ol className="space-y-1.5 text-sm text-muted">
-            <li><strong className="text-dark">Essai gratuit :</strong> 30 jours complets.</li>
+            <li><strong className="text-dark">Essai gratuit :</strong> 3 mois complets, offerts a chaque nouvelle agence.</li>
             <li><strong className="text-dark">En ligne :</strong> Verification automatique apres paiement.</li>
             <li><strong className="text-dark">Cle manuelle :</strong> Code fourni apres paiement.</li>
           </ol>
         </div>
         <div className="p-3 bg-soft rounded-lg border border-gray-100">
-          <p className="font-medium text-dark text-sm mb-2">Tarifs</p>
+          <p className="font-medium text-dark text-sm mb-2">Tarifs (par agence)</p>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div>
-              <p className="text-lg font-bold text-primary">1 000</p>
+              <p className="text-lg font-bold text-primary">450</p>
               <p className="text-xs text-muted">FCFA / mois</p>
             </div>
             <div>
-              <p className="text-lg font-bold text-primary">10 000</p>
+              <p className="text-lg font-bold text-primary">4 480</p>
               <p className="text-xs text-muted">FCFA / an</p>
-              <p className="text-[10px] text-green-600">2 mois offerts</p>
+              <p className="text-[10px] text-green-600">-17%</p>
             </div>
             <div>
-              <p className="text-lg font-bold text-primary">18 000</p>
+              <p className="text-lg font-bold text-primary">8 100</p>
               <p className="text-xs text-muted">FCFA / 2 ans</p>
-              <p className="text-[10px] text-green-600">6 mois offerts</p>
+              <p className="text-[10px] text-green-600">-25%</p>
             </div>
           </div>
         </div>

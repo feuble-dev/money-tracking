@@ -4,13 +4,17 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Tarifs - MoneyTracking',
-  description: 'Tarifs simples et transparents. Essai gratuit de 30 jours.',
+  description: 'Tarifs simples et transparents, factures par agence. Essai gratuit de 3 mois.',
 };
 
 const faq = [
   {
     question: 'L\'essai gratuit inclut-il toutes les fonctionnalites ?',
-    answer: 'Oui, pendant 30 jours vous avez acces a toutes les fonctionnalites sans restriction.',
+    answer: 'Oui, pendant 3 mois vous avez acces a toutes les fonctionnalites sans restriction, sur chaque nouvelle agence creee.',
+  },
+  {
+    question: 'Pourquoi la licence est-elle facturee par agence ?',
+    answer: 'Un compte peut gerer plusieurs agences (Particulier comme Agence). Chaque agence a son propre abonnement et son propre essai gratuit, independamment des autres.',
   },
   {
     question: 'Comment effectuer le paiement ?',

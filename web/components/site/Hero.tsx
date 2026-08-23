@@ -33,7 +33,7 @@ export default function Hero() {
               <span className="text-blue-400">&middot;</span>
               <span>Fonctionne hors ligne</span>
               <span className="text-blue-400">&middot;</span>
-              <span>Essai gratuit 30 jours</span>
+              <span>Essai gratuit 3 mois</span>
             </div>
           </div>
 

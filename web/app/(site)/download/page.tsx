@@ -121,7 +121,7 @@ export default function DownloadPage() {
       <section className="py-14 gradient-hero">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
           <p className="text-white font-semibold mb-1">Pret a commencer ?</p>
-          <p className="text-blue-200 text-sm mb-6">30 jours d&apos;essai gratuit, toutes les fonctionnalites incluses.</p>
+          <p className="text-blue-200 text-sm mb-6">3 mois d&apos;essai gratuit par agence, toutes les fonctionnalites incluses.</p>
           <a href="#"
             className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-white font-semibold text-sm rounded-lg hover:bg-accent-hover transition-colors">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

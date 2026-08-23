@@ -5,24 +5,24 @@ const plans = [
   {
     name: 'Essai gratuit',
     price: 'Gratuit',
-    period: '30 jours',
-    description: 'Toutes les fonctionnalites, sans engagement.',
+    period: '3 mois',
+    description: 'Toutes les fonctionnalites, sans engagement. Un nouvel essai a chaque agence creee.',
     features: [
       'Detection SMS automatique',
       'Dashboard complet',
       'Export PDF & CSV',
       'Gestion clients',
-      '30 jours d\'essai',
+      '3 mois d\'essai par agence',
     ],
     cta: 'Commencer l\'essai',
     highlighted: false,
   },
   {
     name: 'Annuel',
-    price: '10 000',
+    price: '4 480',
     currency: 'FCFA',
-    period: 'par an',
-    description: '2 mois offerts par rapport au mensuel.',
+    period: 'par an, par agence',
+    description: '17% de remise par rapport au mensuel.',
     features: [
       'Toutes les fonctionnalites',
       'Detection SMS automatique',
@@ -36,9 +36,9 @@ const plans = [
   },
   {
     name: 'Mensuel',
-    price: '1 000',
+    price: '450',
     currency: 'FCFA',
-    period: 'par mois',
+    period: 'par mois, par agence',
     description: 'Sans engagement, resiliable a tout moment.',
     features: [
       'Toutes les fonctionnalites',
@@ -58,7 +58,10 @@ export default function Pricing() {
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <div className="mb-12">
           <h2 className="text-2xl sm:text-3xl font-bold text-dark">Tarifs</h2>
-          <p className="mt-2 text-muted">Commencez gratuitement, puis choisissez le plan qui vous convient.</p>
+          <p className="mt-2 text-muted">
+            La licence est facturee par agence : un compte Particulier ou Agence peut geler plusieurs
+            agences, chacune avec son propre abonnement et son propre essai gratuit.
+          </p>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 max-w-4xl">
@@ -118,11 +121,12 @@ export default function Pricing() {
             <div>
               <p className="font-semibold text-dark text-sm">Import historique SMS</p>
               <p className="text-muted text-sm mt-0.5">
-                Recuperez vos anciennes transactions depuis vos SMS. Achat unique, illimite sur l&apos;appareil.
+                Recuperez vos anciennes transactions depuis vos SMS. Gratuit jusqu&apos;a 1 an en arriere,
+                puis 200 FCFA par annee supplementaire.
               </p>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
-              <span className="text-xl font-bold text-dark">2 000 <span className="text-sm font-normal text-muted">FCFA</span></span>
+              <span className="text-xl font-bold text-dark">Gratuit <span className="text-sm font-normal text-muted">≤ 1 an</span></span>
             </div>
           </div>
         </div>

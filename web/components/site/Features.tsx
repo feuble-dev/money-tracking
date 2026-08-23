@@ -11,6 +11,24 @@ const features = [
     ),
   },
   {
+    title: 'Catalogue d\'operateurs centralise',
+    description: 'Orange Money, Moov Money, Coris Money et leurs types de transaction (Depot, Retrait, Transfert, Paiement marchand...) deja configures par pays. Selectionnez, c\'est importe.',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Multi-agence',
+    description: 'Gerez plusieurs agences depuis un seul compte, Particulier comme Agence. Chaque agence a ses propres operateurs, son propre suivi et son propre essai gratuit.',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m-1 4h1m4-4h1m-1 4h1M9 21v-4a2 2 0 012-2h2a2 2 0 012 2v4" />
+      </svg>
+    ),
+  },
+  {
     title: 'Depot & Retrait via USSD',
     description: 'Lancez les codes USSD directement depuis l\'app. Le numero et montant sont pre-remplis, le SMS de confirmation finalise la transaction.',
     icon: (
@@ -39,7 +57,7 @@ const features = [
   },
   {
     title: 'Commissions automatiques',
-    description: 'Configurez vos taux par operateur. MoneyTracking calcule les commissions sur chaque transaction et affiche le suivi par jour, semaine ou mois.',
+    description: 'Taux configures par operateur et par type de transaction (Depot, Retrait, Transfert...). MoneyTracking calcule les commissions sur chaque transaction et affiche le suivi par jour, semaine ou mois.',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -85,8 +103,8 @@ const features = [
   },
   {
     title: 'Import historique SMS',
-    description: 'Recuperez vos anciennes transactions depuis vos SMS. Choisissez la periode, l\'app analyse et cree les transactions. Achat unique 2 000 FCFA.',
-    tag: '2 000 F',
+    description: 'Recuperez vos anciennes transactions depuis vos SMS. Choisissez la periode, l\'app analyse et cree les transactions. Gratuit jusqu\'a 1 an en arriere, 200 FCFA par annee au-dela.',
+    tag: 'Gratuit ≤ 1 an',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
