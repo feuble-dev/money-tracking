@@ -56,8 +56,15 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.getenv('DB_NAME', 'moneytracking_db'),
+        'USER': os.getenv('DB_USER', 'root'),
+        'PASSWORD': os.getenv('DB_PASSWORD', ''),
+        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+        'PORT': os.getenv('DB_PORT', '3306'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+        },
     }
 }
 
@@ -71,7 +78,12 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'fr-fr'
 TIME_ZONE = 'Africa/Ouagadougou'
 USE_I18N = True
-USE_TZ = True
+USE_TZ = False
+# Toujours UTC+0 sans heure d'été (Burkina Faso) : USE_TZ=True forcerait
+# TruncMonth/agregations par date (AdminStatsView) à passer par CONVERT_TZ()
+# côté MySQL, qui exige les tables de fuseaux horaires chargées (mysql_tzinfo_to_sql) —
+# une dépendance d'infra non portable (Windows en dev, VPS Linux en prod)
+# pour un gain nul ici puisque l'heure locale et UTC sont identiques.
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
