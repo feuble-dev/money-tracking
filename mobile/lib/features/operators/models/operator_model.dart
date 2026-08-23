@@ -1,3 +1,5 @@
+import '../../../core/sms/commission_calculator.dart';
+
 /// Modèle représentant un opérateur Mobile Money
 class OperatorModel {
   final String id;
@@ -62,7 +64,7 @@ class OperatorModel {
     final taux = transactionType == 'deposit'
         ? tauxCommissionDepot
         : tauxCommissionRetrait;
-    return (amount * taux) / 100;
+    return CommissionCalculator.compute(amount: amount, commissionTaux: taux);
   }
 
   OperatorModel copyWith({

@@ -6,8 +6,8 @@ import 'licence_storage.dart';
 import 'licence_validator.dart';
 
 // Changer par l'URL réelle du backend en production
-// const String _baseUrl = 'https://moneytracking.rf.gd/api/licence';
 const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+// const String _baseUrl = 'http://localhost:8000/api/licence';
 
 class LicenceService {
   // ── Device ID unique Android ──────────────────────────────
@@ -163,6 +163,49 @@ class LicenceService {
     return ResultatActivation.erreur(resultat.message);
   }
 
+  // ── Onboarding : compte + 1ère agence + essai (D7/D8/D10) ─
+  // Additif — n'affecte pas demarrerEssai() ni les écrans d'activation
+  // existants (Phase 6 les rendra agence-aware).
+  static Future<ResultatEssaiAgence> demarrerEssaiAvecAgence({
+    required String telephone,
+    required String accountType,
+    required String agenceNom,
+  }) async {
+    final deviceId = await getDeviceId();
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/essai/'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'telephone': telephone,
+              'device_id': deviceId,
+              'account_type': accountType,
+              'agence_nom': agenceNom,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 201) {
+        await LicenceStorage.sauvegarder(data);
+        await LicenceStorage.saveTelephone(telephone);
+        return ResultatEssaiAgence.succes(
+          agenceBackendId: data['agence_id'] as int,
+          message: data['message'] as String? ?? 'Essai gratuit activé',
+        );
+      }
+      return ResultatEssaiAgence.erreur(
+        data['erreur'] ?? 'Erreur inconnue',
+      );
+    } catch (e) {
+      return ResultatEssaiAgence.erreur(
+        'Impossible de se connecter au serveur',
+      );
+    }
+  }
+
   // ── Demande d'activation ──────────────────────────────────
   static Future<ResultatActivation> demanderActivation({
     required String telephone,
@@ -210,4 +253,15 @@ class ResultatActivation {
   final String message;
   ResultatActivation.succes(this.message) : reussi = true;
   ResultatActivation.erreur(this.message) : reussi = false;
+}
+
+class ResultatEssaiAgence {
+  final bool reussi;
+  final String message;
+  final int? agenceBackendId;
+  ResultatEssaiAgence.succes({required this.agenceBackendId, required this.message})
+      : reussi = true;
+  ResultatEssaiAgence.erreur(this.message)
+      : reussi = false,
+        agenceBackendId = null;
 }

@@ -136,19 +136,22 @@ class CaissesNotifier extends StateNotifier<AsyncValue<List<CaisseModel>>> {
     await load();
   }
 
-  /// Met à jour le solde après une transaction
-  /// Dépôt: solde diminue / Retrait: solde augmente
+  /// Met à jour le solde après une transaction.
+  /// direction='in' (l'argent du client augmente, ex-dépôt) : solde diminue.
+  /// direction='out' (l'argent du client diminue, ex-retrait) : solde augmente.
+  /// Généralisé au sens (D1) plutôt qu'au libellé du type — fonctionne pour
+  /// n'importe quel type de transaction, pas seulement dépôt/retrait.
   Future<void> updateSoldeAfterTransaction({
     required String operatorId,
     required double amount,
-    required String transactionType,
+    required String direction,
   }) async {
     final db = await DatabaseHelper.instance.database;
     final existing = await db.query('caisse',
         where: 'operator_id = ?', whereArgs: [operatorId]);
     if (existing.isEmpty) return;
 
-    final delta = transactionType == 'deposit' ? -amount : amount;
+    final delta = direction == 'in' ? -amount : amount;
     await db.rawUpdate(
       'UPDATE caisse SET solde_actuel = solde_actuel + ?, updated_at = ? WHERE operator_id = ?',
       [delta, DateTime.now().toIso8601String(), operatorId],

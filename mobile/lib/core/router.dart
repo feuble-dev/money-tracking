@@ -31,6 +31,8 @@ import '../shared/widgets/main_shell.dart';
 import 'historique/screens/import_historique_screen.dart';
 import 'licence/screens/activation_screen.dart';
 import 'licence/screens/licence_status_screen.dart';
+import 'onboarding/onboarding_state.dart';
+import 'onboarding/screens/onboarding_screen.dart';
 
 /// Clé de navigation globale
 final rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -40,6 +42,8 @@ final routerProvider = Provider<GoRouter>((ref) {
   final isAuthenticated = ref.watch(isAuthenticatedProvider);
   final isPinSetAsync = ref.watch(isPinSetProvider);
   final isPinSet = isPinSetAsync.valueOrNull ?? false;
+  final isOnboardingCompleteAsync = ref.watch(isOnboardingCompleteProvider);
+  final isOnboardingComplete = isOnboardingCompleteAsync.valueOrNull ?? false;
 
   return GoRouter(
     navigatorKey: rootNavigatorKey,
@@ -52,6 +56,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Route racine → rediriger vers dashboard
       if (currentPath == '/') return '/dashboard';
 
+      // Premier lancement : catalogue/agence avant même le PIN, car les
+      // données doivent déjà exister quand l'agent commence à s'en servir.
+      if (!isOnboardingComplete) {
+        return currentPath == '/onboarding' ? null : '/onboarding';
+      }
+
       if (!isPinSet) {
         return isAuthRoute ? null : '/setup-pin';
       }
@@ -60,13 +70,19 @@ final routerProvider = Provider<GoRouter>((ref) {
         return isAuthRoute ? null : '/lock';
       }
 
-      if (isAuthRoute) {
+      if (isAuthRoute || currentPath == '/onboarding') {
         return '/dashboard';
       }
 
       return null;
     },
     routes: [
+      // Onboarding
+      GoRoute(
+        path: '/onboarding',
+        builder: (context, state) => const OnboardingScreen(),
+      ),
+
       // Auth routes
       GoRoute(
         path: '/setup-pin',

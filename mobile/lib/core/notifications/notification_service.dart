@@ -96,8 +96,11 @@ class NotificationService {
     required double amount,
     required String clientPhone,
     required String operatorName,
+    String? typeLabel,
   }) async {
-    final typeLabel = type == 'deposit' ? 'Dépôt' : 'Retrait';
+    // typeLabel permet d'afficher le libellé réel du type (ex: "Transfert")
+    // pour les types au-delà de dépôt/retrait — sinon repli binaire.
+    typeLabel ??= type == 'deposit' ? 'Dépôt' : 'Retrait';
     final amountStr = '${amount.toInt()} FCFA';
 
     await _plugin.show(

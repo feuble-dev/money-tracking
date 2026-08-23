@@ -12,6 +12,7 @@ import '../../transactions/providers/transaction_provider.dart';
 
 // ── URL backend (même que licence_service) ──
 const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+// const String _baseUrl = 'http://localhost:8000/api/licence';
 
 /// Provider: transactions SMS récentes (utilise la vue optimisée)
 final recentActivityProvider =

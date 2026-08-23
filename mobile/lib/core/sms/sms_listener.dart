@@ -7,7 +7,9 @@ import '../database/database_helper.dart';
 import '../database/transaction_repository.dart';
 import '../notifications/notification_service.dart';
 import '../licence/licence_storage.dart';
+import 'commission_calculator.dart';
 import 'sms_field_extractor.dart';
+import 'sms_matching_engine.dart';
 
 /// Provider pour l'état du service SMS
 final smsServiceActiveProvider = StateProvider<bool>((ref) => false);
@@ -158,41 +160,28 @@ class SmsListenerService {
     final operatorId = op['id'] as String;
     final operatorName = op['name'] as String;
 
-    // 4. Vérifier si le SMS correspond aux patterns de cet opérateur
-    final patterns = await db.query('sms_patterns',
-        where: 'operator_id = ?', whereArgs: [operatorId]);
-
-    final depositPatterns = patterns.where((p) => p['transaction_type'] == 'deposit').toList();
-    final withdrawalPatterns = patterns.where((p) => p['transaction_type'] == 'withdrawal').toList();
-
-    String? transactionType;
-    if (_matchesPattern(body, depositPatterns)) {
-      transactionType = 'deposit';
-    } else if (_matchesPattern(body, withdrawalPatterns)) {
-      transactionType = 'withdrawal';
-    }
+    // 4. Vérifier si le SMS correspond à un des patterns de cet opérateur
+    // (moteur unique, partagé avec l'import historique — SmsMatchingEngine)
+    final patterns = await SmsMatchingEngine.loadPatternsForOperator(db, operatorId);
+    final smsMatch = SmsMatchingEngine.match(body, patterns);
 
     // Si aucun pattern matché → ce n'est PAS une transaction, ignorer
-    if (transactionType == null) {
+    if (smsMatch == null) {
       debugPrint('[SMS] Aucun pattern matché — pas une transaction, ignoré');
       return;
     }
-
-    // 5. Extraire les champs
-    final extracted = SmsFieldExtractor.extractAll(body);
-    if (!extracted.containsKey('montant')) {
-      debugPrint('[SMS] Pas de montant détecté');
-      return;
-    }
+    final transactionType = smsMatch.transactionTypeCode;
+    final extracted = smsMatch.extractedFields;
 
     final amount = SmsFieldExtractor.parseMontant(extracted['montant']);
     final clientPhone = SmsFieldExtractor.cleanPhone(extracted['numero_client']);
     if (amount == null || amount <= 0) return;
 
     // 5. Commission
-    final tauxDep = (op['taux_commission_depot'] as num?)?.toDouble() ?? 0;
-    final tauxRet = (op['taux_commission_retrait'] as num?)?.toDouble() ?? 0;
-    final commission = (amount * (transactionType == 'deposit' ? tauxDep : tauxRet)) / 100;
+    final commission = CommissionCalculator.compute(
+      amount: amount,
+      commissionTaux: smsMatch.commissionTaux,
+    );
 
     // 6. Chercher le client
     String? clientId;
@@ -221,6 +210,7 @@ class SmsListenerService {
       await NotificationService().showPendingTransactionNotification(
         transactionId: smsId,
         type: transactionType,
+        typeLabel: smsMatch.typeLabel,
         amount: amount,
         clientPhone: clientPhone ?? '',
         operatorName: 'Licence requise',
@@ -235,6 +225,8 @@ class SmsListenerService {
       'operator_id': operatorId,
       'client_id': clientId,
       'transaction_type': transactionType,
+      'transaction_type_id': smsMatch.transactionTypeId,
+      'direction': smsMatch.direction,
       'amount': amount,
       'commission': commission,
       'client_phone': clientPhone ?? '',
@@ -251,7 +243,7 @@ class SmsListenerService {
     await db.update('sms_messages', {'processed': 1, 'transaction_id': txId},
         where: 'id = ?', whereArgs: [smsId]);
 
-    final typeLabel = transactionType == 'deposit' ? 'Dépôt' : 'Retrait';
+    final typeLabel = smsMatch.typeLabel;
 
     // 8. Notification selon client connu ou inconnu
     if (clientExists) {
@@ -259,6 +251,7 @@ class SmsListenerService {
       await NotificationService().showPendingTransactionNotification(
         transactionId: txId,
         type: transactionType,
+        typeLabel: typeLabel,
         amount: amount,
         clientPhone: clientPhone ?? '',
         operatorName: '$typeLabel — $clientName',
@@ -269,6 +262,7 @@ class SmsListenerService {
       await NotificationService().showPendingTransactionNotification(
         transactionId: txId,
         type: transactionType,
+        typeLabel: typeLabel,
         amount: amount,
         clientPhone: clientPhone ?? 'inconnu',
         operatorName: '$typeLabel — Nouveau client. Appuyez pour compléter.',
@@ -277,34 +271,5 @@ class SmsListenerService {
 
     onTransactionDetected?.call({...txData, 'operator_name': operatorName});
     debugPrint('[SMS] ✅ $typeLabel ${amount.toInt()} FCFA — ${clientPhone ?? "?"} ($operatorName)');
-  }
-
-  /// Teste si un SMS matche les patterns configurés d'un opérateur
-  bool _matchesPattern(String body, List<Map<String, dynamic>> patterns) {
-    final bodyLower = body.toLowerCase();
-    for (final p in patterns) {
-      // 1. Regex généré
-      final regexStr = p['regex_generated'] as String?;
-      if (regexStr != null && regexStr.isNotEmpty) {
-        try {
-          if (RegExp(regexStr, caseSensitive: false).hasMatch(body)) return true;
-        } catch (_) {}
-      }
-      // 2. Comparaison structurelle avec l'exemple
-      final rawExample = (p['raw_example'] as String?) ?? '';
-      if (rawExample.length > 20) {
-        final discriminants = [
-          'vous avez transfere', 'vous avez envoye', 'depot de', 'transfert de',
-          'envoye a', 'transfere a', 'vous avez recu', 'retrait de',
-          'a retire', 'received from', 'vous a envoye', 'credit de',
-        ];
-        for (final d in discriminants) {
-          if (rawExample.toLowerCase().contains(d) && bodyLower.contains(d)) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
   }
 }

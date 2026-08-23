@@ -1,5 +1,8 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:uuid/uuid.dart';
+
+const _uuid = Uuid();
 
 /// Helper centralisé pour la base de données SQLite
 /// Optimisé avec WAL mode et accès singleton
@@ -21,7 +24,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -51,7 +54,41 @@ class DatabaseHelper {
         is_active INTEGER DEFAULT 1,
         taux_commission_depot REAL DEFAULT 0,
         taux_commission_retrait REAL DEFAULT 0,
+        catalog_operator_id INTEGER,
+        catalog_country_id INTEGER,
+        is_custom INTEGER DEFAULT 1,
+        synced_at TEXT,
         created_at TEXT
+      )
+    ''');
+
+    // Catalogue GLOBAL de types de transaction (D3) — une ligne par type,
+    // partagée entre tous les opérateurs importés ou créés localement.
+    await db.execute('''
+      CREATE TABLE transaction_types (
+        id TEXT PRIMARY KEY,
+        catalog_type_id INTEGER,
+        code TEXT NOT NULL UNIQUE,
+        label TEXT NOT NULL,
+        default_direction TEXT NOT NULL CHECK(default_direction IN ('in','out')),
+        is_custom INTEGER DEFAULT 1,
+        created_at TEXT
+      )
+    ''');
+
+    // Liaison (opérateur, type) — porte l'USSD/commission propres à la paire.
+    await db.execute('''
+      CREATE TABLE operator_transaction_types (
+        id TEXT PRIMARY KEY,
+        operator_id TEXT NOT NULL,
+        transaction_type_id TEXT NOT NULL,
+        catalog_link_id INTEGER,
+        ussd_code TEXT,
+        commission_taux REAL DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT,
+        FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
+        FOREIGN KEY (transaction_type_id) REFERENCES transaction_types(id) ON DELETE CASCADE
       )
     ''');
 
@@ -60,11 +97,39 @@ class DatabaseHelper {
         id TEXT PRIMARY KEY,
         operator_id TEXT NOT NULL,
         transaction_type TEXT NOT NULL,
+        operator_transaction_type_id TEXT,
+        catalog_pattern_id INTEGER,
+        direction TEXT,
+        tagged_zones_json TEXT,
+        source TEXT DEFAULT 'custom',
         sender_filter TEXT,
         raw_example TEXT NOT NULL,
         pattern_json TEXT NOT NULL,
         regex_generated TEXT NOT NULL,
         created_at TEXT,
+        FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
+        FOREIGN KEY (operator_transaction_type_id) REFERENCES operator_transaction_types(id) ON DELETE CASCADE
+      )
+    ''');
+
+    // Agences (D8) — unité de regroupement/facturation, "tag" sur
+    // clients/transactions/caisse (pas des espaces de données isolés).
+    await db.execute('''
+      CREATE TABLE agences (
+        id TEXT PRIMARY KEY,
+        backend_agence_id INTEGER,
+        nom TEXT NOT NULL,
+        is_default INTEGER DEFAULT 0,
+        created_at TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE agence_operators (
+        agence_id TEXT NOT NULL,
+        operator_id TEXT NOT NULL,
+        PRIMARY KEY (agence_id, operator_id),
+        FOREIGN KEY (agence_id) REFERENCES agences(id) ON DELETE CASCADE,
         FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE
       )
     ''');
@@ -78,6 +143,7 @@ class DatabaseHelper {
         cnib_number TEXT,
         birth_date TEXT,
         operator_id TEXT,
+        agence_id TEXT,
         created_at TEXT,
         updated_at TEXT
       )
@@ -89,6 +155,9 @@ class DatabaseHelper {
         operator_id TEXT NOT NULL,
         client_id TEXT,
         transaction_type TEXT NOT NULL,
+        transaction_type_id TEXT,
+        direction TEXT,
+        agence_id TEXT,
         amount REAL NOT NULL,
         commission REAL DEFAULT 0,
         client_phone TEXT NOT NULL,
@@ -124,6 +193,7 @@ class DatabaseHelper {
       CREATE TABLE caisse (
         id TEXT PRIMARY KEY,
         operator_id TEXT,
+        agence_id TEXT,
         solde_initial REAL DEFAULT 0,
         solde_actuel REAL DEFAULT 0,
         seuil_alerte REAL DEFAULT 0,
@@ -135,6 +205,7 @@ class DatabaseHelper {
       CREATE TABLE caisse_operations (
         id TEXT PRIMARY KEY,
         operator_id TEXT,
+        agence_id TEXT,
         type TEXT NOT NULL,
         montant REAL NOT NULL,
         note TEXT,
@@ -160,6 +231,25 @@ class DatabaseHelper {
       )
     ''');
 
+    // Cache journalier générique (remplacera daily_summaries à la Phase 5 —
+    // créée dès maintenant pour éviter un second bump de version).
+    await db.execute('''
+      CREATE TABLE daily_summaries_v2 (
+        day TEXT NOT NULL,
+        agence_id TEXT NOT NULL,
+        operator_id TEXT NOT NULL,
+        transaction_type_id TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        tx_count INTEGER DEFAULT 0,
+        tx_total REAL DEFAULT 0,
+        commission_total REAL DEFAULT 0,
+        unique_clients INTEGER DEFAULT 0,
+        max_amount REAL DEFAULT 0,
+        updated_at TEXT,
+        PRIMARY KEY (day, agence_id, operator_id, transaction_type_id)
+      )
+    ''');
+
     await db.execute('''
       CREATE TABLE general_notifications (
         id INTEGER PRIMARY KEY,
@@ -181,6 +271,32 @@ class DatabaseHelper {
     ''');
 
     await _createIndexes(db);
+    await _seedDefaultTransactionTypes(db);
+  }
+
+  /// Types globaux 'deposit'/'withdrawal' toujours présents, même sur une
+  /// install neuve — sert de socle avant tout import catalogue (D3).
+  Future<void> _seedDefaultTransactionTypes(Database db) async {
+    final now = DateTime.now().toIso8601String();
+    final existing = await db.query('transaction_types',
+        where: 'code IN (?, ?)', whereArgs: ['deposit', 'withdrawal']);
+    if (existing.isNotEmpty) return;
+    await db.insert('transaction_types', {
+      'id': _uuid.v4(),
+      'code': 'deposit',
+      'label': 'Dépôt',
+      'default_direction': 'in',
+      'is_custom': 1,
+      'created_at': now,
+    });
+    await db.insert('transaction_types', {
+      'id': _uuid.v4(),
+      'code': 'withdrawal',
+      'label': 'Retrait',
+      'default_direction': 'out',
+      'is_custom': 1,
+      'created_at': now,
+    });
   }
 
   Future<void> _createIndexes(Database db) async {
@@ -210,6 +326,16 @@ class DatabaseHelper {
         'CREATE INDEX IF NOT EXISTS idx_tx_cancelled ON transactions(status) WHERE status IN (\'cancelled\', \'rejected\')');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_tx_source_status ON transactions(source, status, created_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_op_types_operator ON operator_transaction_types(operator_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sms_patterns_op_type ON sms_patterns(operator_transaction_type_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_tx_agence_status_date ON transactions(agence_id, status, created_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_clients_agence ON clients(agence_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_daily_v2_day_agence ON daily_summaries_v2(day, agence_id)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -311,6 +437,191 @@ class DatabaseHelper {
         LEFT JOIN operators o ON t.operator_id = o.id
       ''');
     }
+    if (oldVersion < 9) {
+      await _upgradeToV9(db);
+    }
+  }
+
+  /// Catalogue d'opérateurs centralisé, types de transaction génériques,
+  /// multi-agence (D3/D8). Purement additif : les colonnes/tables existantes
+  /// et le comportement de l'app restent inchangés tant que les Phases 5/6
+  /// (moteur de matching, runtime multi-agence) ne les consomment pas.
+  Future<void> _upgradeToV9(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS transaction_types (
+        id TEXT PRIMARY KEY,
+        catalog_type_id INTEGER,
+        code TEXT NOT NULL UNIQUE,
+        label TEXT NOT NULL,
+        default_direction TEXT NOT NULL CHECK(default_direction IN ('in','out')),
+        is_custom INTEGER DEFAULT 1,
+        created_at TEXT
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS operator_transaction_types (
+        id TEXT PRIMARY KEY,
+        operator_id TEXT NOT NULL,
+        transaction_type_id TEXT NOT NULL,
+        catalog_link_id INTEGER,
+        ussd_code TEXT,
+        commission_taux REAL DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT,
+        FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
+        FOREIGN KEY (transaction_type_id) REFERENCES transaction_types(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS agences (
+        id TEXT PRIMARY KEY,
+        backend_agence_id INTEGER,
+        nom TEXT NOT NULL,
+        is_default INTEGER DEFAULT 0,
+        created_at TEXT
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS agence_operators (
+        agence_id TEXT NOT NULL,
+        operator_id TEXT NOT NULL,
+        PRIMARY KEY (agence_id, operator_id),
+        FOREIGN KEY (agence_id) REFERENCES agences(id) ON DELETE CASCADE,
+        FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS daily_summaries_v2 (
+        day TEXT NOT NULL,
+        agence_id TEXT NOT NULL,
+        operator_id TEXT NOT NULL,
+        transaction_type_id TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        tx_count INTEGER DEFAULT 0,
+        tx_total REAL DEFAULT 0,
+        commission_total REAL DEFAULT 0,
+        unique_clients INTEGER DEFAULT 0,
+        max_amount REAL DEFAULT 0,
+        updated_at TEXT,
+        PRIMARY KEY (day, agence_id, operator_id, transaction_type_id)
+      )
+    ''');
+
+    for (final stmt in [
+      'ALTER TABLE operators ADD COLUMN catalog_operator_id INTEGER',
+      'ALTER TABLE operators ADD COLUMN catalog_country_id INTEGER',
+      'ALTER TABLE operators ADD COLUMN is_custom INTEGER DEFAULT 1',
+      'ALTER TABLE operators ADD COLUMN synced_at TEXT',
+      'ALTER TABLE sms_patterns ADD COLUMN operator_transaction_type_id TEXT',
+      'ALTER TABLE sms_patterns ADD COLUMN catalog_pattern_id INTEGER',
+      'ALTER TABLE sms_patterns ADD COLUMN direction TEXT',
+      'ALTER TABLE sms_patterns ADD COLUMN tagged_zones_json TEXT',
+      "ALTER TABLE sms_patterns ADD COLUMN source TEXT DEFAULT 'custom'",
+      'ALTER TABLE clients ADD COLUMN agence_id TEXT',
+      'ALTER TABLE transactions ADD COLUMN transaction_type_id TEXT',
+      'ALTER TABLE transactions ADD COLUMN direction TEXT',
+      'ALTER TABLE transactions ADD COLUMN agence_id TEXT',
+      'ALTER TABLE caisse ADD COLUMN agence_id TEXT',
+      'ALTER TABLE caisse_operations ADD COLUMN agence_id TEXT',
+    ]) {
+      try {
+        await db.execute(stmt);
+      } catch (_) {}
+    }
+
+    await _seedDefaultTransactionTypes(db);
+
+    // Backfill operator_transaction_types depuis les anciennes colonnes
+    // taux_commission_*/ussd_*_template (2 lignes par opérateur existant).
+    final depositType = (await db.query('transaction_types',
+            where: 'code = ?', whereArgs: ['deposit']))
+        .first;
+    final withdrawalType = (await db.query('transaction_types',
+            where: 'code = ?', whereArgs: ['withdrawal']))
+        .first;
+    final operators = await db.query('operators');
+    for (final op in operators) {
+      final operatorId = op['id'] as String;
+      final existingLinks = await db.query('operator_transaction_types',
+          where: 'operator_id = ?', whereArgs: [operatorId]);
+      if (existingLinks.isNotEmpty) continue;
+      final now = DateTime.now().toIso8601String();
+      await db.insert('operator_transaction_types', {
+        'id': _uuid.v4(),
+        'operator_id': operatorId,
+        'transaction_type_id': depositType['id'],
+        'ussd_code': op['ussd_deposit_template'],
+        'commission_taux': op['taux_commission_depot'] ?? 0,
+        'is_active': 1,
+        'created_at': now,
+      });
+      await db.insert('operator_transaction_types', {
+        'id': _uuid.v4(),
+        'operator_id': operatorId,
+        'transaction_type_id': withdrawalType['id'],
+        'ussd_code': op['ussd_withdraw_template'],
+        'commission_taux': op['taux_commission_retrait'] ?? 0,
+        'is_active': 1,
+        'created_at': now,
+      });
+    }
+
+    // Agence par défaut — rattache tout l'existant (D8 : tag, pas d'espace isolé).
+    final existingAgences = await db.query('agences');
+    String defaultAgenceId;
+    if (existingAgences.isEmpty) {
+      defaultAgenceId = _uuid.v4();
+      await db.insert('agences', {
+        'id': defaultAgenceId,
+        'nom': 'Agence principale',
+        'is_default': 1,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      for (final op in operators) {
+        await db.insert(
+          'agence_operators',
+          {'agence_id': defaultAgenceId, 'operator_id': op['id']},
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    } else {
+      defaultAgenceId = existingAgences.first['id'] as String;
+    }
+
+    await db.update('clients', {'agence_id': defaultAgenceId},
+        where: 'agence_id IS NULL');
+    await db.update('transactions', {'agence_id': defaultAgenceId},
+        where: 'agence_id IS NULL');
+    await db.update('caisse', {'agence_id': defaultAgenceId},
+        where: 'agence_id IS NULL');
+    await db.update('caisse_operations', {'agence_id': defaultAgenceId},
+        where: 'agence_id IS NULL');
+
+    // Backfill transaction_type_id/direction (transactions) et
+    // direction/operator_transaction_type_id/source (sms_patterns).
+    await db.rawUpdate('''
+      UPDATE transactions
+      SET transaction_type_id = (SELECT id FROM transaction_types WHERE code = transactions.transaction_type),
+          direction = (SELECT default_direction FROM transaction_types WHERE code = transactions.transaction_type)
+      WHERE transaction_type_id IS NULL
+    ''');
+    await db.rawUpdate('''
+      UPDATE sms_patterns
+      SET direction = (SELECT default_direction FROM transaction_types WHERE code = sms_patterns.transaction_type),
+          source = COALESCE(source, 'custom')
+      WHERE direction IS NULL
+    ''');
+    await db.rawUpdate('''
+      UPDATE sms_patterns
+      SET operator_transaction_type_id = (
+        SELECT ott.id FROM operator_transaction_types ott
+        JOIN transaction_types tt ON tt.id = ott.transaction_type_id
+        WHERE ott.operator_id = sms_patterns.operator_id AND tt.code = sms_patterns.transaction_type
+      )
+      WHERE operator_transaction_type_id IS NULL
+    ''');
+
+    await _createIndexes(db);
   }
 
   Future<void> updateDailySummary(Database db, String operatorId, DateTime date) async {

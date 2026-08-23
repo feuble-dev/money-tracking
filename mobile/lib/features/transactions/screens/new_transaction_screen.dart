@@ -220,7 +220,7 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
     await ref.read(caissesProvider.notifier).updateSoldeAfterTransaction(
       operatorId: _selectedOperator!.id,
       amount: amount,
-      transactionType: widget.transactionType,
+      direction: isDeposit ? 'in' : 'out',
     );
 
     if (mounted) {

@@ -4,11 +4,14 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../database/database_helper.dart';
 import '../licence/licence_service.dart';
+import '../sms/commission_calculator.dart';
 import '../sms/sms_field_extractor.dart';
+import '../sms/sms_matching_engine.dart';
 import 'historique_storage.dart';
 
 // Même URL que licence_service
 const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+// const String _baseUrl = 'http://localhost:8000/api/licence';
 
 class HistoriqueImportService {
   static const _smsChannel = MethodChannel('com.rftech.moneytracking/sms_inbox');
@@ -108,35 +111,21 @@ class HistoriqueImportService {
 
     final db = await DatabaseHelper.instance.database;
 
-    // 2. Charger opérateurs + leurs patterns
+    // 2. Charger opérateurs + leurs patterns (moteur unique, partagé avec
+    // le listener temps réel — SmsMatchingEngine)
     final operators = await db.query('operators', where: 'is_active = 1');
     if (operators.isEmpty) {
       return ResultatImport.erreur('Aucun opérateur configuré');
     }
 
-    final patterns = await db.query('sms_patterns');
-
-    // Organiser : { operatorId: { sms_sender, deposit_patterns, withdrawal_patterns } }
     final opConfigs = <String, _OpConfig>{};
     for (final op in operators) {
       final opId = op['id'] as String;
       final sender = (op['sms_sender'] as String?) ?? '';
       if (sender.isEmpty) continue;
 
-      final depositPatterns = patterns
-          .where((p) => p['operator_id'] == opId && p['transaction_type'] == 'deposit')
-          .toList();
-      final withdrawalPatterns = patterns
-          .where((p) => p['operator_id'] == opId && p['transaction_type'] == 'withdrawal')
-          .toList();
-
-      opConfigs[opId] = _OpConfig(
-        sender: sender,
-        commissionDepot: (op['taux_commission_depot'] as num?)?.toDouble() ?? 0,
-        commissionRetrait: (op['taux_commission_retrait'] as num?)?.toDouble() ?? 0,
-        depositPatterns: depositPatterns,
-        withdrawalPatterns: withdrawalPatterns,
-      );
+      final patterns = await SmsMatchingEngine.loadPatternsForOperator(db, opId);
+      opConfigs[opId] = _OpConfig(sender: sender, patterns: patterns);
     }
 
     int totalAnalyses = 0;
@@ -166,24 +155,18 @@ class HistoriqueImportService {
 
         if (body.isEmpty) continue;
 
-        // 5. Tester regex dépôt puis retrait — PAS de fallback
-        // Seuls les SMS qui matchent les patterns configurés sont pris
-        String? txType;
-        if (_matchesAnyPattern(body, config.depositPatterns)) {
-          txType = 'deposit';
-        } else if (_matchesAnyPattern(body, config.withdrawalPatterns)) {
-          txType = 'withdrawal';
-        }
-
-        // Aucun pattern matché → ce n'est PAS une transaction → ignorer
-        if (txType == null) {
+        // 5. Tester tous les patterns de l'opérateur — PAS de fallback
+        // Seuls les SMS qui matchent un pattern configuré sont pris
+        final smsMatch = SmsMatchingEngine.match(body, config.patterns);
+        if (smsMatch == null) {
           ignores++;
           if (totalAnalyses % 20 == 0) onProgress(totalAnalyses, totalSms);
           continue;
         }
+        final txType = smsMatch.transactionTypeCode;
+        final extracted = smsMatch.extractedFields;
 
-        // 6. Extraire les champs
-        final extracted = SmsFieldExtractor.extractAll(body);
+        // 6. Extraire le montant
         final montantStr = extracted['montant'];
         if (montantStr == null) {
           ignores++;
@@ -224,11 +207,11 @@ class HistoriqueImportService {
           }
         }
 
-        // 8. Calculer commission
-        final commRate = txType == 'deposit'
-            ? config.commissionDepot
-            : config.commissionRetrait;
-        final commission = amount * commRate / 100;
+        // 8. Calculer commission (fonction unique — CommissionCalculator)
+        final commission = CommissionCalculator.compute(
+          amount: amount,
+          commissionTaux: smsMatch.commissionTaux,
+        );
 
         // 9. Créer la transaction
         final txId = 'imp_${date.millisecondsSinceEpoch}_$crees';
@@ -236,6 +219,8 @@ class HistoriqueImportService {
           'id': txId,
           'operator_id': opId,
           'transaction_type': txType,
+          'transaction_type_id': smsMatch.transactionTypeId,
+          'direction': smsMatch.direction,
           'amount': amount,
           'commission': commission,
           'client_phone': extracted['numero_client'] ?? '',
@@ -266,101 +251,13 @@ class HistoriqueImportService {
     );
   }
 
-  /// Teste si un SMS matche au moins un pattern d'un opérateur
-  /// Strict : regex d'abord, puis comparaison structurelle avec l'exemple
-  static bool _matchesAnyPattern(
-      String body, List<Map<String, dynamic>> patterns) {
-    final bodyLower = body.toLowerCase();
-
-    for (final p in patterns) {
-      // 1. Tester le regex généré (le plus fiable)
-      final regexStr = p['regex_generated'] as String?;
-      if (regexStr != null && regexStr.isNotEmpty) {
-        try {
-          final regex = RegExp(regexStr, caseSensitive: false);
-          if (regex.hasMatch(body)) return true;
-        } catch (_) {}
-      }
-
-      // 2. Comparaison structurelle stricte avec l'exemple SMS
-      // Le SMS doit contenir les mêmes phrases-clés (pas juste des mots isolés)
-      final rawExample = (p['raw_example'] as String?) ?? '';
-      if (rawExample.length > 20) {
-        final phrases = _extractKeyPhrases(rawExample);
-        if (phrases.isNotEmpty) {
-          // TOUTES les phrases-clés doivent être présentes (strict)
-          final allMatch = phrases.every(
-              (phrase) => bodyLower.contains(phrase.toLowerCase()));
-          if (allMatch) return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  /// Extrait des phrases-clés discriminantes d'un SMS exemple
-  /// Ex: "Vous avez transfere 50000 FCFA" → ["vous avez transfere", "fcfa"]
-  static List<String> _extractKeyPhrases(String example) {
-    final lower = example.toLowerCase();
-    final phrases = <String>[];
-
-    // Chercher des phrases discriminantes de transaction
-    final discriminants = [
-      // Dépôts
-      r'vous avez transfere',
-      r'vous avez envoye',
-      r'depot de',
-      r'transfert de',
-      r'envoye a',
-      r'transfere a',
-      // Retraits
-      r'vous avez recu',
-      r'retrait de',
-      r'a retire',
-      r'received from',
-      r'vous a envoye',
-      r'credit de',
-    ];
-
-    for (final d in discriminants) {
-      if (lower.contains(d)) {
-        phrases.add(d);
-      }
-    }
-
-    // Si aucune phrase standard trouvée, extraire la structure
-    // (mots autour de "FCFA" qui ne sont pas des nombres)
-    if (phrases.isEmpty) {
-      final fcfaMatch = RegExp(
-        r'([a-zà-ÿ\s]{10,})\d[\d\s.,]*\s*fcfa',
-        caseSensitive: false,
-      ).firstMatch(lower);
-      if (fcfaMatch != null) {
-        final prefix = fcfaMatch.group(1)!.trim();
-        if (prefix.length >= 8) {
-          phrases.add(prefix);
-        }
-      }
-    }
-
-    return phrases;
-  }
 }
 
 class _OpConfig {
   final String sender;
-  final double commissionDepot;
-  final double commissionRetrait;
-  final List<Map<String, dynamic>> depositPatterns;
-  final List<Map<String, dynamic>> withdrawalPatterns;
+  final List<Map<String, Object?>> patterns;
 
-  _OpConfig({
-    required this.sender,
-    required this.commissionDepot,
-    required this.commissionRetrait,
-    required this.depositPatterns,
-    required this.withdrawalPatterns,
-  });
+  _OpConfig({required this.sender, required this.patterns});
 }
 
 enum StatutAchat { enAttente, active, timeout }
