@@ -6,9 +6,12 @@ from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
 from datetime import date
 from django.db.models import Sum
-from .models import Client, Licence, DemandeActivation, Notification, AchatHistorique
+from .models import Client, Agence, PricingTier, Licence, DemandeActivation, Notification, AchatHistorique
 from .services import LicenceService, HistoriqueService
-from .serializers import LicenceSerializer, DemandeActivationSerializer, ClientSerializer, NotificationSerializer
+from .serializers import (
+    LicenceSerializer, DemandeActivationSerializer, ClientSerializer,
+    NotificationSerializer, AgenceSerializer, PricingTierSerializer,
+)
 
 
 class AdminLoginView(APIView):
@@ -58,11 +61,12 @@ class AdminStatsView(APIView):
             statut__in=['active', 'essai'],
             date_fin__gte=today,
             date_fin__lte=today + timedelta(days=30)
-        ).select_related('client').order_by('date_fin')[:10]
+        ).select_related('agence__client').order_by('date_fin')[:10]
 
         licences_expirant = [{
             'id': l.id,
-            'tel': l.client.telephone,
+            'tel': l.agence.client.telephone,
+            'agence': l.agence.nom,
             'code': l.code,
             'expire': str(l.date_fin),
             'jours': (l.date_fin - today).days,
@@ -91,7 +95,7 @@ class AdminStatsView(APIView):
         }
 
         # Activité récente
-        recent_licences = Licence.objects.select_related('client').order_by('-created_at')[:5]
+        recent_licences = Licence.objects.select_related('agence__client').order_by('-created_at')[:5]
         recent_demandes = DemandeActivation.objects.order_by('-created_at')[:5]
 
         activite = []
@@ -100,7 +104,7 @@ class AdminStatsView(APIView):
             time_str = "Aujourd'hui" if ago == 0 else f"Il y a {ago}j" if ago < 7 else l.created_at.strftime('%d/%m/%Y')
             activite.append({
                 'type': 'essai' if l.statut == 'essai' else 'licence',
-                'text': f"{'Essai gratuit' if l.statut == 'essai' else 'Licence générée'} — {l.client.telephone}",
+                'text': f"{'Essai gratuit' if l.statut == 'essai' else 'Licence générée'} — {l.agence.client.telephone} ({l.agence.nom})",
                 'time': time_str,
                 'color': 'bg-emerald-500' if l.statut == 'essai' else 'bg-blue-500',
             })
@@ -116,9 +120,38 @@ class AdminStatsView(APIView):
         activite.sort(key=lambda x: x['time'], reverse=False)
         activite = activite[:8]
 
+        # Répartition Particulier / Agence (D7)
+        comptes_repartition = {
+            'particulier': Client.objects.filter(account_type='particulier').count(),
+            'agence': Client.objects.filter(account_type='agence').count(),
+        }
+
+        # Couverture du catalogue (Pays/Opérateurs/Types, D3)
+        from catalog.models import Country, Operator, TransactionType
+        catalog_coverage = {
+            'countries': Country.objects.filter(is_active=True).count(),
+            'operators': Operator.objects.filter(is_active=True).count(),
+            'transaction_types': TransactionType.objects.filter(is_active=True).count(),
+        }
+
+        # Croissance des agences (12 derniers mois) — unité facturable, D8
+        agences_monthly = (
+            Agence.objects
+            .filter(created_at__gte=today - timedelta(days=365))
+            .annotate(month=TruncMonth('created_at'))
+            .values('month')
+            .annotate(count=Count('id'))
+            .order_by('month')
+        )
+        agences_growth = [{
+            'month': m['month'].strftime('%b'),
+            'value': m['count'],
+        } for m in agences_monthly]
+
         return Response({
             'licences_actives': licences_actives,
             'clients_total': Client.objects.count(),
+            'agences_total': Agence.objects.filter(is_active=True).count(),
             'demandes_en_attente': DemandeActivation.objects.filter(
                 statut='en_attente'
             ).count(),
@@ -130,6 +163,9 @@ class AdminStatsView(APIView):
             'licences_expirant': licences_expirant,
             'monthly_data': monthly_data,
             'repartition': repartition,
+            'comptes_repartition': comptes_repartition,
+            'catalog_coverage': catalog_coverage,
+            'agences_growth': agences_growth,
             'activite': activite,
         })
 
@@ -138,7 +174,7 @@ class AdminLicencesListView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        licences = Licence.objects.select_related('client').all()
+        licences = Licence.objects.select_related('agence__client').all()
         serializer = LicenceSerializer(licences, many=True)
         return Response(serializer.data)
 
@@ -147,36 +183,47 @@ class AdminGenererLicenceView(APIView):
     permission_classes = [IsAdminUser]
 
     def post(self, request):
-        telephone = request.data.get('telephone', '').strip()
-        device_id = request.data.get('device_id', '').strip()
+        agence_id = request.data.get('agence_id')
         duree_mois = int(request.data.get('duree_mois', 1))
-        montant = int(request.data.get('montant_paye', 0))
+        montant = request.data.get('montant_paye')
+        device_id_fallback = request.data.get('device_id', '').strip()
 
-        if not telephone or not device_id:
+        if not agence_id:
             return Response(
-                {'erreur': 'telephone et device_id requis'},
+                {'erreur': 'agence_id requis'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        client, _ = Client.objects.get_or_create(
-            telephone=telephone
-        )
+        try:
+            agence = Agence.objects.select_related('client').get(id=agence_id)
+        except Agence.DoesNotExist:
+            return Response(
+                {'erreur': 'Agence introuvable'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        licence_actuelle = Licence.objects.filter(
-            client=client,
-            device_id=device_id,
-            statut='active'
+        licence_actuelle = agence.licences.filter(
+            statut__in=['active', 'essai']
         ).order_by('-date_fin').first()
+
+        device_id = licence_actuelle.device_id if licence_actuelle else device_id_fallback
+        if not device_id:
+            return Response(
+                {'erreur': 'device_id requis (aucune licence existante pour cette agence)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        montant = int(montant) if montant is not None else LicenceService.montant_pour_duree(duree_mois)
 
         date_fin = LicenceService.calculer_date_fin(
             duree_mois,
             licence_actuelle.date_fin if licence_actuelle else None
         )
         code = LicenceService.generer_code(
-            device_id, telephone, date_fin
+            device_id, agence.client.telephone, date_fin, agence.id
         )
         licence = Licence.objects.create(
-            client=client,
+            agence=agence,
             code=code,
             device_id=device_id,
             date_debut=date.today(),
@@ -196,7 +243,7 @@ class AdminDemandesListView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        demandes = DemandeActivation.objects.all()
+        demandes = DemandeActivation.objects.select_related('agence').all()
         serializer = DemandeActivationSerializer(demandes, many=True)
         return Response(serializer.data)
 
@@ -206,7 +253,7 @@ class AdminValiderDemandeView(APIView):
 
     def post(self, request, demande_id):
         try:
-            demande = DemandeActivation.objects.get(
+            demande = DemandeActivation.objects.select_related('agence__client').get(
                 id=demande_id, statut='en_attente'
             )
         except DemandeActivation.DoesNotExist:
@@ -215,14 +262,15 @@ class AdminValiderDemandeView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        client, _ = Client.objects.get_or_create(
-            telephone=demande.telephone
-        )
+        if not demande.agence:
+            return Response(
+                {'erreur': "Demande sans agence associée — impossible de générer la licence"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        licence_actuelle = Licence.objects.filter(
-            client=client,
-            device_id=demande.device_id,
-            statut='active'
+        agence = demande.agence
+        licence_actuelle = agence.licences.filter(
+            statut__in=['active', 'essai']
         ).order_by('-date_fin').first()
 
         date_fin = LicenceService.calculer_date_fin(
@@ -231,11 +279,11 @@ class AdminValiderDemandeView(APIView):
         )
 
         code = LicenceService.generer_code(
-            demande.device_id, demande.telephone, date_fin
+            demande.device_id, demande.telephone, date_fin, agence.id
         )
 
         licence = Licence.objects.create(
-            client=client,
+            agence=agence,
             code=code,
             device_id=demande.device_id,
             date_debut=date.today(),
@@ -275,7 +323,10 @@ class AdminRejeterDemandeView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        motif = request.data.get('motif', '').strip()
         demande.statut = 'rejetee'
+        if motif:
+            demande.note = motif
         demande.save()
 
         return Response({'message': 'Demande rejetée'})
@@ -288,6 +339,53 @@ class AdminClientsListView(APIView):
         clients = Client.objects.all()
         serializer = ClientSerializer(clients, many=True)
         return Response(serializer.data)
+
+
+class AdminAgencesListView(APIView):
+    """GET /api/admin/agences/?client_id=... — toutes les agences, ou filtrées par client."""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        client_id = request.query_params.get('client_id')
+        agences = Agence.objects.select_related('client').all()
+        if client_id:
+            agences = agences.filter(client_id=client_id)
+        serializer = AgenceSerializer(agences, many=True)
+        return Response(serializer.data)
+
+
+class AdminPricingTiersView(APIView):
+    """GET/POST /api/admin/pricing-tiers/ — grille tarifaire éditable."""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        tiers = PricingTier.objects.all()
+        serializer = PricingTierSerializer(tiers, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = PricingTierSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminPricingTierDetailView(APIView):
+    """PATCH /api/admin/pricing-tiers/<id>/"""
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, tier_id):
+        try:
+            tier = PricingTier.objects.get(id=tier_id)
+        except PricingTier.DoesNotExist:
+            return Response({'erreur': 'Palier introuvable'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = PricingTierSerializer(tier, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class AdminNotificationsListView(APIView):
@@ -349,6 +447,7 @@ class AdminAchatsHistoriqueListView(APIView):
             'id': a.id,
             'telephone': a.client.telephone,
             'device_id': a.device_id[:16],
+            'date_debut_demandee': str(a.date_debut_demandee) if a.date_debut_demandee else None,
             'statut': a.statut,
             'token': a.token,
             'montant_paye': a.montant_paye,

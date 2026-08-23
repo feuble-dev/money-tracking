@@ -2,12 +2,23 @@ from django.db import models
 
 
 class Client(models.Model):
+    ACCOUNT_TYPE_CHOICES = [
+        ('particulier', 'Particulier'),
+        ('agence', 'Agence'),
+    ]
+
     telephone = models.CharField(
         max_length=20, unique=True,
         help_text="Numéro BF ex: 70123456"
     )
     nom = models.CharField(max_length=100, blank=True)
     prenom = models.CharField(max_length=100, blank=True)
+    account_type = models.CharField(
+        max_length=20,
+        choices=ACCOUNT_TYPE_CHOICES,
+        default='agence',
+        help_text="Particulier: suivi personnel multi-opérateur. Agence: usage professionnel avec commissions."
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -18,6 +29,70 @@ class Client(models.Model):
         verbose_name_plural = "Clients"
 
 
+class Agence(models.Model):
+    """
+    Unité facturable : un compte (Client) peut avoir plusieurs agences,
+    chacune avec son propre cycle de vie de licence (essai/active/expirée).
+    """
+    client = models.ForeignKey(
+        Client, on_delete=models.CASCADE,
+        related_name='agences'
+    )
+    nom = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.nom} — {self.client.telephone}"
+
+    class Meta:
+        verbose_name = "Agence"
+        verbose_name_plural = "Agences"
+        ordering = ['-created_at']
+
+
+class PricingTier(models.Model):
+    """
+    Grille tarifaire éditable depuis l'admin (remplace l'ancien dict TARIFS codé en dur).
+    Base : 450 FCFA/mois/agence. Un palier essai (is_essai=True) définit la durée d'essai gratuit.
+    """
+    duree_mois = models.PositiveIntegerField(
+        unique=True,
+        help_text="Durée du palier en mois (1, 12, 24...)"
+    )
+    remise_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        help_text="Remise en % appliquée au tarif de base mensuel"
+    )
+    is_essai = models.BooleanField(
+        default=False,
+        help_text="Coché uniquement pour le palier d'essai gratuit"
+    )
+    essai_duree_mois = models.PositiveIntegerField(
+        default=0,
+        help_text="Utilisé seulement si is_essai=True (ex: 3 mois)"
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    BASE_MENSUEL = 450
+
+    def montant(self) -> int:
+        brut = self.BASE_MENSUEL * self.duree_mois
+        return round(float(brut) * (1 - float(self.remise_pct) / 100))
+
+    def __str__(self):
+        if self.is_essai:
+            return f"Essai — {self.essai_duree_mois} mois gratuits"
+        return f"{self.duree_mois} mois — {self.montant()} FCFA (-{self.remise_pct}%)"
+
+    class Meta:
+        verbose_name = "Palier tarifaire"
+        verbose_name_plural = "Paliers tarifaires"
+        ordering = ['duree_mois']
+
+
 class Licence(models.Model):
     STATUT_CHOICES = [
         ('essai', 'Essai gratuit'),
@@ -26,8 +101,8 @@ class Licence(models.Model):
         ('suspendue', 'Suspendue'),
     ]
 
-    client = models.ForeignKey(
-        Client, on_delete=models.CASCADE,
+    agence = models.ForeignKey(
+        Agence, on_delete=models.CASCADE,
         related_name='licences'
     )
     code = models.CharField(
@@ -56,7 +131,7 @@ class Licence(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.code} — {self.client.telephone}"
+        return f"{self.code} — {self.agence.nom} ({self.agence.client.telephone})"
 
     class Meta:
         verbose_name = "Licence"
@@ -73,6 +148,12 @@ class DemandeActivation(models.Model):
 
     telephone = models.CharField(max_length=20)
     device_id = models.CharField(max_length=200)
+    agence = models.ForeignKey(
+        Agence, null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='demandes',
+        help_text="Agence pour laquelle l'activation est demandée"
+    )
     duree_mois = models.IntegerField(default=1)
     statut = models.CharField(
         max_length=20,
@@ -139,12 +220,19 @@ class Notification(models.Model):
 
 
 class AchatHistorique(models.Model):
-    """Achat unique pour l'import des anciens SMS. 2 000 FCFA."""
+    """
+    Achat de l'import des anciens SMS. Gratuit jusqu'à 1 an en arrière,
+    puis 200 FCFA par année supplémentaire (voir HistoriqueService.calculer_cout).
+    """
     client = models.ForeignKey(
         Client, on_delete=models.CASCADE,
         related_name='achats_historique'
     )
     device_id = models.CharField(max_length=200)
+    date_debut_demandee = models.DateField(
+        null=True, blank=True,
+        help_text="Date la plus ancienne à importer — détermine le coût"
+    )
     statut = models.CharField(
         max_length=20,
         choices=[
@@ -157,7 +245,7 @@ class AchatHistorique(models.Model):
     token = models.CharField(
         max_length=100, unique=True, blank=True, null=True
     )
-    montant_paye = models.IntegerField(default=2000)
+    montant_paye = models.IntegerField(default=0)
     note = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     activated_at = models.DateTimeField(null=True, blank=True)
