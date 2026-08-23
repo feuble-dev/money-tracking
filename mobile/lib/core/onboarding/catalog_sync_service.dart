@@ -211,4 +211,138 @@ class CatalogSyncService {
     });
     return id;
   }
+
+  /// Met à jour les opérateurs déjà importés localement (types + patterns)
+  /// depuis le catalogue distant — n'ajoute JAMAIS un opérateur que
+  /// l'agent n'a pas explicitement choisi à l'onboarding (importOperators
+  /// s'en charge, c'est un choix délibéré de l'agent).
+  ///
+  /// C'est le mécanisme qui manquait pour que les corrections du catalogue
+  /// admin (ex: un pattern SMS mal tagué qui empêchait des transactions
+  /// réelles d'être détectées) atteignent les appareils déjà onboardés —
+  /// jusqu'ici le catalogue n'était jamais réimporté après l'onboarding,
+  /// même si `Country.catalog_version` (D6) était justement pensé pour
+  /// permettre ce resync incrémental.
+  ///
+  /// Ne touche jamais un pattern `source != 'catalog'` (un pattern custom
+  /// ou — un jour — overridé localement par l'agent reste intouché).
+  /// Retourne le nombre de patterns effectivement ajoutés/modifiés.
+  Future<int> resyncOperators({
+    required String countryCode,
+    String? accountType,
+  }) async {
+    final db = await DatabaseHelper.instance.database;
+    final operators = await fetchOperators(countryCode, accountType: accountType);
+    int changed = 0;
+
+    await db.transaction((txn) async {
+      for (final catalogOp in operators) {
+        final existingOp = await txn.query(
+          'operators',
+          where: 'catalog_operator_id = ?',
+          whereArgs: [catalogOp.id],
+        );
+        if (existingOp.isEmpty) continue; // resync ne rajoute pas d'opérateur
+        final operatorId = existingOp.first['id'] as String;
+        final now = DateTime.now().toIso8601String();
+
+        for (final catalogType in catalogOp.transactionTypes) {
+          final transactionTypeId = await _findOrCreateTransactionType(txn, catalogType);
+
+          final existingLink = await txn.query(
+            'operator_transaction_types',
+            where: 'operator_id = ? AND transaction_type_id = ?',
+            whereArgs: [operatorId, transactionTypeId],
+          );
+          final String linkId;
+          if (existingLink.isNotEmpty) {
+            linkId = existingLink.first['id'] as String;
+            await txn.update(
+              'operator_transaction_types',
+              {
+                'ussd_code': catalogType.ussdCode,
+                'commission_taux': catalogType.commissionTaux,
+                'catalog_link_id': catalogType.id,
+              },
+              where: 'id = ?',
+              whereArgs: [linkId],
+            );
+          } else {
+            linkId = _uuid.v4();
+            await txn.insert('operator_transaction_types', {
+              'id': linkId,
+              'operator_id': operatorId,
+              'transaction_type_id': transactionTypeId,
+              'catalog_link_id': catalogType.id,
+              'ussd_code': catalogType.ussdCode,
+              'commission_taux': catalogType.commissionTaux,
+              'is_active': 1,
+              'created_at': now,
+            });
+          }
+
+          for (final pattern in catalogType.smsPatterns) {
+            final zones = pattern.taggedZones
+                .map((z) => TaggedZone(
+                      start: z['start'] as int,
+                      end: z['end'] as int,
+                      fieldName: z['fieldName'] as String,
+                      value: pattern.rawExample.substring(
+                          z['start'] as int, z['end'] as int),
+                    ))
+                .toList();
+            final regex = SmsPatternBuilder.buildRegex(pattern.rawExample, zones);
+            final zonesJson = SmsPatternBuilder.zonesToJson(zones);
+
+            final existingPattern = await txn.query(
+              'sms_patterns',
+              where: 'catalog_pattern_id = ? AND source = ?',
+              whereArgs: [pattern.id, 'catalog'],
+            );
+
+            if (existingPattern.isEmpty) {
+              await txn.insert('sms_patterns', {
+                'id': _uuid.v4(),
+                'operator_id': operatorId,
+                'transaction_type': catalogType.code,
+                'operator_transaction_type_id': linkId,
+                'catalog_pattern_id': pattern.id,
+                'direction': pattern.direction,
+                'tagged_zones_json': zonesJson,
+                'source': 'catalog',
+                'raw_example': pattern.rawExample,
+                'pattern_json': zonesJson,
+                'regex_generated': regex,
+                'created_at': now,
+              });
+              changed++;
+              continue;
+            }
+
+            final current = existingPattern.first;
+            final unchanged = current['tagged_zones_json'] == zonesJson &&
+                current['regex_generated'] == regex &&
+                current['direction'] == pattern.direction;
+            if (unchanged) continue;
+
+            await txn.update(
+              'sms_patterns',
+              {
+                'tagged_zones_json': zonesJson,
+                'pattern_json': zonesJson,
+                'regex_generated': regex,
+                'direction': pattern.direction,
+                'operator_transaction_type_id': linkId,
+              },
+              where: 'id = ?',
+              whereArgs: [current['id']],
+            );
+            changed++;
+          }
+        }
+      }
+    });
+
+    return changed;
+  }
 }

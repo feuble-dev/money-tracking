@@ -164,8 +164,8 @@ class LicenceGuard {
       builder: (_) => AlertDialog(
         title: const Text('Import Historique SMS'),
         content: const Text(
-          'L\'import des anciens SMS est disponible '
-          'pour 2 000 FCFA (paiement unique).\n\n'
+          'Gratuit jusqu\'à 1 an en arrière. Au-delà, 200 FCFA par année '
+          'supplémentaire — le prix exact dépend de la période choisie.\n\n'
           'Illimité sur cet appareil une fois activé.',
         ),
         actions: [
@@ -181,7 +181,7 @@ class LicenceGuard {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF1565C0),
             ),
-            child: const Text('Acheter — 2 000 FCFA'),
+            child: const Text('Choisir une période'),
           ),
         ],
       ),

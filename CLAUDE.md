@@ -68,8 +68,8 @@ These were the key calls made during the catalog/multi-agence/sync pivot — kno
 - **D3 — `TransactionType` is a GLOBAL catalog**, not tied to one operator. Dépôt/Retrait/Transfert/Paiement marchand/... are created once in the admin catalog and reused across operators. `OperatorTransactionType` (junction: operator + transaction_type + ussd_code + commission_taux + is_active) carries the operator-specific attributes. `SmsPattern` belongs to an `OperatorTransactionType` (not directly to a type), since the SMS wording is operator-specific.
 - **D4 — Pricing is a DB model (`PricingTier`)**, not a hardcoded dict. Editable from admin without a deploy.
 - **D5 — SMS history import cost is computed on demand**: free ≤ 1 year back, 200 FCFA per additional year started (`HistoriqueService.calculer_cout`).
-- **D6 — Catalog integrity via `catalog_version` + ETag**, not a fake HMAC. A `Country.catalog_version` bumps on any change to its operators/types/patterns (via `catalog/signals.py`), enabling incremental resync.
-- **D7 — `Client.account_type`** (`particulier`|`agence`), chosen at onboarding. Drives mobile UI differences: Commissions tab/route hidden entirely for `particulier` (`accountTypeProvider`, router redirect + `MainShell` tab list), the "name your agency" onboarding step is skipped for `particulier` (silent default agence), and sync/affiliation only ever runs for `agence`.
+- **D6 — Catalog integrity via `catalog_version` + ETag**, not a fake HMAC. A `Country.catalog_version` bumps on any change to its operators/types/patterns (via `catalog/signals.py`), enabling incremental resync. The resync itself is `CatalogSyncService.resyncOperators()` (mobile) — updates SMS patterns/transaction-type links for operators **already** imported (never adds a new operator the agent didn't choose), matched by `catalog_pattern_id`/`source='catalog'` so it never touches a custom pattern. Runs automatically and silently on every app start, plus a manual "Resynchroniser le catalogue" button in Settings → Diagnostic for immediate use. Without this, an admin correction to a broken SMS pattern (e.g. an untagged date that froze into the compiled regex as literal text, or the D5-era `_seed_catalog.py`/`seed_catalog` date-tagging bug — see below) would never reach an already-onboarded device.
+- **D7 — `Client.account_type`** (`particulier`|`agence`), chosen at onboarding. Drives mobile UI differences: Commissions route blocked entirely for `particulier` (`accountTypeProvider`, router redirect); the bottom nav's 3rd tab is "Commissions" for `agence` but "Paramètres" for `particulier` (same slot, different destination — `MainShell`, tapping it `context.push`es `/settings` directly rather than going through a shell branch, since Settings isn't a `StatefulShellBranch`); the "name your agency" onboarding step is skipped for `particulier` (silent default agence); sync/affiliation runs for both account types (see dedicated sections below) but only `agence` UI ever uses the word "agence".
 - **D8 — `Agence` is the backend billing unit**, not just a local mobile concept. `Licence` FKs to `Agence` (not directly to `Client`). Each agence has its own licence lifecycle (essai/active/expirée), independent of siblings. **Multiple `Licence` rows can exist for the same `Agence`** — one per device authorized to operate it (see D12).
 - **D9 — Commission stays simple**: one rate per `OperatorTransactionType`, no split by direction. Deliberately not complicated further yet.
 - **D10 — Every new agence gets its own 3-month free trial**, granted at creation (`LicenceService.creer_agence_avec_essai`), even if the same device/account already used a trial elsewhere. Accepted abuse risk, no guard implemented.
@@ -144,7 +144,7 @@ mobile/
       caisse/          # Cash register management
       backup/          # Encrypted SQLite backup/restore
       export/          # PDF and CSV export
-    shared/widgets/    # MainShell (bottom nav — 2 or 3 tabs depending on account_type), AppDrawer
+    shared/widgets/    # MainShell (3-tab bottom nav — 3rd tab is Commissions for agence, Paramètres for particulier), AppDrawer
   android/             # Native Android project + MainActivity.kt
   assets/              # App icons and logos
   pubspec.yaml
@@ -189,7 +189,7 @@ Both always produce a real `regex_generated` via `SmsPatternBuilder.buildRegex()
 - **Write actions** (confirm transaction, add client, configure operator, etc.) require an active licence **for the current agence** (`LicenceGuard` checks `ActionType`)
 - Three activation modes: free trial (3 months, per-agence, D10), online request (admin validates), offline key (HMAC-SHA256 signed)
 - `FlutterSecureStorage` stores licence data and phone number
-- `importerHistoriqueSMS` action type triggers a special purchase dialog (free ≤1 year, 200 FCFA/year beyond — D5)
+- `importerHistoriqueSMS` action type triggers a special purchase dialog (free ≤1 year, 200 FCFA/year beyond — D5). `ImportHistoriqueScreen` asks for the start date **first** (`date_debut` drives the price) before requesting a purchase — `HistoriqueImportService.demanderAchat(telephone, dateDebut)` sends it to `/historique/demander/`, which returns the real backend-computed `montant`; the mobile screen never hardcodes a price, only shows a client-side estimate (`estimerCout`, a pure mirror of `HistoriqueService.calculer_cout`) before the request confirms it.
 - An agent affiliated to a patron's agence (D-affiliation above) gets their own `Licence` row for that agence — same licence-check code, no special-casing
 
 ### Native Android
@@ -205,6 +205,8 @@ Three apps:
 - **`sync`** — multi-agence ownership/cloud sync (see dedicated section above). `/api/sync/*`.
 
 Token authentication (DRF `rest_framework.authtoken`) is used for the **admin** endpoints only — the client-facing `/api/licence/`, `/api/catalog/`, `/api/sync/` endpoints authenticate via telephone+device_id (no bearer token), consistent across the whole client-facing surface.
+
+**Seeding the catalog**: `python manage.py seed_catalog` (`catalog/management/commands/seed_catalog.py`) populates Burkina Faso + 4 real operators (Orange/Moov/Coris Money, Wave) + global transaction types + real SMS patterns, from real SMS samples. Fully idempotent — safe to re-run. Does **not** fabricate or download operator logos (trademarked brand assets) — if real logo files are placed at `backend/_seed_logos/<slug>.png|jpg|jpeg|webp` (slug = lowercase name, spaces→underscores, e.g. `orange_money.png`) before running, it attaches them automatically to operators that don't already have one; otherwise upload logos individually from the admin dashboard (`/catalog/operators` → Modifier). This replaced an earlier `_seed_catalog.py` piped into `manage.py shell <` — that approach turned out to be fragile (the interactive console's block-parsing can desync depending on exact blank-line placement when the piped script itself defines functions), so it was converted to a proper management command.
 
 ### Next.js Web Structure (`web/`)
 ```
@@ -354,6 +356,8 @@ Two sources of patterns, same underlying mechanism (D1/D2/D3):
 2. **Custom/local patterns** (agent-managed, mobile-only) — `SmsZoneTagger` widget (agent selects text on-device, tags a field, sees a live highlighted preview) against either an existing attached type or a newly-created custom one (`TransactionTypeRepository.createCustomTypeForOperator`). Always produces a real compiled regex, tested against a second sample SMS before saving (`SmsPatternBuilder.parseSms`).
 
 Both paths write to the same `sms_patterns` schema (`tagged_zones_json` + real `regex_generated` + `operator_transaction_type_id` + `direction`) and are matched identically by `SmsMatchingEngine`.
+
+**Tagging pitfall (learned the hard way, `seed_catalog`)**: any substring left **untagged** between two tagged zones becomes frozen **literal text** in the compiled regex (`SmsPatternBuilder.buildRegex()` escapes untagged spans verbatim, only whitespace is made flexible). A date/time or any other value that changes per-message must always be tagged as a zone (any `fieldName`, even one `_buildCaptureGroup` doesn't have a dedicated case for — it falls through to a generic non-greedy `(.+?)` capture) — otherwise every future real SMS with a different value there will silently fail to match. This broke nearly every seeded Moov Money/Coris Money pattern (their SMS include a `Date: ...`/`le DD/MM/YYYY HH:MM:SS` segment that was never tagged) until fixed. Separately, `_buildCaptureGroup`'s `montant`/`solde` case must handle **mixed** thousands+decimal separators in one value (e.g. Moov's `"1 521,00"` — space thousands separator *and* comma decimal) — the original grouped-by-exactly-3-digits regex silently truncated the decimal part, breaking the literal match right after it; the fixed pattern (`\d[\d.,  ]*\d|\d`) captures the whole numeric-looking token permissively and leaves format interpretation to `SmsPatternBuilder.cleanAmount`/`SmsFieldExtractor.parseMontant` downstream, which already handle every separator convention.
 
 ## Licence Pricing
 

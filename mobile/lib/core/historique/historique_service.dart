@@ -16,9 +16,26 @@ const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence
 class HistoriqueImportService {
   static const _smsChannel = MethodChannel('com.rftech.moneytracking/sms_inbox');
 
-  /// Demander l'achat historique
-  static Future<ResultatAchat> demanderAchat(String telephone) async {
+  /// Aperçu client du coût (D5) — miroir exact de
+  /// HistoriqueService.calculer_cout côté backend, qui reste la seule
+  /// source de vérité pour le montant réellement facturé.
+  static int estimerCout(DateTime dateDebut) {
+    final jours = DateTime.now().difference(dateDebut).inDays;
+    final anneesPayantes = (jours / 365).ceil() - 1;
+    return (anneesPayantes < 0 ? 0 : anneesPayantes) * 200;
+  }
+
+  /// Demande l'achat historique pour une date de début donnée — le prix
+  /// (gratuit ≤ 1 an, 200 FCFA/année supplémentaire, D5) est calculé côté
+  /// backend à partir de [dateDebut] (HistoriqueService.calculer_cout) et
+  /// renvoyé dans la réponse, jamais codé en dur côté mobile.
+  static Future<ResultatAchat> demanderAchat(
+    String telephone,
+    DateTime dateDebut,
+  ) async {
     final deviceId = await LicenceService.getDeviceId();
+    final dateDebutStr =
+        '${dateDebut.year.toString().padLeft(4, '0')}-${dateDebut.month.toString().padLeft(2, '0')}-${dateDebut.day.toString().padLeft(2, '0')}';
     try {
       final response = await http.post(
         Uri.parse('$_baseUrl/historique/demander/'),
@@ -26,18 +43,24 @@ class HistoriqueImportService {
         body: jsonEncode({
           'telephone': telephone,
           'device_id': deviceId,
+          'date_debut': dateDebutStr,
         }),
       ).timeout(const Duration(seconds: 10));
 
       final data = jsonDecode(response.body);
 
-      if (data['statut'] == 'deja_active') {
+      if (response.statusCode >= 400) {
+        return ResultatAchat.erreur(data['erreur'] ?? 'Erreur inconnue');
+      }
+
+      if (data['statut'] == 'deja_active' || data['statut'] == 'active') {
         await HistoriqueStorage.sauvegarderToken(data['token']);
-        return ResultatAchat.dejaActive();
+        return ResultatAchat.active(montant: (data['montant'] as num?)?.toInt() ?? 0);
       }
 
       return ResultatAchat.enAttente(
-        data['message'] ?? 'Demande envoyée',
+        montant: (data['montant'] as num?)?.toInt() ?? 0,
+        message: data['message'] ?? 'Demande envoyée',
       );
     } catch (e) {
       return ResultatAchat.erreur('Impossible de se connecter');
@@ -265,17 +288,21 @@ enum StatutAchat { enAttente, active, timeout }
 class ResultatAchat {
   final bool succes;
   final bool dejaActive;
+  final int montant;
   final String message;
-  ResultatAchat.dejaActive()
+  ResultatAchat.active({required this.montant})
       : succes = true,
         dejaActive = true,
-        message = 'Déjà activé';
-  ResultatAchat.enAttente(this.message)
+        message = montant == 0
+            ? 'Import historique activé gratuitement'
+            : 'Import historique activé';
+  ResultatAchat.enAttente({required this.montant, required this.message})
       : succes = false,
         dejaActive = false;
   ResultatAchat.erreur(this.message)
       : succes = false,
-        dejaActive = false;
+        dejaActive = false,
+        montant = 0;
 }
 
 class ResultatImport {

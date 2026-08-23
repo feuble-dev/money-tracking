@@ -4,6 +4,8 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../../core/onboarding/catalog_sync_service.dart';
+import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_notifier.dart';
 
@@ -92,6 +94,14 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: const Text('Autoriser la détection même app fermée'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _demanderExemptionBatterie(context),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.sync, color: AppColors.primaryColor),
+                  title: const Text('Resynchroniser le catalogue'),
+                  subtitle: const Text('Récupère les corrections de patterns SMS'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _resynchroniserCatalogue(context, ref),
                 ),
               ],
             ),
@@ -263,6 +273,40 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Redemande le catalogue au serveur pour les opérateurs déjà importés —
+  /// répare immédiatement une détection cassée par un pattern SMS mal tagué
+  /// côté admin (CatalogSyncService.resyncOperators), sans attendre le
+  /// prochain démarrage de l'app (qui le fait aussi automatiquement).
+  Future<void> _resynchroniserCatalogue(BuildContext context, WidgetRef ref) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Resynchronisation en cours...')),
+    );
+    try {
+      final onboardingService = ref.read(onboardingStatusServiceProvider);
+      final countryCode = await onboardingService.getCountryCode();
+      final accountType = await onboardingService.getAccountType();
+      final changed = await CatalogSyncService().resyncOperators(
+        countryCode: countryCode,
+        accountType: accountType,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            changed > 0
+                ? '$changed pattern(s) SMS mis à jour'
+                : 'Catalogue déjà à jour',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impossible de resynchroniser — vérifiez votre connexion')),
+      );
+    }
   }
 
   /// Demande l'exemption d'optimisation batterie — nécessaire sur beaucoup

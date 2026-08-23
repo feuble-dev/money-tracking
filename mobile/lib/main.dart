@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'core/database/database_helper.dart';
 import 'core/notifications/notification_service.dart';
+import 'core/onboarding/catalog_sync_service.dart';
+import 'core/onboarding/onboarding_state.dart';
 import 'core/permissions/permission_service.dart';
 import 'core/router.dart';
 import 'core/sms/background_sms_handler.dart';
@@ -74,6 +76,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
     // uniquement — SyncService.pushIfNeeded() est un no-op pour un compte
     // Particulier) : visibilité "détail complet" du patron sur ses agences.
     SyncService.pushIfNeeded();
+    _resyncCatalog();
     _syncSub = Stream.periodic(const Duration(minutes: 2)).listen((_) {
       SyncService.pushIfNeeded();
     });
@@ -104,6 +107,28 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
       ref.read(pendingTransactionsProvider.notifier).loadPending();
       ref.invalidate(dashboardStatsProvider(null));
     };
+  }
+
+  /// Met à jour en arrière-plan les patterns SMS des opérateurs déjà
+  /// importés (jamais les opérateurs eux-mêmes) — c'est ce qui permet à une
+  /// correction du catalogue admin (ex: un pattern mal tagué qui empêchait
+  /// des transactions réelles d'être détectées) d'atteindre un appareil
+  /// déjà onboardé, sans réinstallation. Silencieux et non-bloquant.
+  Future<void> _resyncCatalog() async {
+    try {
+      final onboardingService = ref.read(onboardingStatusServiceProvider);
+      final countryCode = await onboardingService.getCountryCode();
+      final accountType = await onboardingService.getAccountType();
+      final changed = await CatalogSyncService().resyncOperators(
+        countryCode: countryCode,
+        accountType: accountType,
+      );
+      if (changed > 0) {
+        debugPrint('[MoneyTracking] Catalogue resynchronisé : $changed pattern(s) mis à jour');
+      }
+    } catch (e) {
+      debugPrint('[MoneyTracking] Resync catalogue ERROR: $e');
+    }
   }
 
   /// Demande les permissions puis démarre l'écoute SMS

@@ -8,6 +8,7 @@ import '../database/database_helper.dart';
 class OnboardingStatusService {
   static const _key = 'onboarding_complete';
   static const _accountTypeKey = 'account_type';
+  static const _countryCodeKey = 'country_code';
 
   Future<bool> isComplete() async {
     final prefs = await SharedPreferences.getInstance();
@@ -42,6 +43,21 @@ class OnboardingStatusService {
   Future<String?> getAccountType() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_accountTypeKey);
+  }
+
+  /// Persisté pour permettre un resync catalogue ultérieur (voir
+  /// CatalogSyncService.resyncOperators) sans redemander le pays à
+  /// l'agent — il ne le choisit qu'une fois, à l'onboarding.
+  Future<void> saveCountryCode(String countryCode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_countryCodeKey, countryCode);
+  }
+
+  /// Défaut 'BF' (Burkina Faso) pour les comptes déjà onboardés avant
+  /// l'introduction de ce champ — le seul pays supporté aujourd'hui.
+  Future<String> getCountryCode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_countryCodeKey) ?? 'BF';
   }
 }
 

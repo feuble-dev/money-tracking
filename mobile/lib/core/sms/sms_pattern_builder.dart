@@ -109,7 +109,7 @@ class SmsPatternBuilder {
       case 'montant':
         // Commence par un chiffre, puis chiffres/virgules/points
         // Gère: 1000, 1,010.00, 1.250.000, 5 000 (espace milliers)
-        return r'(?<montant>\d[\d.,]*(?:[\u00A0 ]\d{3})*)';
+        return r'(?<montant>\d[\d.,\u00A0 ]*\d|\d)';
       case 'numero_client':
         // Numéro de téléphone: chiffres contigus, éventuellement +
         return r'(?<numero_client>\+?\d[\d]*)';
@@ -120,7 +120,7 @@ class SmsPatternBuilder {
         return r'(?<operator_reference>[\w.\-]+)';
       case 'solde':
         // Même logique que montant
-        return r'(?<solde>\d[\d.,]*(?:[\u00A0 ]\d{3})*)';
+        return r'(?<solde>\d[\d.,\u00A0 ]*\d|\d)';
       case 'nom_client':
         // Nom: lettres, espaces, accents, apostrophes, tirets
         return r"(?<nom_client>[A-Za-zÀ-ÿ][\w\sÀ-ÿ'\-]*)";

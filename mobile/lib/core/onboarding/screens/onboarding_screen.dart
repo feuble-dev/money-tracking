@@ -97,6 +97,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       isDefault: true,
     );
     await ref.read(onboardingStatusServiceProvider).saveAccountType(_accountType);
+    if (_countryCode != null) {
+      await ref.read(onboardingStatusServiceProvider).saveCountryCode(_countryCode!);
+    }
 
     if (_countryCode != null) {
       try {
@@ -154,6 +157,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     }
 
     await ref.read(onboardingStatusServiceProvider).saveAccountType(_accountType);
+    if (_countryCode != null) {
+      await ref.read(onboardingStatusServiceProvider).saveCountryCode(_countryCode!);
+    }
     if (!mounted) return;
     setState(() {
       _loading = false;

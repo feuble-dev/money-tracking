@@ -14,16 +14,22 @@ class ImportHistoriqueScreen extends StatefulWidget {
   State<ImportHistoriqueScreen> createState() => _ImportHistoriqueScreenState();
 }
 
-enum _ScreenState { loading, achat, attente, periode, importing, done }
+/// La période (donc le prix, D5) doit être choisie AVANT toute demande
+/// d'achat — le coût dépend de `date_debut`, contrairement à l'ancien flux
+/// qui achetait un forfait fixe puis choisissait la période après coup.
+enum _ScreenState { periode, attente, importing, done }
 
 class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
-  _ScreenState _state = _ScreenState.loading;
+  _ScreenState _state = _ScreenState.periode;
   String? _message;
   bool _isError = false;
+  bool _loading = false;
+  bool _dejaActif = false;
 
   // Période
   DateTime _dateDebut = DateTime.now().subtract(const Duration(days: 90));
   DateTime _dateFin = DateTime.now();
+  int _montantEnAttente = 0;
 
   // Import progress
   int _traites = 0;
@@ -38,42 +44,63 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
 
   Future<void> _checkStatus() async {
     final active = await HistoriqueStorage.estActive();
-    if (mounted) {
-      setState(() {
-        _state = active ? _ScreenState.periode : _ScreenState.achat;
-      });
-    }
+    if (mounted) setState(() => _dejaActif = active);
   }
 
-  Future<void> _acheter() async {
+  /// Bouton principal de l'étape "période" : si déjà activé sur cet
+  /// appareil (n'importe quel achat précédent), on importe directement —
+  /// sinon on envoie la demande pour CETTE période précise, dont le prix
+  /// est calculé par le backend (D5).
+  Future<void> _continuer() async {
+    if (_dejaActif) {
+      await _startImport();
+      return;
+    }
+
     final tel = await LicenceStorage.getTelephone();
     if (tel == null) {
       _setMsg('Configurez d\'abord votre licence', error: true);
       return;
     }
 
-    setState(() => _state = _ScreenState.loading);
-    final result = await HistoriqueImportService.demanderAchat(tel);
+    setState(() {
+      _loading = true;
+      _message = null;
+    });
+    final result = await HistoriqueImportService.demanderAchat(tel, _dateDebut);
+    setState(() => _loading = false);
 
     if (result.dejaActive) {
-      setState(() => _state = _ScreenState.periode);
+      setState(() => _dejaActif = true);
+      await _startImport();
       return;
     }
 
-    if (result.succes || result.message.contains('attente')) {
-      setState(() => _state = _ScreenState.attente);
+    if (result.succes || result.message.contains('attente') || result.montant > 0) {
+      setState(() {
+        _state = _ScreenState.attente;
+        _montantEnAttente = result.montant;
+        _message = result.message;
+        _isError = false;
+      });
       _startPolling(tel);
     } else {
-      setState(() => _state = _ScreenState.achat);
       _setMsg(result.message, error: true);
     }
   }
 
   void _startPolling(String telephone) {
-    HistoriqueImportService.attendreValidation(telephone).listen((statut) {
+    HistoriqueImportService.attendreValidation(telephone).listen((statut) async {
       if (!mounted) return;
       if (statut == StatutAchat.active) {
-        setState(() => _state = _ScreenState.periode);
+        setState(() => _dejaActif = true);
+        await _startImport();
+      } else if (statut == StatutAchat.timeout) {
+        setState(() {
+          _state = _ScreenState.periode;
+          _message = 'Délai dépassé — réessayez ou contactez le support.';
+          _isError = true;
+        });
       }
     });
   }
@@ -141,6 +168,7 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
   }
 
   final _dateFmt = DateFormat('dd/MM/yyyy');
+  final _fcfaFmt = NumberFormat.decimalPattern('fr_FR');
 
   @override
   Widget build(BuildContext context) {
@@ -154,15 +182,6 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
   }
 
   Widget _buildContent() {
-    if (_state == _ScreenState.loading) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(40),
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -180,94 +199,103 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
                   fontSize: 13,
                 )),
           ),
-        if (_state == _ScreenState.achat) _buildAchat(),
-        if (_state == _ScreenState.attente) _buildAttente(),
         if (_state == _ScreenState.periode) _buildPeriode(),
+        if (_state == _ScreenState.attente) _buildAttente(),
         if (_state == _ScreenState.importing) _buildImporting(),
         if (_state == _ScreenState.done) _buildDone(),
       ],
     );
   }
 
-  // ── Écran 1: Achat ────────────────────────────────────────
-  Widget _buildAchat() {
+  // ── Étape 1 : Période (détermine le prix, D5) ─────────────
+  Widget _buildPeriode() {
+    final montantEstime = HistoriqueImportService.estimerCout(_dateDebut);
     return Column(
       children: [
-        Icon(Icons.history, size: 64, color: AppColors.primaryColor),
-        const SizedBox(height: 16),
-        Text('Import Historique SMS',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primaryColor,
-                )),
-        const SizedBox(height: 8),
+        Icon(Icons.date_range, size: 56, color: AppColors.primaryColor),
+        const SizedBox(height: 12),
         Text(
-          'Récupérez toutes vos anciennes transactions depuis vos SMS.',
+          _dejaActif ? 'Choisissez la période à importer' : 'Depuis quand voulez-vous importer ?',
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.grey[600]),
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 24),
-        ...[
-          'Illimité sur cet appareil',
-          'Choisissez la période à importer',
-          'Tous les opérateurs configurés',
-        ].map((t) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  const Icon(Icons.check_circle,
-                      color: AppColors.depositColor, size: 20),
-                  const SizedBox(width: 10),
-                  Text(t, style: const TextStyle(fontSize: 14)),
-                ],
-              ),
-            )),
-        const SizedBox(height: 24),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.orange.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.orange.shade200),
+        const SizedBox(height: 8),
+        if (!_dejaActif)
+          Text(
+            'Gratuit jusqu\'à 1 an en arrière. Au-delà, 200 FCFA par année supplémentaire.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey[600], fontSize: 13),
           ),
-          child: Row(
-            children: [
-              Text('Prix:', style: TextStyle(color: Colors.orange.shade800)),
-              const Spacer(),
-              Text('2 000 FCFA',
+        const SizedBox(height: 24),
+
+        _buildDateField('Du', _dateDebut, () => _selectDate(true)),
+        const SizedBox(height: 12),
+        _buildDateField('Au', _dateFin, () => _selectDate(false)),
+
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          children: [
+            _buildChip('3 mois', 90),
+            _buildChip('6 mois', 180),
+            _buildChip('1 an', 365),
+            _buildChip('2 ans', 730),
+          ],
+        ),
+
+        if (!_dejaActif) ...[
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: montantEstime == 0 ? Colors.green.shade50 : Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: montantEstime == 0 ? Colors.green.shade200 : Colors.orange.shade200,
+              ),
+            ),
+            child: Row(
+              children: [
+                Text('Coût estimé :',
+                    style: TextStyle(
+                      color: montantEstime == 0 ? Colors.green.shade800 : Colors.orange.shade800,
+                    )),
+                const Spacer(),
+                Text(
+                  montantEstime == 0 ? 'Gratuit' : '${_fcfaFmt.format(montantEstime)} FCFA',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 20,
-                    color: Colors.orange.shade800,
-                  )),
-              Text(' (unique)',
-                  style: TextStyle(
-                      color: Colors.orange.shade600, fontSize: 12)),
-            ],
+                    color: montantEstime == 0 ? Colors.green.shade800 : Colors.orange.shade800,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 24),
+        ],
+
+        const SizedBox(height: 32),
         ElevatedButton.icon(
-          onPressed: _acheter,
-          icon: const Icon(Icons.shopping_cart),
-          label: const Text('Acheter — 2 000 FCFA',
-              style: TextStyle(fontSize: 16)),
+          onPressed: _loading ? null : _continuer,
+          icon: Icon(_dejaActif ? Icons.search : Icons.check_circle_outline),
+          label: Text(
+            _loading
+                ? 'Patientez...'
+                : _dejaActif
+                    ? 'Analyser et importer'
+                    : (montantEstime == 0 ? 'Activer gratuitement' : 'Continuer'),
+            style: const TextStyle(fontSize: 16),
+          ),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primaryColor,
             padding: const EdgeInsets.symmetric(vertical: 16),
           ),
         ),
-        const SizedBox(height: 16),
-        Text(
-          'Envoyez 2 000 FCFA via Orange Money\net attendez la validation.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-        ),
       ],
     );
   }
 
-  // ── Écran 2: En attente ───────────────────────────────────
+  // ── Étape 2 : En attente de paiement ──────────────────────
   Widget _buildAttente() {
     return Column(
       children: [
@@ -278,59 +306,31 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                 )),
-        const SizedBox(height: 12),
-        Icon(Icons.check_circle, color: Colors.green.shade400, size: 24),
-        const SizedBox(height: 8),
-        Text('Demande envoyée',
-            style: TextStyle(color: Colors.green.shade600)),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.orange.shade50,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            children: [
+              Text('${_fcfaFmt.format(_montantEnAttente)} FCFA',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 22,
+                      color: Colors.orange.shade800)),
+              const SizedBox(height: 4),
+              Text('à envoyer via Orange Money',
+                  style: TextStyle(color: Colors.orange.shade700, fontSize: 12)),
+            ],
+          ),
+        ),
         const SizedBox(height: 16),
         Text(
-          'Nous vérifions votre paiement.\nCette page se met à jour automatiquement.',
+          'Cette page se met à jour automatiquement dès validation.',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.grey[500]),
-        ),
-      ],
-    );
-  }
-
-  // ── Écran 3: Choix période ────────────────────────────────
-  Widget _buildPeriode() {
-    return Column(
-      children: [
-        Icon(Icons.date_range, size: 48, color: AppColors.primaryColor),
-        const SizedBox(height: 16),
-        Text('Période à importer',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                )),
-        const SizedBox(height: 24),
-
-        // Date debut
-        _buildDateField('Du', _dateDebut, () => _selectDate(true)),
-        const SizedBox(height: 12),
-        _buildDateField('Au', _dateFin, () => _selectDate(false)),
-
-        const SizedBox(height: 16),
-        // Raccourcis
-        Wrap(
-          spacing: 8,
-          children: [
-            _buildChip('Ce mois', 30),
-            _buildChip('3 mois', 90),
-            _buildChip('6 mois', 180),
-            _buildChip('1 an', 365),
-          ],
-        ),
-        const SizedBox(height: 32),
-        ElevatedButton.icon(
-          onPressed: _startImport,
-          icon: const Icon(Icons.search),
-          label: const Text('Analyser et importer',
-              style: TextStyle(fontSize: 16)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryColor,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-          ),
         ),
       ],
     );
@@ -367,7 +367,7 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
     );
   }
 
-  // ── Écran 4: Import en cours ──────────────────────────────
+  // ── Étape 3 : Import en cours ──────────────────────────────
   Widget _buildImporting() {
     final progress = _total > 0 ? _traites / _total : 0.0;
     return Column(
@@ -400,7 +400,7 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
     );
   }
 
-  // ── Écran 5: Résultat ─────────────────────────────────────
+  // ── Étape 4 : Résultat ─────────────────────────────────────
   Widget _buildDone() {
     final r = _resultat!;
     return Column(
