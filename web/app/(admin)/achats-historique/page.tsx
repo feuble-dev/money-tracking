@@ -61,7 +61,7 @@ export default function AchatsHistoriquePage() {
       <div>
         <h1 className="text-2xl font-extrabold text-dark">Achats Import Historique SMS</h1>
         <p className="text-muted text-sm mt-1">
-          Gratuit jusqu&apos;à 1 an en arrière (activé automatiquement) — les demandes ci-dessous concernent
+          Gratuit jusqu&apos;à 1 an en arrière (activé automatiquement) - les demandes ci-dessous concernent
           un import plus ancien, facturé 200 FCFA par année supplémentaire.
         </p>
       </div>
@@ -107,7 +107,7 @@ export default function AchatsHistoriquePage() {
                 </div>
                 <div className="flex-1">
                   <div className="text-sm font-bold text-dark">{a.telephone}</div>
-                  <div className="text-xs text-muted">Device: {a.device_id} — {new Date(a.created_at).toLocaleDateString('fr-FR')}</div>
+                  <div className="text-xs text-muted">Device: {a.device_id} - {new Date(a.created_at).toLocaleDateString('fr-FR')}</div>
                 </div>
                 <div className="text-sm font-bold text-dark">{a.montant_paye.toLocaleString('fr-FR')} FCFA</div>
                 <button onClick={() => handleValidate(a.id)} disabled={validating === a.id}

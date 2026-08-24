@@ -97,7 +97,7 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
               isIn ? Icons.arrow_downward : Icons.arrow_upward,
               color: isIn ? AppColors.depositColor : AppColors.withdrawColor,
             ),
-            title: Text('${t['transaction_type_label']} — ${t['operator_name']}'),
+            title: Text('${t['transaction_type_label']} - ${t['operator_name']}'),
             subtitle: Text('${t['client_name'] ?? ''} ${t['client_phone'] ?? ''}\n${t['created_at']}'),
             isThreeLine: true,
             trailing: Text(
@@ -138,7 +138,7 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
         return Card(
           child: ListTile(
             leading: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.accentColor),
-            title: Text('${o['type']} — ${o['operator_name']}'),
+            title: Text('${o['type']} - ${o['operator_name']}'),
             subtitle: Text('${o['note'] ?? ''}\n${o['created_at']}'),
             isThreeLine: true,
             trailing: Text(_fcfa.format(num.tryParse(o['montant'].toString()) ?? 0)),

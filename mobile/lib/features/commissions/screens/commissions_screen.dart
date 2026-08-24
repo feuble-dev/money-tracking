@@ -16,8 +16,8 @@ final commissionsStatsProvider =
   final global = await db.rawQuery('''
     SELECT
       COALESCE(SUM(commission), 0) as total_commission,
-      COALESCE(SUM(CASE WHEN transaction_type='deposit' THEN commission ELSE 0 END), 0) as comm_depot,
-      COALESCE(SUM(CASE WHEN transaction_type='withdrawal' THEN commission ELSE 0 END), 0) as comm_retrait,
+      COALESCE(SUM(CASE WHEN direction='in' THEN commission ELSE 0 END), 0) as comm_depot,
+      COALESCE(SUM(CASE WHEN direction='out' THEN commission ELSE 0 END), 0) as comm_retrait,
       COUNT(*) as tx_count
     FROM transactions
     WHERE status = 'completed' AND commission > 0
@@ -53,8 +53,8 @@ final commissionsStatsProvider =
     SELECT
       o.id, o.name, o.sms_sender,
       COALESCE(SUM(t.commission), 0) as total_commission,
-      COALESCE(SUM(CASE WHEN t.transaction_type='deposit' THEN t.commission ELSE 0 END), 0) as comm_depot,
-      COALESCE(SUM(CASE WHEN t.transaction_type='withdrawal' THEN t.commission ELSE 0 END), 0) as comm_retrait,
+      COALESCE(SUM(CASE WHEN t.direction='in' THEN t.commission ELSE 0 END), 0) as comm_depot,
+      COALESCE(SUM(CASE WHEN t.direction='out' THEN t.commission ELSE 0 END), 0) as comm_retrait,
       COUNT(t.id) as tx_count
     FROM operators o
     LEFT JOIN transactions t ON t.operator_id = o.id AND t.status = 'completed'

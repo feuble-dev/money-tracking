@@ -1,14 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import '../database/database_helper.dart';
 import '../database/transaction_repository.dart';
 
-/// Actions sur les notifications
-const _actionConfirm = 'CONFIRM';
+/// Action sur les notifications — une transaction détectée par SMS est
+/// créée directement 'completed' (plus d'étape de confirmation), seule
+/// l'annulation reste une action pertinente depuis la notification.
 const _actionReject = 'REJECT';
 
 /// Service de notifications locales MoneyTracking
-/// Avec boutons d'action Confirmer / Rejeter directement dans la notif
+/// Avec un bouton Annuler directement dans la notif (la transaction
+/// détectée par SMS est déjà enregistrée, pas en attente de confirmation)
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
   factory NotificationService() => _instance;
@@ -55,9 +56,7 @@ class NotificationService {
 
     debugPrint('[NOTIF] Response: action=$actionId, payload=$payload');
 
-    if (actionId == _actionConfirm && payload != null) {
-      _confirmTransaction(payload);
-    } else if (actionId == _actionReject && payload != null) {
+    if (actionId == _actionReject && payload != null) {
       _rejectTransaction(payload);
     } else {
       // Tap simple sur la notification → ouvrir la page notifications
@@ -65,20 +64,10 @@ class NotificationService {
     }
   }
 
-  /// Confirmer une transaction directement depuis la notification
-  Future<void> _confirmTransaction(String transactionId) async {
-    try {
-      final db = await DatabaseHelper.instance.database;
-      await db.update('transactions', {'status': 'completed'},
-          where: 'id = ?', whereArgs: [transactionId]);
-      debugPrint('[NOTIF] Transaction confirmée: $transactionId');
-      onActionPerformed?.call();
-    } catch (e) {
-      debugPrint('[NOTIF] Erreur confirmation: $e');
-    }
-  }
-
-  /// Rejeter/annuler une transaction directement depuis la notification
+  /// Annuler une transaction directement depuis la notification (ex: SMS
+  /// mal détecté) — la transaction est déjà 'completed' à la création,
+  /// il n'y a plus d'étape de confirmation à faire, seulement une
+  /// éventuelle correction.
   Future<void> _rejectTransaction(String transactionId) async {
     try {
       await TransactionRepository.instance.reject(transactionId);
@@ -89,7 +78,9 @@ class NotificationService {
     }
   }
 
-  /// Afficher une notification avec boutons Confirmer / Rejeter
+  /// Afficher une notification avec un bouton Annuler — la transaction a
+  /// déjà été créée 'completed' au moment de l'appel (voir
+  /// sms_processing_pipeline.dart), donc "Confirmer" n'a plus de sens ici.
   Future<void> showPendingTransactionNotification({
     required String transactionId,
     required String type,
@@ -105,8 +96,8 @@ class NotificationService {
 
     await _plugin.show(
       transactionId.hashCode,
-      'MoneyTracking — $typeLabel détecté',
-      '$amountStr — $clientPhone ($operatorName)',
+      'MoneyTracking - $typeLabel enregistré',
+      '$amountStr - $clientPhone ($operatorName)',
       NotificationDetails(
         android: AndroidNotificationDetails(
           'mobitracking_sms',
@@ -117,14 +108,8 @@ class NotificationService {
           icon: '@mipmap/ic_launcher',
           actions: const [
             AndroidNotificationAction(
-              _actionConfirm,
-              'Confirmer',
-              showsUserInterface: false,
-              cancelNotification: true,
-            ),
-            AndroidNotificationAction(
               _actionReject,
-              'Rejeter',
+              'Annuler',
               showsUserInterface: false,
               cancelNotification: true,
             ),

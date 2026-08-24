@@ -44,7 +44,7 @@ export default function CountriesPage() {
       <CatalogTabs />
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-dark">Catalogue — Pays</h2>
+          <h2 className="text-2xl font-bold text-dark">Catalogue - Pays</h2>
           <p className="text-sm text-gray-500 mt-1">{countries.length} pays configuré(s)</p>
         </div>
         <Button variant="primary" onClick={() => setModalOpen(true)}>
@@ -135,7 +135,7 @@ export default function CountriesPage() {
           onClose={() => setDeleteTarget(null)}
           onConfirm={async () => { await deleteCountry(deleteTarget.id); await loadCountries(); }}
           title={`Supprimer ${deleteTarget.name} ?`}
-          message="Impossible si des opérateurs sont encore rattachés à ce pays — supprimez-les d'abord."
+          message="Impossible si des opérateurs sont encore rattachés à ce pays - supprimez-les d'abord."
         />
       )}
     </div>

@@ -201,13 +201,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ExportCsvScreen(),
       ),
 
-      // Transactions
+      // Transactions — plus de dichotomie dépôt/retrait dans la route :
+      // l'opérateur puis son type sont choisis dans l'écran lui-même (D3).
       GoRoute(
-        path: '/transactions/new/:type',
-        builder: (context, state) {
-          final type = state.pathParameters['type'] ?? 'deposit';
-          return NewTransactionScreen(transactionType: type);
-        },
+        path: '/transactions/new',
+        builder: (context, state) => const NewTransactionScreen(),
       ),
       GoRoute(
         path: '/transactions/pending',

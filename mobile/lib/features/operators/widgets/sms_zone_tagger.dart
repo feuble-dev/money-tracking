@@ -147,7 +147,7 @@ class _SmsZoneTaggerState extends State<SmsZoneTagger> {
                         style: const TextStyle(fontSize: 12, color: Colors.black87),
                         children: [
                           TextSpan(text: '${zone.fieldName} ', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          TextSpan(text: '— "${zone.value}"'),
+                          TextSpan(text: '- "${zone.value}"'),
                         ],
                       ),
                     ),

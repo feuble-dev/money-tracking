@@ -102,7 +102,7 @@ export default function SmsPatternTagger({ rawExample, zones, onZonesChange }: S
         <ul className="space-y-1">
           {zones.map((z, i) => (
             <li key={i} className="flex items-center justify-between text-xs bg-white border border-gray-100 rounded-lg px-3 py-2">
-              <span><strong>{z.fieldName}</strong> — &quot;{rawExample.slice(z.start, z.end)}&quot;</span>
+              <span><strong>{z.fieldName}</strong> - &quot;{rawExample.slice(z.start, z.end)}&quot;</span>
               <button type="button" onClick={() => removeZone(i)} className="text-red-500 hover:text-red-700">
                 Retirer
               </button>

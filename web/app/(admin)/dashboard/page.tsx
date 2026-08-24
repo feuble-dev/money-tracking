@@ -139,7 +139,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-extrabold text-dark">Tableau de bord</h1>
           <p className="text-muted text-sm mt-1">
-            Données en temps réel — mis à jour {lastRefresh.toLocaleTimeString('fr-FR')}
+            Données en temps réel - mis à jour {lastRefresh.toLocaleTimeString('fr-FR')}
           </p>
         </div>
         <button onClick={loadData}
@@ -274,7 +274,7 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6 shadow-soft">
           <div className="mb-6">
             <h3 className="text-lg font-bold text-dark">Croissance des agences</h3>
-            <p className="text-sm text-muted mt-0.5">Nouvelles agences créées — 12 derniers mois</p>
+            <p className="text-sm text-muted mt-0.5">Nouvelles agences créées - 12 derniers mois</p>
           </div>
           {agences_growth.length === 0 ? (
             <div className="h-56 flex items-center justify-center text-muted text-sm">

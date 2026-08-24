@@ -224,9 +224,13 @@ class CatalogSyncService {
   /// même si `Country.catalog_version` (D6) était justement pensé pour
   /// permettre ce resync incrémental.
   ///
+  /// Met aussi à jour les champs propres de l'opérateur (logo, nom,
+  /// expéditeur SMS) — un logo uploadé après coup dans le dashboard admin
+  /// ne remontait jamais sur les appareils déjà onboardés sinon.
+  ///
   /// Ne touche jamais un pattern `source != 'catalog'` (un pattern custom
   /// ou — un jour — overridé localement par l'agent reste intouché).
-  /// Retourne le nombre de patterns effectivement ajoutés/modifiés.
+  /// Retourne le nombre de champs/patterns effectivement modifiés.
   Future<int> resyncOperators({
     required String countryCode,
     String? accountType,
@@ -245,6 +249,27 @@ class CatalogSyncService {
         if (existingOp.isEmpty) continue; // resync ne rajoute pas d'opérateur
         final operatorId = existingOp.first['id'] as String;
         final now = DateTime.now().toIso8601String();
+
+        // Champs propres à l'opérateur (logo notamment) — un logo ajouté
+        // après coup dans le dashboard admin ne remontait jamais ici avant,
+        // seuls les types/patterns imbriqués étaient mis à jour.
+        final current = existingOp.first;
+        if (current['logo_path'] != catalogOp.logoUrl ||
+            current['name'] != catalogOp.name ||
+            current['sms_sender'] != catalogOp.smsSender) {
+          await txn.update(
+            'operators',
+            {
+              'logo_path': catalogOp.logoUrl,
+              'name': catalogOp.name,
+              'sms_sender': catalogOp.smsSender,
+              'synced_at': now,
+            },
+            where: 'id = ?',
+            whereArgs: [operatorId],
+          );
+          changed++;
+        }
 
         for (final catalogType in catalogOp.transactionTypes) {
           final transactionTypeId = await _findOrCreateTransactionType(txn, catalogType);

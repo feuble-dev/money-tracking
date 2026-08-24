@@ -259,10 +259,13 @@ class _TransactionsTab extends ConsumerWidget {
           itemCount: activities.length,
           itemBuilder: (context, index) {
             final tx = activities[index];
-            final isDeposit = tx['transaction_type'] == 'deposit';
+            final isDeposit = tx['direction'] != null
+                ? tx['direction'] == 'in'
+                : tx['transaction_type'] == 'deposit';
             final color =
                 isDeposit ? AppColors.depositColor : AppColors.withdrawColor;
-            final typeLabel = isDeposit ? 'Dépôt' : 'Retrait';
+            final typeLabel = (tx['type_label'] as String?) ??
+                (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait');
             final amount = (tx['amount'] as num).toDouble();
             final clientName = tx['client_name'] as String?;
             final clientPhone = tx['client_phone'] as String? ?? '';
@@ -306,7 +309,7 @@ class _TransactionsTab extends ConsumerWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('$typeLabel — $operatorName',
+                            Text('$typeLabel - $operatorName',
                                 style: TextStyle(
                                     fontWeight: FontWeight.w600,
                                     color: color,

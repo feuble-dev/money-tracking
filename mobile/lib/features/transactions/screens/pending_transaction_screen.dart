@@ -54,9 +54,10 @@ class _PendingTransactionScreenState
   Future<void> _loadTransaction() async {
     final db = await DatabaseHelper.instance.database;
     final rows = await db.rawQuery('''
-      SELECT t.*, o.name as operator_name
+      SELECT t.*, o.name as operator_name, tt.label as type_label
       FROM transactions t
       LEFT JOIN operators o ON t.operator_id = o.id
+      LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
       WHERE t.id = ?
     ''', [widget.transactionId]);
 
@@ -327,8 +328,14 @@ class _PendingTransactionScreenState
     }
 
     final tx = _txData!;
-    final isDeposit = tx['transaction_type'] == 'deposit';
-    final color = isDeposit ? AppColors.depositColor : AppColors.withdrawColor;
+    // Le sens réel (D1) fait foi ; repli sur l'ancien binaire seulement si
+    // `direction` est absent (très vieilles lignes jamais backfillées).
+    final isEntrant = tx['direction'] != null
+        ? tx['direction'] == 'in'
+        : tx['transaction_type'] == 'deposit';
+    final typeLabel = (tx['type_label'] as String?) ??
+        (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait');
+    final color = isEntrant ? AppColors.depositColor : AppColors.withdrawColor;
     final amount = (tx['amount'] as num?)?.toDouble() ?? 0;
     final commission = (tx['commission'] as num?)?.toDouble() ?? 0;
 
@@ -388,13 +395,13 @@ class _PendingTransactionScreenState
               child: Column(
                 children: [
                   Icon(
-                    isDeposit ? Icons.arrow_downward : Icons.arrow_upward,
+                    isEntrant ? Icons.arrow_downward : Icons.arrow_upward,
                     size: 40,
                     color: _isCancelled ? Colors.grey : color,
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    isDeposit ? 'DÉPÔT' : 'RETRAIT',
+                    typeLabel.toUpperCase(),
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: _isCancelled ? Colors.grey : color,

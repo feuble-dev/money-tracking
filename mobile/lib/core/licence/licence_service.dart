@@ -156,7 +156,7 @@ class LicenceService {
       });
       await LicenceStorage.saveTelephone(telephone);
       return ResultatActivation.succes(
-        'Licence activée — expire dans '
+        'Licence activée - expire dans '
         '${resultat.joursRestants} jours',
       );
     }

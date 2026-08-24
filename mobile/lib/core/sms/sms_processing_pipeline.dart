@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
+import '../database/caisse_repository.dart';
 import '../database/database_helper.dart';
 import '../database/transaction_repository.dart';
 import '../licence/licence_storage.dart';
@@ -91,6 +92,7 @@ Future<void> processIncomingSms(
   final amount = SmsFieldExtractor.parseMontant(extracted['montant']);
   final clientPhone = SmsFieldExtractor.cleanPhone(extracted['numero_client']);
   if (amount == null || amount <= 0) return;
+  final soldeApres = SmsFieldExtractor.parseMontant(extracted['solde']);
 
   // 5. Commission
   final commission = CommissionCalculator.compute(
@@ -147,13 +149,33 @@ Future<void> processIncomingSms(
     'client_phone': clientPhone ?? '',
     'client_name': clientName,
     'operator_transaction_id': extracted['operator_transaction_id'],
-    'status': 'pending',
+    // Directement 'completed' — plus d'étape de confirmation manuelle pour
+    // une transaction détectée par SMS (l'agent peut toujours l'annuler
+    // depuis la notif ou l'écran transaction si la détection était fausse).
+    'status': 'completed',
     'source': 'sms_auto',
     'sms_id': smsId,
     'sms_raw': body,
     'created_at': now.toIso8601String(),
   };
   await TransactionRepository.instance.insert(txData);
+
+  // Met à jour le solde caisse (no-op si l'agent n'a pas initialisé de
+  // caisse pour cet opérateur) — c'était auparavant fait UNIQUEMENT pour
+  // les transactions créées manuellement, jamais pour la détection SMS ni
+  // l'import historique, alors que ce sont l'immense majorité des
+  // transactions réelles : la caisse ne reflétait donc presque jamais
+  // l'activité effective. Le SMS annonce lui-même le solde réel après
+  // l'opération dans la plupart des cas (`soldeApres`) — c'est la valeur
+  // qu'on applique directement, pas un delta cumulé qui dériverait au
+  // moindre SMS manqué.
+  await CaisseRepository.updateSoldeAfterTransaction(
+    operatorId: operatorId,
+    amount: amount,
+    direction: smsMatch.direction,
+    soldeApres: soldeApres,
+    transactionAt: now,
+  );
 
   await db.update('sms_messages', {'processed': 1, 'transaction_id': txId},
       where: 'id = ?', whereArgs: [smsId]);
@@ -168,7 +190,7 @@ Future<void> processIncomingSms(
       typeLabel: typeLabel,
       amount: amount,
       clientPhone: clientPhone ?? '',
-      operatorName: '$typeLabel — $clientName',
+      operatorName: '$typeLabel - $clientName',
     );
   } else {
     await NotificationService().showPendingTransactionNotification(
@@ -177,7 +199,7 @@ Future<void> processIncomingSms(
       typeLabel: typeLabel,
       amount: amount,
       clientPhone: clientPhone ?? 'inconnu',
-      operatorName: '$typeLabel — Nouveau client. Appuyez pour compléter.',
+      operatorName: '$typeLabel - Nouveau client. Appuyez pour compléter.',
     );
   }
 

@@ -52,7 +52,7 @@ export default function LoginPage() {
           <Image src="/logo.png" alt="MoneyTracking" width={64} height={64}
             className="mx-auto rounded-2xl shadow-2xl mb-4" />
           <h1 className="text-2xl font-extrabold text-white">Administration</h1>
-          <p className="text-blue-200 text-sm mt-1">MoneyTracking — Gestion des licences</p>
+          <p className="text-blue-200 text-sm mt-1">MoneyTracking - Gestion des licences</p>
         </div>
 
         {/* Form Card */}

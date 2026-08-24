@@ -133,7 +133,7 @@ class ClientDetailScreen extends ConsumerWidget {
                       itemCount: transactions.length,
                       itemBuilder: (context, index) {
                         final tx = transactions[index];
-                        final isDeposit = tx.isDeposit;
+                        final isDeposit = tx.isEntrant;
                         return ListTile(
                           leading: Icon(
                             isDeposit
@@ -144,7 +144,7 @@ class ClientDetailScreen extends ConsumerWidget {
                                 : AppColors.withdrawColor,
                           ),
                           title: Text(
-                            '${isDeposit ? 'Dépôt' : 'Retrait'} — ${currencyFormat.format(tx.amount)}',
+                            '${tx.displayLabel} - ${currencyFormat.format(tx.amount)}',
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               color: isDeposit
@@ -153,7 +153,7 @@ class ClientDetailScreen extends ConsumerWidget {
                             ),
                           ),
                           subtitle: Text(
-                            '${tx.operatorName ?? ''} — ${dateFormat.format(tx.createdAt)}',
+                            '${tx.operatorName ?? ''} - ${dateFormat.format(tx.createdAt)}',
                           ),
                           trailing: tx.operatorTransactionId != null
                               ? Text(
@@ -178,9 +178,10 @@ class ClientDetailScreen extends ConsumerWidget {
       String clientId) async {
     final db = await DatabaseHelper.instance.database;
     final results = await db.rawQuery('''
-      SELECT t.*, o.name as operator_name
+      SELECT t.*, o.name as operator_name, tt.label as type_label
       FROM transactions t
       LEFT JOIN operators o ON t.operator_id = o.id
+      LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
       WHERE t.client_id = ?
       ORDER BY t.created_at DESC
     ''', [clientId]);

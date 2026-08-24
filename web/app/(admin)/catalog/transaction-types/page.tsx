@@ -43,9 +43,9 @@ export default function TransactionTypesPage() {
       <CatalogTabs />
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-dark">Catalogue — Types de transaction</h2>
+          <h2 className="text-2xl font-bold text-dark">Catalogue - Types de transaction</h2>
           <p className="text-sm text-gray-500 mt-1">
-            {types.length} type(s) — catalogue global, réutilisable par tous les opérateurs (D3)
+            {types.length} type(s) - catalogue global, réutilisable par tous les opérateurs (D3)
           </p>
         </div>
         <Button variant="primary" onClick={() => setModalOpen(true)}>
@@ -129,7 +129,7 @@ export default function TransactionTypesPage() {
           onClose={() => setDeleteTarget(null)}
           onConfirm={async () => { await deleteTransactionType(deleteTarget.id); await loadTypes(); }}
           title={`Supprimer ${deleteTarget.label} ?`}
-          message="Impossible si ce type est encore attaché à un opérateur — détachez-le d'abord depuis la fiche opérateur."
+          message="Impossible si ce type est encore attaché à un opérateur - détachez-le d'abord depuis la fiche opérateur."
         />
       )}
     </div>

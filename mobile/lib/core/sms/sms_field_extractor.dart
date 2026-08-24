@@ -101,30 +101,44 @@ class SmsFieldExtractor {
     return result;
   }
 
-  /// Convertit un montant capturé en double
-  /// "1,010.00" → 1010.0 | "5 000" → 5000.0
+  /// Convertit un montant capturé en double, en devinant lequel de ',' ou
+  /// '.' est le séparateur décimal plutôt qu'un séparateur de milliers.
+  ///
+  /// Règle : le DERNIER ',' ou '.' du texte est décimal seulement s'il est
+  /// suivi d'exactement 1 ou 2 chiffres jusqu'à la fin — cas des centimes
+  /// FCFA (",00" quasi systématique dans les vrais SMS Moov/Coris/Orange).
+  /// Sinon (3 chiffres après, ex: "1,010"), c'est un groupement de
+  /// milliers classique et tout est supprimé.
+  ///
+  /// Corrige un bug réel : l'ancienne version traitait toute virgule SEULE
+  /// comme un séparateur de milliers, donc "100,00" (cent FCFA exactement,
+  /// convention Moov Money) devenait 10000.0 — cent fois trop. Gère aussi
+  /// les formats mixtes espace-milliers + virgule-décimale ("1 521,00").
+  ///
+  /// "1,010.00" → 1010.0 | "5 000" → 5000.0 | "100,00" → 100.0 |
+  /// "1 521,00" → 1521.0 | "1,025" → 1025.0 (pas de partie décimale)
   static double? parseMontant(String? raw) {
     if (raw == null || raw.trim().isEmpty) return null;
-    var s = raw.trim();
+    final s = raw.trim().replaceAll(RegExp(r'[\s ]'), '');
+    if (s.isEmpty) return null;
 
-    final hasComma = s.contains(',');
-    final hasDot = s.contains('.');
+    final lastComma = s.lastIndexOf(',');
+    final lastDot = s.lastIndexOf('.');
+    final decimalIdx = lastComma > lastDot ? lastComma : lastDot;
 
-    if (hasComma && hasDot) {
-      // Format international: 1,010.00
-      s = s.replaceAll(',', '');
-    } else if (hasComma && !hasDot) {
-      // Virgule seule = milliers
-      s = s.replaceAll(',', '');
-    } else if (!hasComma && hasDot) {
-      final dotCount = '.'.allMatches(s).length;
-      if (dotCount > 1) {
-        s = s.replaceAll('.', '');
-      }
+    if (decimalIdx == -1) {
+      return double.tryParse(s);
     }
 
-    s = s.replaceAll(RegExp(r'\s'), '');
-    return double.tryParse(s);
+    final afterDecimal = s.substring(decimalIdx + 1);
+    final isDecimalSeparator =
+        afterDecimal.length <= 2 && RegExp(r'^\d+$').hasMatch(afterDecimal);
+
+    if (isDecimalSeparator) {
+      final integerPart = s.substring(0, decimalIdx).replaceAll(RegExp(r'[.,]'), '');
+      return double.tryParse('$integerPart.$afterDecimal');
+    }
+    return double.tryParse(s.replaceAll(RegExp(r'[.,]'), ''));
   }
 
   /// Nettoie un numéro de téléphone

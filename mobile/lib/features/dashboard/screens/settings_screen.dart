@@ -304,7 +304,7 @@ class SettingsScreen extends ConsumerWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Impossible de resynchroniser — vérifiez votre connexion')),
+        const SnackBar(content: Text('Impossible de resynchroniser - vérifiez votre connexion')),
       );
     }
   }
@@ -318,7 +318,7 @@ class SettingsScreen extends ConsumerWidget {
     if (statut.isGranted) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Déjà autorisé — l\'app peut fonctionner en arrière-plan')),
+          const SnackBar(content: Text('Déjà autorisé - l\'app peut fonctionner en arrière-plan')),
         );
       }
       return;
@@ -334,7 +334,7 @@ class SettingsScreen extends ConsumerWidget {
           'fermée, Android doit être autorisé à ne pas la mettre en veille '
           'forcée. Sans ça, certains téléphones (Xiaomi, Tecno, Infinix, '
           'Samsung...) coupent la détection après quelques minutes.\n\n'
-          'L\'écran suivant vient d\'Android — choisissez "Autoriser" ou '
+          'L\'écran suivant vient d\'Android - choisissez "Autoriser" ou '
           '"Ne pas optimiser".',
         ),
         actions: [
@@ -351,8 +351,8 @@ class SettingsScreen extends ConsumerWidget {
       SnackBar(
         content: Text(
           resultat.isGranted
-              ? 'Autorisé — MoneyTracking peut fonctionner en arrière-plan'
-              : 'Non autorisé — la détection pourrait s\'arrêter app fermée sur certains téléphones',
+              ? 'Autorisé - MoneyTracking peut fonctionner en arrière-plan'
+              : 'Non autorisé - la détection pourrait s\'arrêter app fermée sur certains téléphones',
         ),
       ),
     );

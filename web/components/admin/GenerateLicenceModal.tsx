@@ -135,12 +135,12 @@ export default function GenerateLicenceModal({
               <option value="">Sélectionner une agence...</option>
               {agences.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.nom} — {a.telephone_client}
+                  {a.nom} - {a.telephone_client}
                 </option>
               ))}
             </select>
             <p className="text-xs text-gray-400 mt-1">
-              La licence est facturée par agence (D8) — l&apos;appareil est repris de sa dernière licence.
+              La licence est facturée par agence (D8) - l&apos;appareil est repris de sa dernière licence.
             </p>
           </div>
 
@@ -153,7 +153,7 @@ export default function GenerateLicenceModal({
             >
               {tiers.map((tier) => (
                 <option key={tier.id} value={tier.duree_mois}>
-                  {tier.duree_mois} mois — {tier.montant.toLocaleString('fr-FR')} FCFA
+                  {tier.duree_mois} mois - {tier.montant.toLocaleString('fr-FR')} FCFA
                 </option>
               ))}
             </select>

@@ -57,7 +57,7 @@ class _MesTelephonesScreenState extends State<MesTelephonesScreen> {
     if (_telephone == null) return;
     if (_monEspaceId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Aucun espace personnel trouvé — réessayez plus tard')),
+        const SnackBar(content: Text('Aucun espace personnel trouvé - réessayez plus tard')),
       );
       return;
     }

@@ -87,6 +87,15 @@ class SmsPatternRepository {
     await db.insert('sms_patterns', pattern.toMap());
   }
 
+  /// Modifie un pattern existant en place (même id) — `db.update` ne touche
+  /// que les colonnes présentes dans `toMap()`, donc `catalog_pattern_id`
+  /// (absent du modèle) est préservé si le pattern d'origine en avait un.
+  static Future<void> updatePattern(SmsPatternModel pattern) async {
+    final db = await DatabaseHelper.instance.database;
+    await db.update('sms_patterns', pattern.toMap(),
+        where: 'id = ?', whereArgs: [pattern.id]);
+  }
+
   static Future<void> deletePattern(String id) async {
     final db = await DatabaseHelper.instance.database;
     await db.delete('sms_patterns', where: 'id = ?', whereArgs: [id]);

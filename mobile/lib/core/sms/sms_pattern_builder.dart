@@ -208,40 +208,4 @@ class SmsPatternBuilder {
     return list.map((e) => TaggedZone.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  /// Nettoie un montant extrait et le convertit en double
-  /// Gère les formats : 1,010.00 | 5 000 | 1.250.000 | 15000
-  static double? cleanAmount(String? raw) {
-    if (raw == null || raw.trim().isEmpty) return null;
-    var s = raw.trim();
-
-    final hasComma = s.contains(',');
-    final hasDot = s.contains('.');
-
-    if (hasComma && hasDot) {
-      // Format international : 1,010.00 (virgule=milliers, point=décimal)
-      s = s.replaceAll(',', '');
-    } else if (hasComma && !hasDot) {
-      // Virgule seule = séparateur de milliers en FCFA : 1,010
-      s = s.replaceAll(',', '');
-    } else if (!hasComma && hasDot) {
-      // Point seul : vérifier si c'est un séparateur de milliers
-      // 1.250.000 → milliers (plusieurs points) vs 1010.50 → décimal (un point)
-      final dotCount = '.'.allMatches(s).length;
-      if (dotCount > 1) {
-        // Plusieurs points = séparateurs de milliers
-        s = s.replaceAll('.', '');
-      }
-      // Un seul point = décimal, on le garde
-    }
-
-    // Supprimer les espaces restants (séparateurs de milliers)
-    s = s.replaceAll(RegExp(r'\s'), '');
-    return double.tryParse(s);
-  }
-
-  /// Nettoie un numéro de téléphone extrait
-  static String? cleanPhone(String? raw) {
-    if (raw == null) return null;
-    return raw.replaceAll(RegExp(r'[^\d+]'), '');
-  }
 }

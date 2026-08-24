@@ -24,7 +24,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 9,
+      version: 11,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -196,6 +196,7 @@ class DatabaseHelper {
         agence_id TEXT,
         solde_initial REAL DEFAULT 0,
         solde_actuel REAL DEFAULT 0,
+        solde_ref_at TEXT,
         seuil_alerte REAL DEFAULT 0,
         updated_at TEXT
       )
@@ -262,12 +263,13 @@ class DatabaseHelper {
       )
     ''');
 
-    // Vue optimisée transactions + opérateur
+    // Vue optimisée transactions + opérateur + libellé réel du type (D3)
     await db.execute('''
       CREATE VIEW v_transactions_with_operator AS
-      SELECT t.*, o.name as operator_name
+      SELECT t.*, o.name as operator_name, tt.label as type_label
       FROM transactions t
       LEFT JOIN operators o ON t.operator_id = o.id
+      LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
     ''');
 
     await _createIndexes(db);
@@ -439,6 +441,37 @@ class DatabaseHelper {
     }
     if (oldVersion < 9) {
       await _upgradeToV9(db);
+    }
+    if (oldVersion < 10) {
+      // La vue n'exposait pas le libellé réel du type (catalogue, D3) —
+      // seuls les codes bruts ('deposit'/'depot'/'transfert'...) étaient
+      // disponibles via t.*, ce qui poussait l'UI à retomber sur un
+      // affichage binaire Dépôt/Retrait pour tout type non-'deposit'.
+      await db.execute('DROP VIEW IF EXISTS v_transactions_with_operator');
+      await db.execute('''
+        CREATE VIEW v_transactions_with_operator AS
+        SELECT t.*, o.name as operator_name, tt.label as type_label
+        FROM transactions t
+        LEFT JOIN operators o ON t.operator_id = o.id
+        LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
+      ''');
+      // updateDailySummary bucketait par code de type littéral
+      // ('deposit'/'withdrawal') au lieu de `direction` — toute transaction
+      // d'un type catalogue (D3, codes réels comme 'depot'/'transfert')
+      // était donc invisible des stats/dashboard/camembert. Recalcule tout
+      // l'historique une fois avec la logique corrigée.
+      await refreshAllSummaries(db);
+    }
+    if (oldVersion < 11) {
+      // Le solde caisse était recalculé par somme de deltas (+/- montant à
+      // chaque transaction), qui dérive dès qu'un SMS est manqué/mal parsé.
+      // La plupart des SMS Mobile Money annoncent eux-mêmes le solde réel
+      // après l'opération ("Votre solde est de ... FCFA") — solde_ref_at
+      // retient la date de la transaction dont ce solde annoncé est
+      // actuellement reflété, pour ignorer un message plus ancien reçu en
+      // désordre (import historique, redélivrance SMS) sans écraser une
+      // valeur plus récente et donc plus vraie.
+      await db.execute('ALTER TABLE caisse ADD COLUMN solde_ref_at TEXT');
     }
   }
 
@@ -629,16 +662,22 @@ class DatabaseHelper {
     final dayStart = '${day}T00:00:00.000';
     final dayEnd = '${day}T23:59:59.999';
 
+    // Bucketé par `direction` (D1 : in=dépôt-like, out=retrait-like), pas
+    // par le code littéral du type — un type catalogue peut être 'depot',
+    // 'transfert', 'paiement_marchand'... jamais 'deposit'/'withdrawal' à
+    // la lettre, donc l'ancienne comparaison ne comptait JAMAIS ces
+    // transactions dans les stats (dashboard, camembert opérateur,
+    // commissions), même si elles existaient bien en base.
     final result = await db.rawQuery('''
       SELECT
-        COALESCE(SUM(CASE WHEN transaction_type='deposit' THEN 1 ELSE 0 END), 0) as dep_count,
-        COALESCE(SUM(CASE WHEN transaction_type='withdrawal' THEN 1 ELSE 0 END), 0) as wit_count,
-        COALESCE(SUM(CASE WHEN transaction_type='deposit' THEN amount ELSE 0 END), 0) as dep_total,
-        COALESCE(SUM(CASE WHEN transaction_type='withdrawal' THEN amount ELSE 0 END), 0) as wit_total,
+        COALESCE(SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END), 0) as dep_count,
+        COALESCE(SUM(CASE WHEN direction='out' THEN 1 ELSE 0 END), 0) as wit_count,
+        COALESCE(SUM(CASE WHEN direction='in' THEN amount ELSE 0 END), 0) as dep_total,
+        COALESCE(SUM(CASE WHEN direction='out' THEN amount ELSE 0 END), 0) as wit_total,
         COALESCE(SUM(commission), 0) as comm_total,
         COUNT(DISTINCT client_phone) as clients,
-        COALESCE(MAX(CASE WHEN transaction_type='deposit' THEN amount END), 0) as max_dep,
-        COALESCE(MAX(CASE WHEN transaction_type='withdrawal' THEN amount END), 0) as max_wit
+        COALESCE(MAX(CASE WHEN direction='in' THEN amount END), 0) as max_dep,
+        COALESCE(MAX(CASE WHEN direction='out' THEN amount END), 0) as max_wit
       FROM transactions
       WHERE status = 'completed' AND operator_id = ? AND created_at BETWEEN ? AND ?
     ''', [operatorId, dayStart, dayEnd]);

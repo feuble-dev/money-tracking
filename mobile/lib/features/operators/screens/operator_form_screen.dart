@@ -77,6 +77,18 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
     });
   }
 
+  /// `_logoPath` peut être une URL distante (opérateur importé du
+  /// catalogue, déjà pourvu d'un logo admin) ou un chemin de fichier local
+  /// (nouveau logo choisi via _pickLogo) — FileImage seul plantait
+  /// silencieusement (aucune image) sur le premier cas.
+  ImageProvider? get _logoImageProvider {
+    if (_logoPath == null) return null;
+    if (_logoPath!.startsWith('http://') || _logoPath!.startsWith('https://')) {
+      return NetworkImage(_logoPath!);
+    }
+    return FileImage(File(_logoPath!));
+  }
+
   Future<void> _pickLogo() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.image);
     if (result == null || result.files.single.path == null) return;
@@ -88,6 +100,114 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
     final destPath = '${logosDir.path}/op_${const Uuid().v4().substring(0, 8)}$ext';
     await File(sourcePath).copy(destPath);
     setState(() => _logoPath = destPath);
+  }
+
+  /// Attache un type de transaction à cet opérateur — soit un type global
+  /// déjà connu (catalogue ou custom d'un autre opérateur, D3), soit un
+  /// tout nouveau type custom propre à cet opérateur.
+  Future<void> _attachType(BuildContext context) async {
+    final allTypes = await ref.read(allTransactionTypesProvider.future);
+    final attached = await ref.read(operatorTransactionTypesProvider(widget.operatorId!).future);
+    final attachedIds = attached.map((t) => t.transactionTypeId).toSet();
+    final available = allTypes.where((t) => !attachedIds.contains(t['id'])).toList();
+
+    if (!context.mounted) return;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Attacher un type'),
+        children: [
+          ...available.map((t) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, 'existing:${t['id']}'),
+                child: Text('${t['label']} '
+                    '(${t['default_direction'] == 'in' ? 'entrant' : 'sortant'})'),
+              )),
+          if (available.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text('Tous les types connus sont déjà attachés.',
+                  style: TextStyle(color: Colors.grey, fontSize: 13)),
+            ),
+          const Divider(),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'new'),
+            child: const Row(
+              children: [
+                Icon(Icons.add, size: 18, color: AppColors.accentColor),
+                SizedBox(width: 8),
+                Text('Nouveau type custom'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !mounted || !context.mounted) return;
+
+    if (choice == 'new') {
+      await _createNewCustomType(context);
+      return;
+    }
+
+    final typeId = choice.split(':')[1];
+    final type = allTypes.firstWhere((t) => t['id'] == typeId);
+    await TransactionTypeRepository.attachExistingTypeToOperator(
+      operatorId: widget.operatorId!,
+      code: type['code'] as String,
+    );
+    if (mounted) {
+      ref.invalidate(operatorTransactionTypesProvider(widget.operatorId!));
+    }
+  }
+
+  Future<void> _createNewCustomType(BuildContext context) async {
+    final labelController = TextEditingController();
+    String direction = 'in';
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Nouveau type de transaction'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: labelController,
+                decoration: const InputDecoration(labelText: 'Libellé (ex: Paiement marchand)'),
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'in', label: Text('Entrant')),
+                  ButtonSegment(value: 'out', label: Text('Sortant')),
+                ],
+                selected: {direction},
+                onSelectionChanged: (v) => setDialogState(() => direction = v.first),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton(
+              onPressed: () async {
+                if (labelController.text.trim().isEmpty) return;
+                await TransactionTypeRepository.createCustomTypeForOperator(
+                  operatorId: widget.operatorId!,
+                  label: labelController.text.trim(),
+                  defaultDirection: direction,
+                );
+                if (ctx.mounted) Navigator.pop(ctx, true);
+              },
+              child: const Text('Créer'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (created == true && mounted) {
+      ref.invalidate(operatorTransactionTypesProvider(widget.operatorId!));
+    }
   }
 
   Future<void> _save() async {
@@ -349,7 +469,7 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
             child: CircleAvatar(
               radius: 40,
               backgroundColor: AppColors.primaryColor.withAlpha(20),
-              backgroundImage: _logoPath != null ? FileImage(File(_logoPath!)) : null,
+              backgroundImage: _logoImageProvider,
               child: _logoPath == null
                   ? const Icon(Icons.add_a_photo, size: 28, color: AppColors.primaryColor)
                   : null,
@@ -520,7 +640,7 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
                 child: CircleAvatar(
                   radius: 40,
                   backgroundColor: AppColors.primaryColor.withAlpha(20),
-                  backgroundImage: _logoPath != null ? FileImage(File(_logoPath!)) : null,
+                  backgroundImage: _logoImageProvider,
                   child: _logoPath == null
                       ? const Icon(Icons.add_a_photo, size: 28, color: AppColors.primaryColor)
                       : null,
@@ -548,32 +668,54 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
               controller: _agentNumberController,
               decoration: const InputDecoration(labelText: 'N° agent', prefixIcon: Icon(Icons.badge)),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(child: TextFormField(
-                  controller: _commissionDepotController,
-                  decoration: const InputDecoration(labelText: 'Commission dépôt (%)'),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                )),
-                const SizedBox(width: 12),
-                Expanded(child: TextFormField(
-                  controller: _commissionRetraitController,
-                  decoration: const InputDecoration(labelText: 'Commission retrait (%)'),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                )),
+                Text('Types de transaction',
+                    style: Theme.of(context).textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                TextButton.icon(
+                  onPressed: () => _attachType(context),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Type'),
+                ),
               ],
             ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _ussdDepositController,
-              decoration: const InputDecoration(labelText: 'USSD Dépôt', hintText: '*144*{numero}*{montant}#'),
+            Text(
+              'USSD et commission sont propres à chaque type pour cet opérateur.',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _ussdWithdrawController,
-              decoration: const InputDecoration(labelText: 'USSD Retrait', hintText: '*144*{montant}#'),
-            ),
+            const SizedBox(height: 8),
+            Consumer(builder: (context, ref, _) {
+              final typesAsync =
+                  ref.watch(operatorTransactionTypesProvider(widget.operatorId!));
+              return typesAsync.when(
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (e, _) => Text('Erreur: $e'),
+                data: (types) {
+                  if (types.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text('Aucun type activé - ajoutez-en un.',
+                          style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                    );
+                  }
+                  return Column(
+                    children: types
+                        .map((t) => _TypeEditRow(
+                              option: t,
+                              onChanged: () => ref.invalidate(
+                                  operatorTransactionTypesProvider(widget.operatorId!)),
+                            ))
+                        .toList(),
+                  );
+                },
+              );
+            }),
             const SizedBox(height: 16),
             SwitchListTile(
               title: const Text('Opérateur actif'),
@@ -589,6 +731,130 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 16),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Une ligne éditable pour un type de transaction attaché à l'opérateur —
+/// USSD + commission propres à CETTE paire (opérateur, type), plus de
+/// champ unique "USSD Dépôt"/"USSD Retrait" au niveau de l'opérateur (D3).
+class _TypeEditRow extends StatefulWidget {
+  final OperatorTransactionTypeOption option;
+  final VoidCallback onChanged;
+
+  const _TypeEditRow({required this.option, required this.onChanged});
+
+  @override
+  State<_TypeEditRow> createState() => _TypeEditRowState();
+}
+
+class _TypeEditRowState extends State<_TypeEditRow> {
+  late final TextEditingController _ussdController;
+  late final TextEditingController _commissionController;
+  bool _dirty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ussdController = TextEditingController(text: widget.option.ussdCode ?? '');
+    _commissionController =
+        TextEditingController(text: widget.option.commissionTaux.toString());
+  }
+
+  @override
+  void dispose() {
+    _ussdController.dispose();
+    _commissionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final commission = double.tryParse(_commissionController.text) ?? 0;
+    await TransactionTypeRepository.updateLink(
+      linkId: widget.option.linkId,
+      ussdCode: _ussdController.text.trim().isEmpty ? null : _ussdController.text.trim(),
+      commissionTaux: commission,
+    );
+    if (mounted) setState(() => _dirty = false);
+    widget.onChanged();
+  }
+
+  Future<void> _detach() async {
+    await TransactionTypeRepository.detachFromOperator(widget.option.linkId);
+    widget.onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.option.defaultDirection == 'in'
+        ? AppColors.depositColor
+        : AppColors.withdrawColor;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  widget.option.defaultDirection == 'in'
+                      ? Icons.arrow_downward
+                      : Icons.arrow_upward,
+                  size: 18,
+                  color: color,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(widget.option.label,
+                      style: TextStyle(fontWeight: FontWeight.w600, color: color)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                  tooltip: 'Détacher',
+                  onPressed: _detach,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _ussdController,
+                    decoration: const InputDecoration(
+                      labelText: 'USSD',
+                      hintText: '*144*{numero}*{montant}#',
+                      isDense: true,
+                    ),
+                    onChanged: (_) => setState(() => _dirty = true),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: _commissionController,
+                    decoration: const InputDecoration(labelText: 'Commission %', isDense: true),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (_) => setState(() => _dirty = true),
+                  ),
+                ),
+              ],
+            ),
+            if (_dirty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(onPressed: _save, child: const Text('Enregistrer')),
+              ),
+            ],
           ],
         ),
       ),

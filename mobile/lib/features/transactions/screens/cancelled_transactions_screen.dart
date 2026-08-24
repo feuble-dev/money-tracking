@@ -50,7 +50,11 @@ class CancelledTransactionsScreen extends ConsumerWidget {
             itemCount: transactions.length,
             itemBuilder: (context, index) {
               final tx = transactions[index];
-              final isDeposit = tx['transaction_type'] == 'deposit';
+              final isDeposit = tx['direction'] != null
+                  ? tx['direction'] == 'in'
+                  : tx['transaction_type'] == 'deposit';
+              final typeLabel = (tx['type_label'] as String?) ??
+                  (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait');
               final amount = (tx['amount'] as num?)?.toDouble() ?? 0;
               final status = tx['status'] as String? ?? '';
               final createdAt = DateTime.parse(tx['created_at'] as String);
@@ -71,7 +75,7 @@ class CancelledTransactionsScreen extends ConsumerWidget {
                   title: Row(
                     children: [
                       Text(
-                        isDeposit ? 'Dépôt' : 'Retrait',
+                        typeLabel,
                         style: const TextStyle(
                             fontWeight: FontWeight.w600, fontSize: 14),
                       ),

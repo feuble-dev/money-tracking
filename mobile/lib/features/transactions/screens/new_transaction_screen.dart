@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
+import '../../../core/sms/commission_calculator.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/ussd/ussd_launcher.dart';
 import '../../caisse/providers/caisse_provider.dart';
@@ -11,17 +12,19 @@ import '../../clients/models/client_model.dart';
 import '../../clients/providers/client_provider.dart';
 import '../../operators/models/operator_model.dart';
 import '../../operators/providers/operator_provider.dart';
+import '../../operators/providers/transaction_type_provider.dart';
 import '../models/transaction_model.dart';
 import '../providers/transaction_provider.dart';
 import '../../../core/licence/licence_guard.dart';
 
-/// Écran de nouvelle transaction
-/// Deux modes : "Lancer USSD" (la transaction sera créée par le SMS)
-///              "Création manuelle" (si pas de SMS)
+/// Écran de nouvelle transaction — opérateur puis type d'abord (D3) : plus
+/// de dichotomie dépôt/retrait figée dans la route (voir l'ancien
+/// `/transactions/new/:type`). Une fois l'opérateur choisi, les types
+/// disponibles viennent de ses `operator_transaction_types` (catalogue ou
+/// custom) — chacun porte son propre code USSD et sa propre commission,
+/// il n'y a plus de "USSD dépôt"/"USSD retrait" au niveau opérateur.
 class NewTransactionScreen extends ConsumerStatefulWidget {
-  final String transactionType;
-
-  const NewTransactionScreen({super.key, required this.transactionType});
+  const NewTransactionScreen({super.key});
 
   @override
   ConsumerState<NewTransactionScreen> createState() =>
@@ -37,6 +40,7 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
   final _cnibController = TextEditingController();
 
   OperatorModel? _selectedOperator;
+  OperatorTransactionTypeOption? _selectedType;
   ClientModel? _selectedClient;
   bool _isNewClient = false;
   List<ClientModel> _suggestions = [];
@@ -44,7 +48,7 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
   final _currencyFormat =
       NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
 
-  bool get isDeposit => widget.transactionType == 'deposit';
+  bool get _isEntrant => _selectedType?.defaultDirection == 'in';
 
   @override
   void dispose() {
@@ -83,37 +87,12 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
     });
   }
 
-  /// Lance le USSD — PAS de création de transaction ici
-  /// C'est le SMS entrant qui va créer la transaction automatiquement
-  Future<void> _launchUssd() async {
-    final autorise = await LicenceGuard.verifier(
-      context, ActionType.lancerUSSD);
-    if (!autorise || !mounted) return;
-    if (!_formKey.currentState!.validate()) return;
-    if (_selectedOperator == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sélectionnez un opérateur')),
-      );
-      return;
-    }
+  double? get _amountValue => double.tryParse(
+      _amountController.text.replaceAll(RegExp(r'[^\d]'), ''));
 
-    final template = isDeposit
-        ? _selectedOperator!.ussdDepositTemplate
-        : _selectedOperator!.ussdWithdrawTemplate;
-
-    if (template == null || template.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pas de template USSD configuré pour cet opérateur')),
-      );
-      return;
-    }
-
+  Future<String?> _ensureClientCreated() async {
     final phone = _phoneController.text.trim();
-    final amount = double.tryParse(
-        _amountController.text.replaceAll(RegExp(r'[^\d]'), ''));
-    if (amount == null || amount <= 0) return;
-
-    // Créer le client si nouveau (avant le USSD)
+    if (_selectedClient != null) return _selectedClient!.id;
     if (_isNewClient &&
         _firstNameController.text.isNotEmpty &&
         _lastNameController.text.isNotEmpty) {
@@ -128,9 +107,33 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
         operatorId: _selectedOperator!.id,
       );
       await ref.read(clientsProvider.notifier).addClient(newClient);
+      return newClient.id;
+    }
+    return null;
+  }
+
+  /// Lance le USSD — PAS de création de transaction ici, c'est le SMS
+  /// entrant qui la crée automatiquement (sms_processing_pipeline.dart).
+  Future<void> _launchUssd() async {
+    final autorise = await LicenceGuard.verifier(context, ActionType.lancerUSSD);
+    if (!autorise || !mounted) return;
+    if (!_formKey.currentState!.validate()) return;
+    if (_selectedOperator == null || _selectedType == null) return;
+
+    final template = _selectedType!.ussdCode;
+    if (template == null || template.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pas de code USSD configuré pour ce type')),
+      );
+      return;
     }
 
-    // Lancer le USSD — PAS de transaction créée ici
+    final phone = _phoneController.text.trim();
+    final amount = _amountValue;
+    if (amount == null || amount <= 0) return;
+
+    await _ensureClientCreated();
+
     final launched = await UssdLauncher.launch(
       template: template,
       numero: phone,
@@ -138,76 +141,50 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
     );
 
     if (mounted) {
-      if (launched) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'USSD lancé — ${_currencyFormat.format(amount)}. '
-              'La transaction sera créée automatiquement à la réception du SMS.',
-            ),
-            backgroundColor: AppColors.primaryColor,
-            duration: const Duration(seconds: 4),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            launched
+                ? 'USSD lancé - ${_currencyFormat.format(amount)}. '
+                    'La transaction sera créée automatiquement à la réception du SMS.'
+                : 'Échec du lancement USSD',
           ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Échec du lancement USSD'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+          backgroundColor: launched ? AppColors.primaryColor : Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
       context.pop();
     }
   }
 
-  /// Création manuelle — uniquement si pas de SMS
+  /// Création manuelle — uniquement si pas de SMS attendu.
   Future<void> _createManual() async {
     final autorise = await LicenceGuard.verifier(
-      context, ActionType.creerTransactionManuelle);
+        context, ActionType.creerTransactionManuelle);
     if (!autorise || !mounted) return;
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedOperator == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sélectionnez un opérateur')),
-      );
-      return;
-    }
+    if (_selectedOperator == null || _selectedType == null) return;
 
-    final amount = double.tryParse(
-        _amountController.text.replaceAll(RegExp(r'[^\d]'), ''));
+    final amount = _amountValue;
     if (amount == null || amount <= 0) return;
 
     final phone = _phoneController.text.trim();
-    final commission = _selectedOperator!.calculateCommission(
-        amount, widget.transactionType);
+    final commission =
+        CommissionCalculator.compute(amount: amount, commissionTaux: _selectedType!.commissionTaux);
 
-    String? clientId = _selectedClient?.id;
-    String? clientName = _selectedClient?.fullName;
-
-    if (_isNewClient &&
-        _firstNameController.text.isNotEmpty &&
-        _lastNameController.text.isNotEmpty) {
-      final newClient = ClientModel(
-        id: const Uuid().v4(),
-        firstName: _firstNameController.text.trim(),
-        lastName: _lastNameController.text.trim(),
-        phoneNumber: phone,
-        cnibNumber: _cnibController.text.trim().isEmpty
-            ? null
-            : _cnibController.text.trim(),
-        operatorId: _selectedOperator!.id,
-      );
-      await ref.read(clientsProvider.notifier).addClient(newClient);
-      clientId = newClient.id;
-      clientName = newClient.fullName;
-    }
+    final clientId = await _ensureClientCreated();
+    final clientName = _selectedClient?.fullName ??
+        (_isNewClient
+            ? '${_firstNameController.text.trim()} ${_lastNameController.text.trim()}'
+            : null);
 
     final transaction = TransactionModel(
       id: const Uuid().v4(),
       operatorId: _selectedOperator!.id,
       clientId: clientId,
-      transactionType: widget.transactionType,
+      transactionType: _selectedType!.code,
+      transactionTypeId: _selectedType!.transactionTypeId,
+      direction: _selectedType!.defaultDirection,
       amount: amount,
       commission: commission,
       clientPhone: phone,
@@ -220,17 +197,17 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
     await ref.read(caissesProvider.notifier).updateSoldeAfterTransaction(
       operatorId: _selectedOperator!.id,
       amount: amount,
-      direction: isDeposit ? 'in' : 'out',
+      direction: _selectedType!.defaultDirection,
     );
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${isDeposit ? 'Dépôt' : 'Retrait'} de ${_currencyFormat.format(amount)} créé manuellement',
+            '${_selectedType!.label} de ${_currencyFormat.format(amount)} créé manuellement',
           ),
           backgroundColor:
-              isDeposit ? AppColors.depositColor : AppColors.withdrawColor,
+              _isEntrant ? AppColors.depositColor : AppColors.withdrawColor,
         ),
       );
       context.pop();
@@ -240,25 +217,24 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
   @override
   Widget build(BuildContext context) {
     final operatorsAsync = ref.watch(operatorsProvider);
-    final hasUssdTemplate = _selectedOperator != null &&
-        ((isDeposit
-                ? _selectedOperator!.ussdDepositTemplate
-                : _selectedOperator!.ussdWithdrawTemplate) ??
-            '')
-            .isNotEmpty;
+    final typesAsync = _selectedOperator != null
+        ? ref.watch(operatorTransactionTypesProvider(_selectedOperator!.id))
+        : null;
+    final headerColor = _selectedType == null
+        ? AppColors.primaryColor
+        : (_isEntrant ? AppColors.depositColor : AppColors.withdrawColor);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isDeposit ? 'Nouveau dépôt' : 'Nouveau retrait'),
-        backgroundColor:
-            isDeposit ? AppColors.depositColor : AppColors.withdrawColor,
+        title: const Text('Nouvelle transaction'),
+        backgroundColor: headerColor,
       ),
       body: Form(
         key: _formKey,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Sélection opérateur
+            // === Étape 1 : Opérateur ===
             Text('Opérateur',
                 style: Theme.of(context)
                     .textTheme.titleSmall
@@ -277,14 +253,63 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
                     return ChoiceChip(
                       label: Text(op.name),
                       selected: isSelected,
-                      onSelected: (v) =>
-                          setState(() => _selectedOperator = v ? op : null),
+                      onSelected: (v) => setState(() {
+                        _selectedOperator = v ? op : null;
+                        _selectedType = null;
+                      }),
                       selectedColor: AppColors.primaryColor.withAlpha(50),
                     );
                   }).toList(),
                 );
               },
             ),
+
+            // === Étape 2 : Type (dépend de l'opérateur) ===
+            if (_selectedOperator != null) ...[
+              const SizedBox(height: 20),
+              Text('Type de transaction',
+                  style: Theme.of(context)
+                      .textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              typesAsync!.when(
+                loading: () => const CircularProgressIndicator(),
+                error: (e, _) => Text('Erreur: $e'),
+                data: (types) {
+                  if (types.isEmpty) {
+                    return Text(
+                      'Aucun type activé pour cet opérateur - configurez-le depuis "Opérateurs".',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    );
+                  }
+                  return Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: types.map((t) {
+                      final isSelected = _selectedType?.linkId == t.linkId;
+                      final color = t.defaultDirection == 'in'
+                          ? AppColors.depositColor
+                          : AppColors.withdrawColor;
+                      return ChoiceChip(
+                        avatar: Icon(
+                          t.defaultDirection == 'in'
+                              ? Icons.arrow_downward
+                              : Icons.arrow_upward,
+                          size: 18,
+                          color: isSelected ? Colors.white : color,
+                        ),
+                        label: Text(t.label),
+                        selected: isSelected,
+                        selectedColor: color,
+                        onSelected: (v) =>
+                            setState(() => _selectedType = v ? t : null),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+            ],
+
             const SizedBox(height: 24),
 
             // Numéro client
@@ -339,7 +364,7 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
                         color: AppColors.withdrawColor, size: 20),
                     const SizedBox(width: 8),
                     Expanded(child: Text(
-                      '${_selectedClient!.fullName} — ${_selectedClient!.phoneNumber}',
+                      '${_selectedClient!.fullName} - ${_selectedClient!.phoneNumber}',
                       style: const TextStyle(fontWeight: FontWeight.w500),
                     )),
                     IconButton(
@@ -401,8 +426,7 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
               decoration: InputDecoration(
                 labelText: 'Montant (FCFA) *',
                 hintText: '5000',
-                prefixIcon: Icon(Icons.attach_money,
-                    color: isDeposit ? AppColors.depositColor : AppColors.withdrawColor),
+                prefixIcon: Icon(Icons.attach_money, color: headerColor),
               ),
               keyboardType: TextInputType.number,
               validator: (v) {
@@ -411,15 +435,14 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
                 if (a == null || a <= 0) return 'Montant invalide';
                 return null;
               },
+              onChanged: (_) => setState(() {}),
             ),
 
             // Aperçu commission
-            if (_selectedOperator != null && _amountController.text.isNotEmpty)
+            if (_selectedType != null && _amountValue != null)
               Builder(builder: (context) {
-                final a = double.tryParse(
-                    _amountController.text.replaceAll(RegExp(r'[^\d]'), ''));
-                if (a == null || a <= 0) return const SizedBox.shrink();
-                final c = _selectedOperator!.calculateCommission(a, widget.transactionType);
+                final c = CommissionCalculator.compute(
+                    amount: _amountValue!, commissionTaux: _selectedType!.commissionTaux);
                 if (c <= 0) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -433,24 +456,25 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
             const SizedBox(height: 32),
 
             // === DEUX BOUTONS : USSD ou Manuel ===
-            if (hasUssdTemplate)
+            if (_selectedType?.ussdCode != null && _selectedType!.ussdCode!.isNotEmpty)
               ElevatedButton.icon(
                 onPressed: _launchUssd,
                 icon: const Icon(Icons.phone_forwarded),
                 label: Text(
-                  isDeposit ? 'Lancer le dépôt (USSD)' : 'Lancer le retrait (USSD)',
+                  'Lancer ${_selectedType!.label} (USSD)',
                   style: const TextStyle(fontSize: 16),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isDeposit ? AppColors.depositColor : AppColors.withdrawColor,
+                  backgroundColor: headerColor,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
               ),
 
-            if (hasUssdTemplate) const SizedBox(height: 12),
+            if (_selectedType?.ussdCode != null && _selectedType!.ussdCode!.isNotEmpty)
+              const SizedBox(height: 12),
 
             OutlinedButton.icon(
-              onPressed: _createManual,
+              onPressed: _selectedType == null ? null : _createManual,
               icon: const Icon(Icons.edit_note),
               label: const Text('Créer manuellement (sans SMS)'),
               style: OutlinedButton.styleFrom(

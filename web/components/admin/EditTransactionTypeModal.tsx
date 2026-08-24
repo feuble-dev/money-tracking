@@ -70,7 +70,7 @@ export default function EditTransactionTypeModal({ isOpen, onClose, onUpdated, t
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Sens par défaut (D1 — un pattern SMS peut ensuite le remplacer pour ce type)
+            Sens par défaut (D1 - un pattern SMS peut ensuite le remplacer pour ce type)
           </label>
           <select
             value={defaultDirection}

@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
+import '../../../core/database/caisse_repository.dart';
 import '../../../core/database/database_helper.dart';
 
 const _uuid = Uuid();
@@ -95,6 +96,10 @@ class CaissesNotifier extends StateNotifier<AsyncValue<List<CaisseModel>>> {
         {
           'solde_initial': soldeInitial,
           'solde_actuel': soldeInitial,
+          // Réinitialisation manuelle = nouvelle référence de vérité ; on
+          // efface solde_ref_at pour que le prochain SMS avec solde annoncé
+          // (même daté d'avant cette réinit) puisse s'appliquer normalement.
+          'solde_ref_at': null,
           'seuil_alerte': seuilAlerte,
           'updated_at': DateTime.now().toIso8601String(),
         },
@@ -146,15 +151,10 @@ class CaissesNotifier extends StateNotifier<AsyncValue<List<CaisseModel>>> {
     required double amount,
     required String direction,
   }) async {
-    final db = await DatabaseHelper.instance.database;
-    final existing = await db.query('caisse',
-        where: 'operator_id = ?', whereArgs: [operatorId]);
-    if (existing.isEmpty) return;
-
-    final delta = direction == 'in' ? -amount : amount;
-    await db.rawUpdate(
-      'UPDATE caisse SET solde_actuel = solde_actuel + ?, updated_at = ? WHERE operator_id = ?',
-      [delta, DateTime.now().toIso8601String(), operatorId],
+    await CaisseRepository.updateSoldeAfterTransaction(
+      operatorId: operatorId,
+      amount: amount,
+      direction: direction,
     );
     await load();
   }

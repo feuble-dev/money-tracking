@@ -90,7 +90,7 @@ export default function CreateSmsPatternModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Sens (optionnel — remplace le sens par défaut du type, actuellement &quot;{defaultDirection === 'in' ? 'entrant' : 'sortant'}&quot;)
+            Sens (optionnel - remplace le sens par défaut du type, actuellement &quot;{defaultDirection === 'in' ? 'entrant' : 'sortant'}&quot;)
           </label>
           <select
             value={directionOverride}
@@ -118,7 +118,7 @@ export default function CreateSmsPatternModal({
           </select>
           <p className="text-xs text-gray-400 mt-1">
             Le SMS d&apos;un compte Particulier diffère parfois de celui d&apos;un compte Agence
-            pour la même transaction — ciblez ce pattern en conséquence.
+            pour la même transaction - ciblez ce pattern en conséquence.
           </p>
         </div>
 

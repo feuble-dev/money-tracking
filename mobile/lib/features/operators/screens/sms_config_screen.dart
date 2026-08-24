@@ -35,6 +35,11 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
   Map<String, String>? _testResult;
   int _currentStep = 0;
 
+  // Non-null quand on modifie un pattern existant (chargé via _editPattern)
+  // plutôt que d'en créer un nouveau — _savePattern met à jour en place.
+  String? _editingPatternId;
+  String? _editingSource;
+
   @override
   void dispose() {
     _smsController.dispose();
@@ -100,31 +105,86 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
     });
   }
 
+  /// Charge un pattern existant dans le formulaire pour le modifier — sans
+  /// ça, la seule action possible sur un pattern déjà créé était de le
+  /// supprimer, jamais de corriger sa regex (ex: une zone mal taguée).
+  Future<void> _editPattern(SmsPatternModel p) async {
+    final types = await ref.read(operatorTransactionTypesProvider(widget.operatorId).future);
+    OperatorTransactionTypeOption? matchedType;
+    for (final t in types) {
+      if (t.linkId == p.operatorTransactionTypeId) {
+        matchedType = t;
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _editingPatternId = p.id;
+      _editingSource = p.source;
+      _smsController.text = p.rawExample;
+      _zones = p.taggedZonesJson != null
+          ? SmsPatternBuilder.zonesFromJson(p.taggedZonesJson!)
+          : [];
+      _selectedType = matchedType;
+      _directionOverride =
+          (matchedType != null && p.direction != matchedType.defaultDirection)
+              ? p.direction
+              : null;
+      _testSmsController.clear();
+      _testResult = null;
+      _currentStep = 0;
+    });
+  }
+
+  void _startNewPattern() {
+    setState(() {
+      _editingPatternId = null;
+      _editingSource = null;
+      _selectedType = null;
+      _directionOverride = null;
+      _zones = [];
+      _smsController.clear();
+      _testSmsController.clear();
+      _testResult = null;
+      _currentStep = 0;
+    });
+  }
+
   Future<void> _savePattern() async {
     final type = _selectedType;
     if (type == null) return;
     final regex = SmsPatternBuilder.buildRegex(_smsController.text, _zones);
+    final editingId = _editingPatternId;
 
     final pattern = SmsPatternModel(
-      id: const Uuid().v4(),
+      id: editingId ?? const Uuid().v4(),
       operatorId: widget.operatorId,
       transactionType: type.code,
       operatorTransactionTypeId: type.linkId,
       direction: _directionOverride ?? type.defaultDirection,
       taggedZonesJson: SmsPatternBuilder.zonesToJson(_zones),
-      source: 'custom',
+      // Un pattern catalogue modifié par l'agent devient un override local
+      // (D6) — un futur resync du catalogue ne doit jamais écraser cette
+      // correction, il ne touche que les patterns encore source='catalog'.
+      source: editingId != null
+          ? (_editingSource == 'catalog' ? 'catalog_overridden' : _editingSource ?? 'custom')
+          : 'custom',
       rawExample: _smsController.text,
       patternJson: SmsPatternBuilder.zonesToJson(_zones),
       regexGenerated: regex,
     );
 
-    await SmsPatternRepository.savePattern(pattern);
+    if (editingId != null) {
+      await SmsPatternRepository.updatePattern(pattern);
+    } else {
+      await SmsPatternRepository.savePattern(pattern);
+    }
     ref.invalidate(smsPatternsProvider(widget.operatorId));
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Pattern SMS sauvegardé'),
+        SnackBar(
+          content: Text(editingId != null ? 'Pattern SMS modifié' : 'Pattern SMS sauvegardé'),
           backgroundColor: AppColors.withdrawColor,
         ),
       );
@@ -138,7 +198,9 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
     final typesAsync = ref.watch(operatorTransactionTypesProvider(widget.operatorId));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Configuration SMS')),
+      appBar: AppBar(
+        title: Text(_editingPatternId != null ? 'Modifier le pattern' : 'Configuration SMS'),
+      ),
       body: Column(
         children: [
           patternsAsync.when(
@@ -151,16 +213,30 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: patterns.length,
+                  itemCount: patterns.length + 1,
                   itemBuilder: (context, index) {
-                    final p = patterns[index];
+                    if (index == 0) {
+                      return Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        child: ActionChip(
+                          avatar: const Icon(Icons.add, size: 16),
+                          label: const Text('Nouveau', style: TextStyle(fontSize: 12)),
+                          onPressed: _startNewPattern,
+                        ),
+                      );
+                    }
+                    final p = patterns[index - 1];
+                    final selected = p.id == _editingPatternId;
                     return Container(
                       margin: const EdgeInsets.only(right: 8),
-                      child: Chip(
+                      child: InputChip(
                         label: Text(p.transactionType, style: const TextStyle(fontSize: 12)),
+                        selected: selected,
+                        onPressed: () => _editPattern(p),
                         deleteIcon: const Icon(Icons.close, size: 16),
                         onDeleted: () async {
                           await SmsPatternRepository.deletePattern(p.id);
+                          if (_editingPatternId == p.id) _startNewPattern();
                           ref.invalidate(smsPatternsProvider(widget.operatorId));
                         },
                       ),
@@ -351,13 +427,13 @@ class _SmsConfigScreenState extends ConsumerState<SmsConfigScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _summaryRow('Type', _selectedType?.label ?? '—'),
+        _summaryRow('Type', _selectedType?.label ?? '-'),
         _summaryRow('Zones taguées', _zones.map((z) => z.fieldName).join(', ')),
         const SizedBox(height: 12),
         DropdownButtonFormField<String?>(
           initialValue: _directionOverride,
           decoration: InputDecoration(
-            labelText: 'Sens (optionnel — défaut : ${_selectedType?.defaultDirection == 'in' ? 'entrant' : 'sortant'})',
+            labelText: 'Sens (optionnel - défaut : ${_selectedType?.defaultDirection == 'in' ? 'entrant' : 'sortant'})',
           ),
           items: const [
             DropdownMenuItem(value: null, child: Text('Utiliser le sens par défaut')),

@@ -230,7 +230,7 @@ export default function DemandesPage() {
                 </div>
                 <div className="flex items-center justify-between py-2">
                   <span className="text-xs text-gray-400 uppercase tracking-wider">Date</span>
-                  <span className="text-sm text-gray-600">{demande.created_at ? new Date(demande.created_at).toLocaleDateString('fr-FR') : '—'}</span>
+                  <span className="text-sm text-gray-600">{demande.created_at ? new Date(demande.created_at).toLocaleDateString('fr-FR') : '-'}</span>
                 </div>
               </div>
 

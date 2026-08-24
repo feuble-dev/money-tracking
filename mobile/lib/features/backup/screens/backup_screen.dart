@@ -173,7 +173,7 @@ class _BackupScreenState extends ConsumerState<BackupScreen> {
                   leading: const Icon(Icons.description),
                   title: Text(name, style: const TextStyle(fontSize: 13)),
                   subtitle: Text(
-                    '${DateFormat('dd/MM/yyyy HH:mm').format(stat.modified)} — $sizeKb Ko',
+                    '${DateFormat('dd/MM/yyyy HH:mm').format(stat.modified)} - $sizeKb Ko',
                     style: const TextStyle(fontSize: 11),
                   ),
                   trailing: IconButton(

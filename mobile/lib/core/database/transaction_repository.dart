@@ -85,9 +85,10 @@ class TransactionRepository {
   Future<List<Map<String, dynamic>>> getCancelled() async {
     final db = await DatabaseHelper.instance.database;
     return db.rawQuery('''
-      SELECT t.*, o.name as operator_name
+      SELECT t.*, o.name as operator_name, tt.label as type_label
       FROM transactions t
       LEFT JOIN operators o ON t.operator_id = o.id
+      LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
       WHERE t.status IN ('cancelled', 'rejected')
       ORDER BY t.created_at DESC
     ''');

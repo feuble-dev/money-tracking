@@ -431,7 +431,7 @@ class _DashboardTab extends ConsumerWidget {
                         Text(d['name'] as String,
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                         Text(
-                          '$txCount tx — ${currencyFormat.format(total)}',
+                          '$txCount tx - ${currencyFormat.format(total)}',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],

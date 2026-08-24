@@ -52,7 +52,7 @@ export default function CreateTransactionTypeModal({ isOpen, onClose, onCreated 
         {error && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-xl">{error}</div>}
 
         <p className="text-xs text-gray-400">
-          Ce type est global (D3) — créé une seule fois, il sera ensuite activable pour n&apos;importe quel opérateur avec son propre USSD/commission.
+          Ce type est global (D3) - créé une seule fois, il sera ensuite activable pour n&apos;importe quel opérateur avec son propre USSD/commission.
         </p>
 
         <div>
@@ -90,7 +90,7 @@ export default function CreateTransactionTypeModal({ isOpen, onClose, onCreated 
             <option value="out">Sortant</option>
           </select>
           <p className="text-xs text-gray-400 mt-1">
-            Un pattern SMS spécifique pourra surcharger ce sens (D1) — utile pour un type qui peut être tantôt entrant, tantôt sortant.
+            Un pattern SMS spécifique pourra surcharger ce sens (D1) - utile pour un type qui peut être tantôt entrant, tantôt sortant.
           </p>
         </div>
 

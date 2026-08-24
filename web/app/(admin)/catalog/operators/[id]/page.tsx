@@ -98,7 +98,7 @@ export default function OperatorDetailPage() {
           <div>
             <h2 className="text-2xl font-bold text-dark">{operator.name}</h2>
             <p className="text-sm text-gray-500">
-              {operator.country_name} — expéditeur SMS : {operator.sms_sender || '—'}
+              {operator.country_name} - expéditeur SMS : {operator.sms_sender || '-'}
             </p>
           </div>
         </div>
@@ -151,7 +151,7 @@ export default function OperatorDetailPage() {
               <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
                 <div>
                   <span className="text-gray-400">USSD : </span>
-                  <span className="font-mono text-dark">{link.ussd_code || '—'}</span>
+                  <span className="font-mono text-dark">{link.ussd_code || '-'}</span>
                 </div>
                 <div>
                   <span className="text-gray-400">Commission : </span>
@@ -168,7 +168,7 @@ export default function OperatorDetailPage() {
                         <span className="font-mono text-gray-500 flex items-center gap-2">
                           {p.tagged_zones.length} zone(s) taguée(s)
                           {p.direction_override && (
-                            <> — sens : {p.direction_override === 'in' ? 'entrant' : 'sortant'} (override)</>
+                            <> - sens : {p.direction_override === 'in' ? 'entrant' : 'sortant'} (override)</>
                           )}
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold ${
                             p.cible_compte === 'particulier' ? 'bg-blue-50 text-blue-600'
@@ -230,7 +230,7 @@ export default function OperatorDetailPage() {
           onClose={() => setDeleteLink(null)}
           onConfirm={async () => { await deleteOperatorType(deleteLink.id); await load(); }}
           title={`Retirer ${deleteLink.transaction_type_label} de cet opérateur ?`}
-          message="Impossible si des patterns SMS sont encore rattachés à cette association — supprimez-les d'abord."
+          message="Impossible si des patterns SMS sont encore rattachés à cette association - supprimez-les d'abord."
         />
       )}
     </div>

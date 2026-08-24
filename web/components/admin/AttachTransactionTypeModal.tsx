@@ -100,7 +100,7 @@ export default function AttachTransactionTypeModal({
           </select>
           {availableTypes.length === 0 && (
             <p className="text-xs text-gray-400 mt-1">
-              Tous les types existants sont déjà activés pour cet opérateur — créez-en un nouveau depuis Catalogue &gt; Types de transaction.
+              Tous les types existants sont déjà activés pour cet opérateur - créez-en un nouveau depuis Catalogue &gt; Types de transaction.
             </p>
           )}
         </div>

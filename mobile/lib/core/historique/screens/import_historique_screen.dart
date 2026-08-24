@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../../features/caisse/providers/caisse_provider.dart';
+import '../../../features/dashboard/providers/dashboard_provider.dart';
+import '../../../features/transactions/providers/transaction_provider.dart';
 import '../../licence/licence_storage.dart';
 import '../../theme/app_colors.dart';
 import '../historique_service.dart';
 import '../historique_storage.dart';
 
-class ImportHistoriqueScreen extends StatefulWidget {
+class ImportHistoriqueScreen extends ConsumerStatefulWidget {
   const ImportHistoriqueScreen({super.key});
 
   @override
-  State<ImportHistoriqueScreen> createState() => _ImportHistoriqueScreenState();
+  ConsumerState<ImportHistoriqueScreen> createState() => _ImportHistoriqueScreenState();
 }
 
 /// La période (donc le prix, D5) doit être choisie AVANT toute demande
@@ -19,7 +23,7 @@ class ImportHistoriqueScreen extends StatefulWidget {
 /// qui achetait un forfait fixe puis choisissait la période après coup.
 enum _ScreenState { periode, attente, importing, done }
 
-class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
+class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen> {
   _ScreenState _state = _ScreenState.periode;
   String? _message;
   bool _isError = false;
@@ -98,7 +102,7 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
       } else if (statut == StatutAchat.timeout) {
         setState(() {
           _state = _ScreenState.periode;
-          _message = 'Délai dépassé — réessayez ou contactez le support.';
+          _message = 'Délai dépassé - réessayez ou contactez le support.';
           _isError = true;
         });
       }
@@ -160,6 +164,15 @@ class _ImportHistoriqueScreenState extends State<ImportHistoriqueScreen> {
         _resultat = result;
         _state = _ScreenState.done;
       });
+      // Le solde caisse peut désormais avoir été mis à jour par l'import
+      // (HistoriqueImportService applique le solde ANNONCÉ par le SMS le
+      // plus récent, garde-fou par date — jamais un delta cumulé sur des
+      // transactions rétrodatées, voir CaisseRepository).
+      if (result.crees > 0) {
+        ref.read(transactionsProvider.notifier).loadTransactions();
+        ref.invalidate(dashboardStatsProvider(null));
+        ref.read(caissesProvider.notifier).load();
+      }
     }
   }
 

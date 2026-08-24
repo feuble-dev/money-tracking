@@ -111,23 +111,13 @@ class _TransactionsListScreenState
           ),
         ),
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'withdraw',
-            onPressed: () => context.push('/transactions/new/withdrawal'),
-            backgroundColor: AppColors.withdrawColor,
-            child: const Icon(Icons.arrow_upward),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'deposit',
-            onPressed: () => context.push('/transactions/new/deposit'),
-            backgroundColor: AppColors.depositColor,
-            child: const Icon(Icons.arrow_downward),
-          ),
-        ],
+      // Plus de dichotomie dépôt/retrait au niveau du bouton — l'opérateur
+      // puis son type (catalogue ou custom, D3) se choisissent dans l'écran.
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'new_transaction',
+        onPressed: () => context.push('/transactions/new'),
+        backgroundColor: AppColors.primaryColor,
+        child: const Icon(Icons.add),
       ),
       body: Column(
         children: [
@@ -208,7 +198,7 @@ class _TransactionsListScreenState
 
                 double totalDep = 0, totalWit = 0;
                 for (final tx in transactions) {
-                  if (tx.isDeposit) {
+                  if (tx.isEntrant) {
                     totalDep += tx.amount;
                   } else {
                     totalWit += tx.amount;
@@ -265,7 +255,7 @@ class _TransactionsListScreenState
   }
 
   Widget _buildActiveFilters(TransactionFilter filter) {
-    final hasFilter = filter.transactionType != null ||
+    final hasFilter = filter.direction != null ||
         filter.dateFrom != null;
 
     if (!hasFilter) return const SizedBox.shrink();
@@ -276,13 +266,13 @@ class _TransactionsListScreenState
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          if (filter.transactionType != null)
+          if (filter.direction != null)
             _filterChip(
-              filter.transactionType == 'deposit' ? 'Dépôts' : 'Retraits',
-              filter.transactionType == 'deposit'
+              filter.direction == 'in' ? 'Entrant' : 'Sortant',
+              filter.direction == 'in'
                   ? AppColors.depositColor
                   : AppColors.withdrawColor,
-              () => _updateFilter(ref, filter.copyWith(transactionType: null)),
+              () => _updateFilter(ref, filter.copyWith(direction: null)),
             ),
           if (filter.dateFrom != null)
             _filterChip(
@@ -367,9 +357,9 @@ class _TransactionsListScreenState
                   children: [
                     _typeChip(ref, currentFilter, null, 'Tous',
                         Icons.swap_vert, AppColors.primaryColor),
-                    _typeChip(ref, currentFilter, 'deposit', 'Dépôts',
+                    _typeChip(ref, currentFilter, 'in', 'Entrant',
                         Icons.arrow_downward, AppColors.depositColor),
-                    _typeChip(ref, currentFilter, 'withdrawal', 'Retraits',
+                    _typeChip(ref, currentFilter, 'out', 'Sortant',
                         Icons.arrow_upward, AppColors.withdrawColor),
                   ],
                 ),
@@ -406,9 +396,12 @@ class _TransactionsListScreenState
     );
   }
 
-  Widget _typeChip(WidgetRef ref, TransactionFilter filter, String? type,
+  // Filtre par SENS (D1), pas par code de type littéral — un opérateur du
+  // catalogue et un opérateur custom peuvent avoir des codes différents
+  // pour un type "équivalent" (voir TransactionFilter).
+  Widget _typeChip(WidgetRef ref, TransactionFilter filter, String? direction,
       String label, IconData icon, Color color) {
-    final isSelected = filter.transactionType == type;
+    final isSelected = filter.direction == direction;
     return ChoiceChip(
       avatar: Icon(icon, size: 18, color: isSelected ? Colors.white : color),
       label: Text(label),
@@ -418,7 +411,7 @@ class _TransactionsListScreenState
         _applyFilter(ref, TransactionFilter(
           operatorId: filter.operatorId,
           clientId: filter.clientId,
-          transactionType: type,
+          direction: direction,
           dateFrom: filter.dateFrom,
           dateTo: filter.dateTo,
         ));
@@ -442,7 +435,7 @@ class _TransactionsListScreenState
         _applyFilter(ref, TransactionFilter(
           operatorId: filter.operatorId,
           clientId: filter.clientId,
-          transactionType: filter.transactionType,
+          direction: filter.direction,
           dateFrom: from,
           dateTo: to,
         ));
@@ -493,8 +486,8 @@ class _TransactionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDeposit = transaction.isDeposit;
-    final color = isDeposit ? AppColors.depositColor : AppColors.withdrawColor;
+    final isEntrant = transaction.isEntrant;
+    final color = isEntrant ? AppColors.depositColor : AppColors.withdrawColor;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -513,7 +506,7 @@ class _TransactionCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  isDeposit ? Icons.arrow_downward : Icons.arrow_upward,
+                  isEntrant ? Icons.arrow_downward : Icons.arrow_upward,
                   color: color,
                 ),
               ),
@@ -524,10 +517,13 @@ class _TransactionCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text(
-                          isDeposit ? 'Dépôt' : 'Retrait',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w600, color: color),
+                        Flexible(
+                          child: Text(
+                            transaction.displayLabel,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600, color: color),
+                          ),
                         ),
                         if (transaction.source == 'sms_auto' || transaction.source == 'sms_import') ...[
                           const SizedBox(width: 6),
@@ -558,7 +554,7 @@ class _TransactionCard extends StatelessWidget {
                       style: const TextStyle(fontSize: 13),
                     ),
                     Text(
-                      '${transaction.operatorName ?? ''} — ${dateFormat.format(transaction.createdAt)}',
+                      '${transaction.operatorName ?? ''} - ${dateFormat.format(transaction.createdAt)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -568,7 +564,7 @@ class _TransactionCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '${isDeposit ? '+' : '-'}${currencyFormat.format(transaction.amount)}',
+                    '${isEntrant ? '+' : '-'}${currencyFormat.format(transaction.amount)}',
                     style: TextStyle(
                         fontWeight: FontWeight.bold, color: color, fontSize: 15),
                   ),
@@ -618,7 +614,7 @@ class _TransactionCard extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    '${transaction.isDeposit ? 'Dépôt' : 'Retrait'} — ${currencyFormat.format(transaction.amount)}',
+                    '${transaction.displayLabel} - ${currencyFormat.format(transaction.amount)}',
                     style: Theme.of(ctx2).textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),

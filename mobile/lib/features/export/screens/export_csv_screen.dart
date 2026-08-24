@@ -69,12 +69,14 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
     final transactions = await db.rawQuery('''
       SELECT t.*,
              o.name as operator_name,
+             tt.label as type_label,
              c.first_name as client_first_name,
              c.last_name as client_last_name,
              c.cnib_number as client_cnib_num,
              c.birth_date as client_birth
       FROM transactions t
       LEFT JOIN operators o ON t.operator_id = o.id
+      LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
       LEFT JOIN clients c ON t.client_id = c.id
       WHERE t.status = 'completed' AND t.created_at BETWEEN ? AND ?
       ORDER BY t.created_at DESC
@@ -94,7 +96,8 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
         final date = DateTime.parse(tx['created_at'] as String);
         return [
           dateFormat.format(date),
-          tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait',
+          (tx['type_label'] as String?) ??
+              (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait'),
           (tx['amount'] as num).toDouble(),
           (tx['commission'] as num?)?.toDouble() ?? 0,
           (tx['client_last_name'] as String?) ??
@@ -123,8 +126,8 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
     final clients = await db.rawQuery('''
       SELECT c.*, o.name as operator_name,
              COUNT(t.id) as tx_count,
-             COALESCE(SUM(CASE WHEN t.transaction_type='deposit' THEN t.amount ELSE 0 END), 0) as total_deposits,
-             COALESCE(SUM(CASE WHEN t.transaction_type='withdrawal' THEN t.amount ELSE 0 END), 0) as total_withdrawals
+             COALESCE(SUM(CASE WHEN t.direction='in' THEN t.amount ELSE 0 END), 0) as total_deposits,
+             COALESCE(SUM(CASE WHEN t.direction='out' THEN t.amount ELSE 0 END), 0) as total_withdrawals
       FROM clients c
       LEFT JOIN operators o ON c.operator_id = o.id
       LEFT JOIN transactions t ON t.client_id = c.id AND t.status = 'completed'
@@ -171,7 +174,7 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
 
     await Share.shareXFiles(
       [XFile(file.path)],
-      subject: 'Export MoneyTracking — $prefix',
+      subject: 'Export MoneyTracking - $prefix',
     );
   }
 
@@ -221,7 +224,7 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
               child: ListTile(
                 leading: const Icon(Icons.date_range),
                 title: Text(
-                  '${DateFormat('dd/MM/yyyy').format(_startDate)} — ${DateFormat('dd/MM/yyyy').format(_endDate)}',
+                  '${DateFormat('dd/MM/yyyy').format(_startDate)} - ${DateFormat('dd/MM/yyyy').format(_endDate)}',
                 ),
                 subtitle: const Text('Période de l\'export'),
                 trailing: const Icon(Icons.edit),

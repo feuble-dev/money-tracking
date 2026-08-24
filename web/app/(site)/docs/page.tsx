@@ -21,7 +21,7 @@ const sections: DocSection[] = [
             { title: 'Installer l\'application', desc: 'Telechargez le fichier APK et installez-le sur votre telephone Android (6.0 minimum).' },
             { title: 'Choisir Particulier ou Agence', desc: 'Au premier lancement, indiquez votre numero, votre pays, et le type de compte : Particulier (suivi personnel) ou Agence (usage professionnel avec commissions).' },
             { title: 'Nommer votre agence', desc: 'Chaque agence demarre avec 3 mois d\'essai gratuit. Vous pourrez en ajouter d\'autres plus tard.' },
-            { title: 'Selectionner vos operateurs', desc: 'Les operateurs de votre pays (Orange Money, Moov Money, Coris Money...) sont deja configures par MoneyTracking — cochez ceux que vous utilisez, ils s\'importent automatiquement.' },
+            { title: 'Selectionner vos operateurs', desc: 'Les operateurs de votre pays (Orange Money, Moov Money, Coris Money...) sont deja configures par MoneyTracking - cochez ceux que vous utilisez, ils s\'importent automatiquement.' },
             { title: 'Creer votre code PIN', desc: 'Definissez un code PIN a 4 chiffres. Vous pourrez activer l\'empreinte digitale plus tard.' },
             { title: 'Accorder la permission SMS', desc: 'Autorisez MoneyTracking a lire vos SMS. Indispensable pour la detection automatique.' },
           ].map((s, i) => (
@@ -63,7 +63,7 @@ const sections: DocSection[] = [
         </div>
         <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200 text-sm text-yellow-800">
           <strong>Bon a savoir :</strong> un type de transaction (ex. Transfert) peut etre entrant ou
-          sortant selon le SMS reel — c&apos;est le modele de detection qui determine le sens, pas
+          sortant selon le SMS reel - c&apos;est le modele de detection qui determine le sens, pas
           le type lui-meme.
         </div>
       </div>
@@ -258,7 +258,7 @@ const sections: DocSection[] = [
       <div className="space-y-4">
         <p className="text-sm text-muted">
           Systeme <strong className="text-dark">non bloquant</strong> : meme sans licence, la lecture reste possible.
-          La licence est facturee <strong className="text-dark">par agence</strong> — un compte avec
+          La licence est facturee <strong className="text-dark">par agence</strong> - un compte avec
           plusieurs agences paie un abonnement par agence.
         </p>
         <div className="p-3 bg-soft rounded-lg border border-gray-100">

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../database/caisse_repository.dart';
 import '../database/database_helper.dart';
 import '../licence/licence_service.dart';
 import '../sms/commission_calculator.dart';
@@ -255,6 +256,24 @@ class HistoriqueImportService {
           'created_at': date.toIso8601String(),
         });
         crees++;
+
+        // Le solde caisse suit désormais le dernier solde ANNONCÉ par SMS
+        // (pas une somme de deltas), avec une garde par date
+        // (CaisseRepository.updateSoldeAfterTransaction) : un SMS importé
+        // plus ancien que le solde déjà connu est ignoré, donc un import
+        // historique désordonné ne peut jamais écraser une valeur plus
+        // récente et donc plus vraie. Sûr d'appeler ici pour chaque SMS,
+        // même en lot.
+        final soldeApres = SmsFieldExtractor.parseMontant(extracted['solde']);
+        if (soldeApres != null) {
+          await CaisseRepository.updateSoldeAfterTransaction(
+            operatorId: opId,
+            amount: amount,
+            direction: smsMatch.direction,
+            soldeApres: soldeApres,
+            transactionAt: date,
+          );
+        }
 
         if (totalAnalyses % 20 == 0) onProgress(totalAnalyses, totalSms);
       }

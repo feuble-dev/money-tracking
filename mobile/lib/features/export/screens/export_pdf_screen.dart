@@ -55,11 +55,13 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
       final transactions = await db.rawQuery('''
         SELECT t.*,
                o.name as operator_name,
+               tt.label as type_label,
                c.first_name as client_first_name,
                c.last_name as client_last_name,
                c.cnib_number as client_cnib_num
         FROM transactions t
         LEFT JOIN operators o ON t.operator_id = o.id
+        LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
         LEFT JOIN clients c ON t.client_id = c.id
         WHERE t.status = 'completed' AND t.created_at BETWEEN ? AND ?
         ORDER BY t.created_at DESC
@@ -80,7 +82,10 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
       double totalDep = 0, totalWit = 0, totalComm = 0;
       for (final tx in transactions) {
         final amt = (tx['amount'] as num).toDouble();
-        if (tx['transaction_type'] == 'deposit') {
+        final isEntrant = tx['direction'] != null
+            ? tx['direction'] == 'in'
+            : tx['transaction_type'] == 'deposit';
+        if (isEntrant) {
           totalDep += amt;
         } else {
           totalWit += amt;
@@ -98,12 +103,12 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
           header: (ctx) => pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Text('MoneyTracking — Rapport de transactions',
+              pw.Text('MoneyTracking - Rapport de transactions',
                   style: pw.TextStyle(
                       fontSize: 16, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 4),
               pw.Text(
-                'Période: ${DateFormat('dd/MM/yyyy').format(_startDate)} — ${DateFormat('dd/MM/yyyy').format(_endDate)}  |  '
+                'Période: ${DateFormat('dd/MM/yyyy').format(_startDate)} - ${DateFormat('dd/MM/yyyy').format(_endDate)}  |  '
                 '${transactions.length} transactions  |  '
                 'Dépôts: ${currFmt.format(totalDep)} FCFA  |  '
                 'Retraits: ${currFmt.format(totalWit)} FCFA  |  '
@@ -116,7 +121,7 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
           footer: (ctx) => pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text('MoneyTracking — FEUBLE-TechBuilder',
+              pw.Text('MoneyTracking - FEUBLE-TechBuilder',
                   style: const pw.TextStyle(fontSize: 7)),
               pw.Text('Page ${ctx.pageNumber}/${ctx.pagesCount}',
                   style: const pw.TextStyle(fontSize: 7)),
@@ -136,7 +141,8 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
                     : (tx['client_name'] as String?) ?? '';
                 return [
                   dateFormat.format(date),
-                  tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait',
+                  (tx['type_label'] as String?) ??
+                      (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait'),
                   '${currFmt.format((tx['amount'] as num).toDouble())} F',
                   '${currFmt.format((tx['commission'] as num?)?.toDouble() ?? 0)} F',
                   clientName,
@@ -198,7 +204,7 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
             child: ListTile(
               leading: const Icon(Icons.date_range),
               title: Text(
-                '${DateFormat('dd/MM/yyyy').format(_startDate)} — ${DateFormat('dd/MM/yyyy').format(_endDate)}',
+                '${DateFormat('dd/MM/yyyy').format(_startDate)} - ${DateFormat('dd/MM/yyyy').format(_endDate)}',
               ),
               subtitle: const Text('Période du rapport'),
               trailing: const Icon(Icons.edit),

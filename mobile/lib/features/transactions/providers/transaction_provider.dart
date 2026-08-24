@@ -43,9 +43,10 @@ final todayTransactionsProvider =
       .toIso8601String();
 
   final results = await db.rawQuery('''
-    SELECT t.*, o.name as operator_name
+    SELECT t.*, o.name as operator_name, tt.label as type_label
     FROM transactions t
     LEFT JOIN operators o ON t.operator_id = o.id
+    LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
     WHERE t.created_at BETWEEN ? AND ? AND t.status = 'completed'
     ORDER BY t.created_at DESC
   ''', [start, end]);
@@ -83,6 +84,10 @@ class TransactionsNotifier
         where.write(' AND t.transaction_type = ?');
         whereArgs.add(filter.transactionType);
       }
+      if (filter.direction != null) {
+        where.write(' AND t.direction = ?');
+        whereArgs.add(filter.direction);
+      }
       if (filter.dateFrom != null) {
         where.write(' AND t.created_at >= ?');
         whereArgs.add(filter.dateFrom!.toIso8601String());
@@ -98,9 +103,10 @@ class TransactionsNotifier
       }
 
       final results = await db.rawQuery('''
-        SELECT t.*, o.name as operator_name
+        SELECT t.*, o.name as operator_name, tt.label as type_label
         FROM transactions t
         LEFT JOIN operators o ON t.operator_id = o.id
+        LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
         WHERE $where
         ORDER BY t.created_at DESC
         LIMIT 500
@@ -132,9 +138,10 @@ class PendingTransactionsNotifier
     try {
       final db = await DatabaseHelper.instance.database;
       final results = await db.rawQuery('''
-        SELECT t.*, o.name as operator_name
+        SELECT t.*, o.name as operator_name, tt.label as type_label
         FROM transactions t
         LEFT JOIN operators o ON t.operator_id = o.id
+        LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
         WHERE t.status = 'pending'
         ORDER BY t.created_at DESC
       ''');
@@ -162,9 +169,10 @@ class PendingTransactionsNotifier
   Future<TransactionModel?> getById(String id) async {
     final db = await DatabaseHelper.instance.database;
     final results = await db.rawQuery('''
-      SELECT t.*, o.name as operator_name
+      SELECT t.*, o.name as operator_name, tt.label as type_label
       FROM transactions t
       LEFT JOIN operators o ON t.operator_id = o.id
+      LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
       WHERE t.id = ?
     ''', [id]);
     if (results.isEmpty) return null;

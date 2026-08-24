@@ -165,7 +165,7 @@ class LicenceGuard {
         title: const Text('Import Historique SMS'),
         content: const Text(
           'Gratuit jusqu\'à 1 an en arrière. Au-delà, 200 FCFA par année '
-          'supplémentaire — le prix exact dépend de la période choisie.\n\n'
+          'supplémentaire - le prix exact dépend de la période choisie.\n\n'
           'Illimité sur cet appareil une fois activé.',
         ),
         actions: [

@@ -60,7 +60,7 @@ export default function OperatorsPage() {
       <CatalogTabs />
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-dark">Catalogue — Opérateurs</h2>
+          <h2 className="text-2xl font-bold text-dark">Catalogue - Opérateurs</h2>
           <p className="text-sm text-gray-500 mt-1">{operators.length} opérateur(s)</p>
         </div>
         <Button variant="primary" onClick={() => setModalOpen(true)}>
@@ -122,7 +122,7 @@ export default function OperatorsPage() {
                         {op.name}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600">{op.country_name}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600 font-mono">{op.sms_sender || '—'}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600 font-mono">{op.sms_sender || '-'}</td>
                       <td className="px-6 py-4">
                         <Badge variant={op.is_active ? 'success' : 'neutral'}>
                           {op.is_active ? 'Actif' : 'Inactif'}
@@ -172,7 +172,7 @@ export default function OperatorsPage() {
           onClose={() => setDeleteTarget(null)}
           onConfirm={async () => { await deleteOperator(deleteTarget.id); await loadOperators(); }}
           title={`Supprimer ${deleteTarget.name} ?`}
-          message="Impossible si des types de transaction ou patterns SMS sont encore rattachés à cet opérateur — supprimez-les d'abord."
+          message="Impossible si des types de transaction ou patterns SMS sont encore rattachés à cet opérateur - supprimez-les d'abord."
         />
       )}
     </div>

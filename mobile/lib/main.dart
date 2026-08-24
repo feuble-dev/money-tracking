@@ -14,6 +14,7 @@ import 'core/sms/sms_listener.dart';
 import 'core/sync/sync_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_notifier.dart';
+import 'features/caisse/providers/caisse_provider.dart';
 import 'features/commissions/screens/commissions_screen.dart';
 import 'features/notifications/screens/notifications_screen.dart';
 import 'features/transactions/providers/transaction_provider.dart';
@@ -147,6 +148,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
           ref.invalidate(dashboardStatsProvider(null));
           ref.invalidate(recentActivityProvider);
           ref.invalidate(commissionsStatsProvider);
+          ref.read(caissesProvider.notifier).load();
         };
         await smsService.startListening();
         ref.read(smsServiceActiveProvider.notifier).state = true;

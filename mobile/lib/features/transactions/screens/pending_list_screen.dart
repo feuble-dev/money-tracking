@@ -54,7 +54,7 @@ class PendingListScreen extends ConsumerWidget {
             itemCount: transactions.length,
             itemBuilder: (context, index) {
               final tx = transactions[index];
-              final isDeposit = tx.isDeposit;
+              final isDeposit = tx.isEntrant;
               final color = isDeposit
                   ? AppColors.depositColor
                   : AppColors.withdrawColor;
@@ -107,7 +107,7 @@ class PendingListScreen extends ConsumerWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${isDeposit ? "Dépôt" : "Retrait"} — En attente',
+                                '${tx.displayLabel} - En attente',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.accentColor,
@@ -117,7 +117,7 @@ class PendingListScreen extends ConsumerWidget {
                               Text(tx.clientPhone,
                                   style: const TextStyle(fontSize: 13)),
                               Text(
-                                '${tx.operatorName ?? ""} — ${dateFormat.format(tx.createdAt)}',
+                                '${tx.operatorName ?? ""} - ${dateFormat.format(tx.createdAt)}',
                                 style: TextStyle(
                                     fontSize: 11, color: Colors.grey[600]),
                               ),

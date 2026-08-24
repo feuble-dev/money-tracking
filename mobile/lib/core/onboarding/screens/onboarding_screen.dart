@@ -97,6 +97,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       isDefault: true,
     );
     await ref.read(onboardingStatusServiceProvider).saveAccountType(_accountType);
+    ref.invalidate(accountTypeProvider);
     if (_countryCode != null) {
       await ref.read(onboardingStatusServiceProvider).saveCountryCode(_countryCode!);
     }
@@ -157,6 +158,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     }
 
     await ref.read(onboardingStatusServiceProvider).saveAccountType(_accountType);
+    ref.invalidate(accountTypeProvider);
     if (_countryCode != null) {
       await ref.read(onboardingStatusServiceProvider).saveCountryCode(_countryCode!);
     }
@@ -178,7 +180,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         );
         if (!mounted) return;
         if (!ok) {
-          setState(() => _error = 'Licence introuvable pour cette agence — réessayez.');
+          setState(() => _error = 'Licence introuvable pour cette agence - réessayez.');
           return;
         }
         final localAgenceId = await _catalogService.createLocalAgence(
@@ -209,7 +211,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         });
       } else if (poll.statut == 'timeout') {
         setState(() {
-          _error = 'Délai d\'attente dépassé — réessayez.';
+          _error = 'Délai d\'attente dépassé - réessayez.';
           _step = 2;
         });
       }
@@ -402,7 +404,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     return _StepScaffold(
       title: rejoindre ? 'Rejoindre une agence existante' : 'Nommez votre agence',
       subtitle: rejoindre
-          ? 'Entrez le numéro de votre patron — il devra approuver votre demande et vous assigner une agence.'
+          ? 'Entrez le numéro de votre patron - il devra approuver votre demande et vous assigner une agence.'
           : 'Vous pourrez en ajouter d\'autres plus tard. Chaque agence démarre avec un essai gratuit.',
       onBack: () => setState(() => _step = 1),
       onNext: _loading ? null : (rejoindre ? _rejoindreCompte : _createAgenceAndTrial),
@@ -453,7 +455,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     return _StepScaffold(
       title: relier ? 'Relier à votre compte existant' : 'Configuration de votre suivi',
       subtitle: relier
-          ? 'Entrez le numéro de votre autre téléphone MoneyTracking — vous devrez approuver la demande depuis cet appareil.'
+          ? 'Entrez le numéro de votre autre téléphone MoneyTracking - vous devrez approuver la demande depuis cet appareil.'
           : 'Si vous utilisez déjà MoneyTracking sur un autre téléphone, vous pouvez relier celui-ci au lieu d\'en repartir de zéro.',
       onBack: () => setState(() => _step = 1),
       onNext: _loading
@@ -512,7 +514,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Widget _buildOperatorsStep() {
     return _StepScaffold(
       title: 'Choisissez vos opérateurs',
-      subtitle: 'Sélectionnez ceux que vous utilisez — modifiable plus tard.',
+      subtitle: 'Sélectionnez ceux que vous utilisez - modifiable plus tard.',
       onNext: _loading ? null : _finishImport,
       nextLabel: _loading ? 'Import...' : 'Terminer',
       child: _operators.isEmpty

@@ -239,12 +239,12 @@ export default function LicencesPage() {
                       <td className="px-6 py-4 text-sm font-mono font-medium text-primary">
                         {licence.code}
                       </td>
-                      <td className="px-6 py-4 text-sm text-dark font-medium">{licence.telephone_client ?? licence.telephone ?? '—'}</td>
+                      <td className="px-6 py-4 text-sm text-dark font-medium">{licence.telephone_client ?? licence.telephone ?? '-'}</td>
                       <td className="px-6 py-4">{getDureeBadge(licence.duree_mois ? String(licence.duree_mois) : licence.duree)}</td>
                       <td className="px-6 py-4 text-sm text-gray-600">
                         {(licence.montant_paye ?? licence.montant ?? 0).toLocaleString('fr-FR')} FCFA
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{licence.date_fin ?? licence.date_expiration ?? '—'}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{licence.date_fin ?? licence.date_expiration ?? '-'}</td>
                       <td className="px-6 py-4">{getStatutBadge(licence.statut)}</td>
                     </tr>
                   ))

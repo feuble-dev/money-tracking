@@ -1,9 +1,18 @@
-/// Modèle représentant une transaction
+/// Modèle représentant une transaction.
+///
+/// `transactionType` reste un code brut ('deposit', 'withdrawal', mais
+/// aussi 'transfert', 'paiement_marchand', 'achat_credit'... depuis le
+/// catalogue, D3) — ce n'est plus un binaire dépôt/retrait. `typeLabel`
+/// (joint depuis `transaction_types.label`, jamais stocké sur la ligne)
+/// porte le libellé réel à afficher, et `direction` ('in'|'out', D1)
+/// remplace `isDeposit` pour toute logique de sens/couleur/icône.
 class TransactionModel {
   final String id;
   final String operatorId;
   final String? clientId;
-  final String transactionType; // 'deposit' | 'withdrawal'
+  final String transactionType;
+  final String? transactionTypeId;
+  final String? direction; // 'in' | 'out'
   final double amount;
   final double commission;
   final String clientPhone;
@@ -12,19 +21,22 @@ class TransactionModel {
   final String? clientBirthDate;
   final String? operatorTransactionId;
   final String? operatorReference;
-  final String status; // 'pending' | 'completed' | 'rejected'
-  final String source; // 'manual' | 'sms_auto'
+  final String status; // 'pending' | 'completed' | 'rejected' | 'cancelled'
+  final String source; // 'manual' | 'sms_auto' | 'sms_import'
   final String? smsRaw;
   final DateTime createdAt;
 
   // Champs joints (non stockés en base)
   final String? operatorName;
+  final String? typeLabel;
 
   TransactionModel({
     required this.id,
     required this.operatorId,
     this.clientId,
     required this.transactionType,
+    this.transactionTypeId,
+    this.direction,
     required this.amount,
     this.commission = 0,
     required this.clientPhone,
@@ -38,16 +50,32 @@ class TransactionModel {
     this.smsRaw,
     DateTime? createdAt,
     this.operatorName,
+    this.typeLabel,
   }) : createdAt = createdAt ?? DateTime.now();
 
+  /// Repli legacy uniquement : `code == 'deposit'`. Ne plus utiliser pour
+  /// l'affichage (voir [displayLabel]/[isEntrant]) — reste utile pour les
+  /// tout premiers types seedés (deposit/withdrawal) et le code déjà
+  /// dépendant de ce booléen (filtres historiques, exports).
   bool get isDeposit => transactionType == 'deposit';
   bool get isPending => status == 'pending';
+
+  /// Sens réel (D1) — `direction` fait foi ; repli sur l'ancien binaire
+  /// seulement pour d'éventuelles lignes très anciennes où la colonne
+  /// serait restée nulle (ne devrait plus arriver depuis le backfill v9).
+  bool get isEntrant => direction != null ? direction == 'in' : isDeposit;
+
+  /// Libellé à afficher — le vrai nom du type catalogue (ex: "Transfert",
+  /// "Paiement marchand") s'il a pu être joint, sinon repli binaire.
+  String get displayLabel => typeLabel ?? (isDeposit ? 'Dépôt' : 'Retrait');
 
   Map<String, dynamic> toMap() => {
         'id': id,
         'operator_id': operatorId,
         'client_id': clientId,
         'transaction_type': transactionType,
+        'transaction_type_id': transactionTypeId,
+        'direction': direction,
         'amount': amount,
         'commission': commission,
         'client_phone': clientPhone,
@@ -68,6 +96,8 @@ class TransactionModel {
         operatorId: map['operator_id'] as String,
         clientId: map['client_id'] as String?,
         transactionType: map['transaction_type'] as String,
+        transactionTypeId: map['transaction_type_id'] as String?,
+        direction: map['direction'] as String?,
         amount: (map['amount'] as num).toDouble(),
         commission: (map['commission'] as num?)?.toDouble() ?? 0,
         clientPhone: map['client_phone'] as String,
@@ -81,6 +111,7 @@ class TransactionModel {
         smsRaw: map['sms_raw'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
         operatorName: map['operator_name'] as String?,
+        typeLabel: map['type_label'] as String?,
       );
 
   TransactionModel copyWith({
@@ -97,6 +128,8 @@ class TransactionModel {
         operatorId: operatorId,
         clientId: clientId ?? this.clientId,
         transactionType: transactionType,
+        transactionTypeId: transactionTypeId,
+        direction: direction,
         amount: amount,
         commission: commission ?? this.commission,
         clientPhone: clientPhone ?? this.clientPhone,
@@ -110,5 +143,6 @@ class TransactionModel {
         smsRaw: smsRaw,
         createdAt: createdAt,
         operatorName: operatorName,
+        typeLabel: typeLabel,
       );
 }

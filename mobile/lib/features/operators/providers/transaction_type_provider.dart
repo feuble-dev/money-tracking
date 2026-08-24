@@ -14,6 +14,8 @@ class OperatorTransactionTypeOption {
   final String label;
   final String defaultDirection; // 'in' | 'out'
   final bool isCustom;
+  final String? ussdCode;
+  final double commissionTaux;
 
   OperatorTransactionTypeOption({
     required this.linkId,
@@ -22,6 +24,8 @@ class OperatorTransactionTypeOption {
     required this.label,
     required this.defaultDirection,
     required this.isCustom,
+    this.ussdCode,
+    this.commissionTaux = 0,
   });
 }
 
@@ -32,7 +36,7 @@ final operatorTransactionTypesProvider = FutureProvider.family<
   final db = await DatabaseHelper.instance.database;
   final rows = await db.rawQuery('''
     SELECT ott.id as link_id, tt.id as type_id, tt.code, tt.label,
-           tt.default_direction, tt.is_custom
+           tt.default_direction, tt.is_custom, ott.ussd_code, ott.commission_taux
     FROM operator_transaction_types ott
     JOIN transaction_types tt ON tt.id = ott.transaction_type_id
     WHERE ott.operator_id = ? AND ott.is_active = 1
@@ -46,8 +50,19 @@ final operatorTransactionTypesProvider = FutureProvider.family<
             label: r['label'] as String,
             defaultDirection: r['default_direction'] as String,
             isCustom: (r['is_custom'] as int? ?? 0) == 1,
+            ussdCode: r['ussd_code'] as String?,
+            commissionTaux: (r['commission_taux'] as num?)?.toDouble() ?? 0,
           ))
       .toList();
+});
+
+/// Tous les types globaux existants localement (catalogue ou custom, D3) —
+/// utilisé pour proposer "attacher un type déjà connu" plutôt que d'en
+/// recréer un en double avec un libellé légèrement différent.
+final allTransactionTypesProvider =
+    FutureProvider<List<Map<String, Object?>>>((ref) async {
+  final db = await DatabaseHelper.instance.database;
+  return db.query('transaction_types', orderBy: 'label ASC');
 });
 
 /// Crée un type de transaction custom (hors catalogue admin) et l'attache
@@ -96,6 +111,36 @@ class TransactionTypeRepository {
       'created_at': DateTime.now().toIso8601String(),
     });
     return linkId;
+  }
+
+  /// Modifie l'USSD/commission d'une liaison operator_transaction_types
+  /// existante — utilisé par l'écran d'édition d'opérateur, où chaque type
+  /// attaché a désormais son propre USSD/commission (D3), plus de champ
+  /// unique "USSD Dépôt"/"USSD Retrait" au niveau de l'opérateur.
+  static Future<void> updateLink({
+    required String linkId,
+    String? ussdCode,
+    required double commissionTaux,
+  }) async {
+    final db = await DatabaseHelper.instance.database;
+    await db.update(
+      'operator_transaction_types',
+      {'ussd_code': ussdCode, 'commission_taux': commissionTaux},
+      where: 'id = ?',
+      whereArgs: [linkId],
+    );
+  }
+
+  /// Détache un type de l'opérateur (désactive plutôt que supprime — un
+  /// pattern SMS existant peut encore y faire référence).
+  static Future<void> detachFromOperator(String linkId) async {
+    final db = await DatabaseHelper.instance.database;
+    await db.update(
+      'operator_transaction_types',
+      {'is_active': 0},
+      where: 'id = ?',
+      whereArgs: [linkId],
+    );
   }
 
   static Future<OperatorTransactionTypeOption> createCustomTypeForOperator({

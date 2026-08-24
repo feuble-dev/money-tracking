@@ -177,7 +177,7 @@ class _ClientsListScreenState extends ConsumerState<ClientsListScreen> {
                           title: Text(client.fullName,
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text(
-                            '${client.phoneNumber}${client.operatorName != null ? ' — ${client.operatorName}' : ''}',
+                            '${client.phoneNumber}${client.operatorName != null ? ' - ${client.operatorName}' : ''}',
                           ),
                           trailing: const Icon(Icons.chevron_right),
                           onTap: () => context.push('/clients/${client.id}'),
