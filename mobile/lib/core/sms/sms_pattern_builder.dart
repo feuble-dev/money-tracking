@@ -125,7 +125,12 @@ class SmsPatternBuilder {
         // Nom: lettres, espaces, accents, apostrophes, tirets
         return r"(?<nom_client>[A-Za-zÀ-ÿ][\w\sÀ-ÿ'\-]*)";
       default:
-        return '(.+?)';
+        // Non-greedy, ZERO ou plus caractères — certains champs génériques
+        // (frais, taxe...) sont parfois légitimement vides selon
+        // l'opérateur/le type de transaction (ex: "Taxe:  FCFA"). Un `+`
+        // (1 ou plus) rendait le pattern entier impossible à matcher dès
+        // qu'un SMS réel avait ce champ vide.
+        return '(.*?)';
     }
   }
 

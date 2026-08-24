@@ -6,6 +6,7 @@ import '../../../core/sms/sms_listener.dart';
 import '../../notifications/screens/notifications_screen.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets/main_shell.dart';
+import '../../caisse/providers/caisse_provider.dart';
 import '../../operators/providers/operator_provider.dart';
 import '../models/dashboard_filter.dart';
 import '../providers/dashboard_provider.dart';
@@ -15,6 +16,11 @@ import '../widgets/line_chart_widget.dart';
 import '../widgets/pie_chart_widget.dart';
 import '../widgets/ratio_chart_widget.dart';
 import '../widgets/trend_indicator.dart';
+
+/// Visibilité du solde sur la carte du dashboard (masquer/démasquer) —
+/// une seule préférence partagée par tous les onglets (Global + par
+/// opérateur), pas un état par onglet.
+final balanceVisibleProvider = StateProvider<bool>((ref) => true);
 
 /// Écran principal du Dashboard — onglets Global + par opérateur
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -220,13 +226,15 @@ class _DashboardTab extends ConsumerWidget {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _buildBalanceCard(context, ref, stats),
+              const SizedBox(height: 20),
               _buildTodaySection(context, stats),
               const SizedBox(height: 20),
               _buildPeriodSummary(context, stats),
               const SizedBox(height: 20),
               _chartCard(
                 context,
-                'Ratio dépôts / retraits',
+                'Ratio entrées / sorties',
                 SizedBox(
                   height: 180,
                   child: RatioChartWidget(
@@ -238,7 +246,7 @@ class _DashboardTab extends ConsumerWidget {
               const SizedBox(height: 16),
               _chartCard(
                 context,
-                'Évolution dépôts vs retraits',
+                'Évolution entrées vs sorties',
                 SizedBox(
                   height: 220,
                   child: LineChartWidget(data: stats.dailyStats),
@@ -283,6 +291,99 @@ class _DashboardTab extends ConsumerWidget {
     );
   }
 
+  /// Carte solde — solde réel (dernier message opérateur, jamais une somme
+  /// de deltas, voir CaisseRepository) de la/les caisse(s) concernée(s) par
+  /// cet onglet (toutes si "Global", une seule si onglet opérateur), avec
+  /// bouton masquer/démasquer partagé entre tous les onglets.
+  Widget _buildBalanceCard(BuildContext context, WidgetRef ref, DashboardStats stats) {
+    final hidden = !ref.watch(balanceVisibleProvider);
+    final caissesAsync = ref.watch(caissesProvider);
+    final solde = caissesAsync.maybeWhen(
+      data: (caisses) {
+        final relevant = operatorId == null
+            ? caisses
+            : caisses.where((c) => c.operatorId == operatorId);
+        return relevant.fold<double>(0, (sum, c) => sum + c.soldeActuel);
+      },
+      orElse: () => 0.0,
+    );
+    String mask(String value) => hidden ? '•••••' : value;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.primaryDark,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('Solde',
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const Spacer(),
+              IconButton(
+                icon: Icon(hidden ? Icons.visibility_off : Icons.visibility,
+                    color: Colors.white70, size: 20),
+                onPressed: () => ref.read(balanceVisibleProvider.notifier).state = !ref.read(balanceVisibleProvider),
+                tooltip: hidden ? 'Afficher le solde' : 'Masquer le solde',
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          Text(
+            mask(currencyFormat.format(solde)),
+            style: const TextStyle(
+                color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _balanceMiniStat(Icons.arrow_downward, 'Entrées',
+                    mask(currencyFormat.format(stats.totalDeposits)),
+                    AppColors.depositColor),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _balanceMiniStat(Icons.arrow_upward, 'Sorties',
+                    mask(currencyFormat.format(stats.totalWithdrawals)),
+                    AppColors.withdrawColor),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _balanceMiniStat(IconData icon, String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(20),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(fontSize: 11, color: color)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTodaySection(BuildContext context, DashboardStats stats) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -306,12 +407,12 @@ class _DashboardTab extends ConsumerWidget {
         Row(
           children: [
             Expanded(child: _miniStat(
-                Icons.arrow_downward, 'Dépôts',
+                Icons.arrow_downward, 'Entrées',
                 currencyFormat.format(stats.todayDeposits),
                 AppColors.depositColor)),
             const SizedBox(width: 10),
             Expanded(child: _miniStat(
-                Icons.arrow_upward, 'Retraits',
+                Icons.arrow_upward, 'Sorties',
                 currencyFormat.format(stats.todayWithdrawals),
                 AppColors.withdrawColor)),
           ],
@@ -342,7 +443,7 @@ class _DashboardTab extends ConsumerWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Dépôts: ${currencyFormat.format(stats.totalDeposits)}',
+                  'Entrées: ${currencyFormat.format(stats.totalDeposits)}',
                   style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       color: AppColors.depositColor,
@@ -360,7 +461,7 @@ class _DashboardTab extends ConsumerWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Retraits: ${currencyFormat.format(stats.totalWithdrawals)}',
+                  'Sorties: ${currencyFormat.format(stats.totalWithdrawals)}',
                   style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       color: AppColors.withdrawColor,
@@ -377,9 +478,6 @@ class _DashboardTab extends ConsumerWidget {
                   '${stats.transactionCount}', 'Transactions', Icons.receipt_long)),
               Expanded(child: _kpiTile(context,
                   '${stats.uniqueClients}', 'Clients', Icons.people)),
-              Expanded(child: _kpiTile(context,
-                  currencyFormat.format(stats.netBalance),
-                  'Solde net', Icons.account_balance_wallet)),
             ],
           ),
         ],
@@ -476,11 +574,11 @@ class _DashboardTab extends ConsumerWidget {
                     fontWeight: FontWeight.w600,
                   )),
           const SizedBox(height: 12),
-          _statRow(context, 'Dépôt moyen', currencyFormat.format(stats.avgDepositAmount)),
-          _statRow(context, 'Retrait moyen', currencyFormat.format(stats.avgWithdrawalAmount)),
+          _statRow(context, 'Entrée moyenne', currencyFormat.format(stats.avgDepositAmount)),
+          _statRow(context, 'Sortie moyenne', currencyFormat.format(stats.avgWithdrawalAmount)),
           _statRow(context, 'Volume quotidien moyen', currencyFormat.format(stats.avgDailyVolume)),
-          _statRow(context, 'Plus gros dépôt', currencyFormat.format(stats.maxDeposit)),
-          _statRow(context, 'Plus gros retrait', currencyFormat.format(stats.maxWithdrawal)),
+          _statRow(context, 'Plus grosse entrée', currencyFormat.format(stats.maxDeposit)),
+          _statRow(context, 'Plus grosse sortie', currencyFormat.format(stats.maxWithdrawal)),
           if (stats.busiestHour != null)
             _statRow(context, 'Heure de pointe', '${stats.busiestHour}h00'),
           if (stats.busiestDay != null)

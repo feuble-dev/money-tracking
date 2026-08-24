@@ -101,6 +101,16 @@ class Command(BaseCommand):
             attach_logo_if_available(op, name, self.stdout)
             operator_objs[name] = op
 
+        # Nettoyage ponctuel : quand un raw_example est corrige (pas juste
+        # ses zones), l'upsert plus bas (cle = raw_example exact) ne retrouve
+        # plus l'ancienne ligne et en cree une nouvelle a cote au lieu de la
+        # remplacer. Supprime explicitement les anciens textes bugues connus
+        # pour eviter un pattern mort qui traine en base.
+        STALE_RAW_EXAMPLES = [
+            "Transfert National d'argent réussi pour KOMKIETA ARNAUD SAWADOGO\nNuméro: 22673781319\nMontant: 505,00 FCFA\nFrais: Frais:0,00 FCFA FCFA\nTotal:505,00 FCFA\nDate: 18/08/2022 18H22 \nTID: PP220818.1822.B15418 \nSolde: 572,00 FCFA",
+        ]
+        SmsPattern.objects.filter(raw_example__in=STALE_RAW_EXAMPLES).delete()
+
         def add_pattern(operator_name, type_code, raw, fields, direction_override=None):
             operator = operator_objs[operator_name]
             ttype = type_objs[type_code]
@@ -143,7 +153,10 @@ class Command(BaseCommand):
 
         add_pattern('Orange Money', 'transfert',
             "Cher client, vous avez transfere 2,525.00 FCFA, Frais: 0.0 FCFA, Taxe:  FCFA au numero 56328844,ISSOUF. Votre solde est de  12684.69 FCFA. ID Trans: PP260814.1106.97303900. Pour toute reclamation contactez par appel le 127 ou whatsapp 07000121. Orange Money BF",
-            [('montant', '2,525.00'), ('numero_client', '56328844'), ('nom_client', 'ISSOUF'),
+            # Frais tague (valeur variable selon le montant) pour ne pas la
+            # figer en texte litteral dans la regex mobile (meme bug que les
+            # dates non taguees, cf note en fin de fichier).
+            [('montant', '2,525.00'), ('frais', '0.0'), ('numero_client', '56328844'), ('nom_client', 'ISSOUF'),
              ('solde', '12684.69'), ('operator_transaction_id', 'PP260814.1106.97303900')],
             direction_override='out')
 
@@ -155,7 +168,13 @@ class Command(BaseCommand):
 
         add_pattern('Orange Money', 'paiement_marchand',
             "Votre paiement de 2,000.00 FCFA, Frais: 17.3913 FCFA, Taxe: 2.6087 FCFA a ACCEPTEUR GD ABDOUL MOUBARAK SERVICES ABDOUL MOUBARAK SERVICES a ete effectue avec succes. Votre solde est de : 43189.69 FCFA. Trans id: MP260820.2244.86724340.",
-            [('montant', '2,000.00'), ('nom_client', 'ACCEPTEUR GD ABDOUL MOUBARAK SERVICES ABDOUL MOUBARAK SERVICES'),
+            # Frais/Taxe sont un pourcentage du montant (donc jamais
+            # constants) — laisses non tagues, ils figeaient "17.3913"/
+            # "2.6087" en texte litteral, ce qui empechait tout paiement
+            # marchand d'un montant different de matcher (bug reel constate :
+            # un paiement de 750 FCFA etait ignore).
+            [('montant', '2,000.00'), ('frais', '17.3913'), ('taxe', '2.6087'),
+             ('nom_client', 'ACCEPTEUR GD ABDOUL MOUBARAK SERVICES ABDOUL MOUBARAK SERVICES'),
              ('solde', '43189.69'), ('operator_transaction_id', 'MP260820.2244.86724340')])
 
         add_pattern('Orange Money', 'paiement_marchand',
@@ -184,6 +203,7 @@ class Command(BaseCommand):
         add_pattern('Moov Money', 'retrait',
             "Retrait d’argent  réussi auprès de l’ Agent  ADAMA KONGOUINDIGA \nCode d'agent: 1030478 \nMontant: 51 000,00 FCFA, \nFrais: 510,00 FCFA  \nTotal: 51 510,00 FCFA \nDate: 08/11/2025 13H28\nTxn ID: CO251108.1328.F20530  \nSolde: 20 571,00FCFA",
             [('nom_client', 'ADAMA KONGOUINDIGA'), ('numero_client', '1030478'), ('montant', '51 000,00'),
+             ('frais', '510,00'), ('total', '51 510,00'),
              ('date', '08/11/2025 13H28'),
              ('operator_transaction_id', 'CO251108.1328.F20530'), ('solde', '20 571,00')])
 
@@ -195,21 +215,41 @@ class Command(BaseCommand):
             direction_override='in')
 
         add_pattern('Moov Money', 'transfert',
-            "Transfert National d'argent réussi pour KOMKIETA ARNAUD SAWADOGO\nNuméro: 22673781319\nMontant: 505,00 FCFA\nFrais: Frais:0,00 FCFA FCFA\nTotal:505,00 FCFA\nDate: 18/08/2022 18H22 \nTID: PP220818.1822.B15418 \nSolde: 572,00 FCFA",
+            # "Frais: Frais:0,00 FCFA FCFA" corrige (doublon litteral dans
+            # l'echantillon d'origine, jamais present dans un vrai SMS) —
+            # figeait un texte que plus aucun message reel ne pouvait matcher.
+            "Transfert National d'argent réussi pour KOMKIETA ARNAUD SAWADOGO\nNuméro: 22673781319\nMontant: 505,00 FCFA\nFrais: 0,00 FCFA\nTotal: 505,00 FCFA\nDate: 18/08/2022 18H22 \nTID: PP220818.1822.B15418 \nSolde: 572,00 FCFA",
             [('nom_client', 'KOMKIETA ARNAUD SAWADOGO'), ('numero_client', '22673781319'), ('montant', '505,00'),
+             ('frais', '0,00'), ('total', '505,00'),
              ('date', '18/08/2022 18H22'),
              ('operator_transaction_id', 'PP220818.1822.B15418'), ('solde', '572,00')],
+            direction_override='out')
+
+        # Meme type de transfert que ci-dessus mais formulation Moov plus
+        # recente ("Numéro de mobile:" au lieu de "Numéro:", pas de
+        # "d'argent" apres "National") — un vrai SMS de ce type etait ignore
+        # car le texte fixe de l'ancien pattern ne correspondait plus mot
+        # pour mot. Les deux patterns coexistent pour couvrir l'historique
+        # (anciens SMS) et les messages actuels.
+        add_pattern('Moov Money', 'transfert',
+            "Transfert National reussi pour faycal lengane.\nNuméro de mobile: 22661748597\nMontant: 100,00 FCFA \nFrais: 0,00 FCFA \nTotal: 100,00 FCFA\nDate: 24/08/2026 13:14:47\nTID: DHO0ILOGN8\nSolde: 1 521,00 FCFA\nTéléchargez l'app Moov Money : https://moov-money.bf/app",
+            [('nom_client', 'faycal lengane'), ('numero_client', '22661748597'), ('montant', '100,00'),
+             ('frais', '0,00'), ('total', '100,00'),
+             ('date', '24/08/2026 13:14:47'),
+             ('operator_transaction_id', 'DHO0ILOGN8'), ('solde', '1 521,00')],
             direction_override='out')
 
         add_pattern('Moov Money', 'paiement_marchand',
             "Paiement reussi auprès du marchand YENGA KREEZUS \nCode marchand: 63380912 \nMontant: 128,00 FCFA \nFrais: 0,00 FCFA \nTOTAL: 128,00 FCFA \nDate: 01/12/2025 19:55 \nTID: CL152ZYY05 \nSolde: 118,00 FCFA\nReference: 1110155910476",
             [('nom_client', 'YENGA KREEZUS'), ('numero_client', '63380912'), ('montant', '128,00'),
+             ('frais', '0,00'), ('total', '128,00'),
              ('date', '01/12/2025 19:55'),
              ('operator_transaction_id', 'CL152ZYY05'), ('solde', '118,00')])
 
         add_pattern('Moov Money', 'paiement_facture',
             "Paiement réussi pour la facture ONEA numero 14012565081000 \nMontant: 5 125,00 FCFA \nPénalité: 4 000,00 FCFA \nMontant total:9 125,00 FCFA\nFrais: 150,00 FCFA\nDate: 09/12/2025 18:24\nTID: CL993D1HFZ\nSolde: 843,00 FCFA\nONEA et MOOV Money vous remercient.",
             [('numero_client', '14012565081000'), ('montant', '5 125,00'),
+             ('penalite', '4 000,00'), ('montant_total', '9 125,00'), ('frais', '150,00'),
              ('date', '09/12/2025 18:24'),
              ('operator_transaction_id', 'CL993D1HFZ'), ('solde', '843,00')])
 
@@ -236,13 +276,15 @@ class Command(BaseCommand):
 
         add_pattern('Coris Money', 'retrait',
             "Vous avez effectue un retrait de 10000.0F, Frais : 100.0F, Total: 10100.0F  aupres de l'agent 3768294 0001 - SIDYANE JEAN CLEMENT (0429) le 22/12/2025 18:06:49. TID: 2025122249.MV3768294.266. Votre solde est de 314.00F",
-            [('montant', '10000.0'), ('numero_client', '3768294'), ('nom_client', 'SIDYANE JEAN CLEMENT'),
+            [('montant', '10000.0'), ('frais', '100.0'), ('total', '10100.0'),
+             ('numero_client', '3768294'), ('nom_client', 'SIDYANE JEAN CLEMENT'),
              ('date', '22/12/2025 18:06:49'),
              ('operator_transaction_id', '2025122249.MV3768294.266'), ('solde', '314.00')])
 
         add_pattern('Coris Money', 'transfert',
             "Vous avez envoye 30300.0F, Frais : 0.0F, Total: 30300F a NAKOULMA 55980548 le 26/01/2026 22:51:36. TID:  202612636.UZ0001291.287. Votre solde est de 69.00F",
-            [('montant', '30300.0'), ('nom_client', 'NAKOULMA'), ('numero_client', '55980548'),
+            [('montant', '30300.0'), ('frais', '0.0'), ('total', '30300'),
+             ('nom_client', 'NAKOULMA'), ('numero_client', '55980548'),
              ('date', '26/01/2026 22:51:36'),
              ('operator_transaction_id', '202612636.UZ0001291.287'), ('solde', '69.00')],
             direction_override='out')
@@ -256,7 +298,7 @@ class Command(BaseCommand):
 
         add_pattern('Coris Money', 'paiement_facture',
             "Paiement facture de 4833.0F, Frais: 0.0F, Total: 4833F pour le facturier 0024664 ONEA le 23/10/2024 08:46:18. TID : 2024102318.AM0001291.431. Votre solde est 67.00F",
-            [('montant', '4833.0'),
+            [('montant', '4833.0'), ('frais', '0.0'), ('total', '4833'),
              ('date', '23/10/2024 08:46:18'),
              ('operator_transaction_id', '2024102318.AM0001291.431'), ('solde', '67.00')])
 

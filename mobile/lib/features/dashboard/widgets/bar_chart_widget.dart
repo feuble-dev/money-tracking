@@ -29,7 +29,7 @@ class BarChartWidget extends StatelessWidget {
           touchTooltipData: BarTouchTooltipData(
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
               final value = rod.toY;
-              final label = rodIndex == 0 ? 'Dépôts' : 'Retraits';
+              final label = rodIndex == 0 ? 'Entrées' : 'Sorties';
               return BarTooltipItem(
                 '$label\n${NumberFormat.compact(locale: 'fr_FR').format(value)} FCFA',
                 const TextStyle(color: Colors.white, fontSize: 12),

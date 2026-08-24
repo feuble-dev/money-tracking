@@ -192,10 +192,10 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          _miniCard('Dépôts', currFmt.format(commDepot),
+                          _miniCard('Entrées', currFmt.format(commDepot),
                               AppColors.depositColor),
                           const SizedBox(width: 10),
-                          _miniCard('Retraits', currFmt.format(commRetrait),
+                          _miniCard('Sorties', currFmt.format(commRetrait),
                               AppColors.withdrawColor),
                         ],
                       ),

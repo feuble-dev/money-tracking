@@ -72,20 +72,34 @@ Future<void> processIncomingSms(
     return;
   }
 
-  final op = operators.first;
-  final operatorId = op['id'] as String;
-  final operatorName = op['name'] as String;
+  // 4. Essayer CHAQUE opérateur dont le sender correspond, pas seulement le
+  // premier — un sender ambigu (fuzzy LIKE ci-dessus) ne doit jamais faire
+  // perdre une transaction juste parce qu'un mauvais opérateur candidat a
+  // été retenu en premier et qu'aucun de ses patterns ne matche. Même
+  // logique que l'import historique (historique_service.dart), qui teste
+  // indépendamment chaque opérateur — c'est ce qui les rend maintenant
+  // vraiment équivalents, pas seulement les deux basés sur SmsMatchingEngine.
+  Map<String, Object?>? op;
+  SmsMatch? smsMatch;
+  for (final candidate in operators) {
+    final candidateId = candidate['id'] as String;
+    final patterns = await SmsMatchingEngine.loadPatternsForOperator(db, candidateId);
+    final match = SmsMatchingEngine.match(body, patterns);
+    if (match != null) {
+      op = candidate;
+      smsMatch = match;
+      break;
+    }
+  }
 
-  // 4. Vérifier si le SMS correspond à un des patterns de cet opérateur
-  // (moteur unique, partagé avec l'import historique — SmsMatchingEngine)
-  final patterns = await SmsMatchingEngine.loadPatternsForOperator(db, operatorId);
-  final smsMatch = SmsMatchingEngine.match(body, patterns);
-
-  // Si aucun pattern matché → ce n'est PAS une transaction, ignorer
-  if (smsMatch == null) {
+  // Si aucun pattern matché chez aucun opérateur candidat → ce n'est PAS
+  // une transaction, ignorer
+  if (op == null || smsMatch == null) {
     debugPrint('[SMS] Aucun pattern matché — pas une transaction, ignoré');
     return;
   }
+  final operatorId = op['id'] as String;
+  final operatorName = op['name'] as String;
   final transactionType = smsMatch.transactionTypeCode;
   final extracted = smsMatch.extractedFields;
 

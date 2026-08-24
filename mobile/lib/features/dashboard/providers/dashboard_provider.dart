@@ -9,7 +9,6 @@ class DashboardStats {
   final double totalWithdrawals;
   final int transactionCount;
   final int uniqueClients;
-  final double netBalance;
   final double avgDepositAmount;
   final double avgWithdrawalAmount;
   final double avgDailyVolume;
@@ -33,7 +32,6 @@ class DashboardStats {
     this.totalWithdrawals = 0,
     this.transactionCount = 0,
     this.uniqueClients = 0,
-    this.netBalance = 0,
     this.avgDepositAmount = 0,
     this.avgWithdrawalAmount = 0,
     this.avgDailyVolume = 0,
@@ -191,7 +189,6 @@ final dashboardStatsProvider =
     totalWithdrawals: totalWithdrawals,
     transactionCount: txCount,
     uniqueClients: uniqueClients,
-    netBalance: totalDeposits - totalWithdrawals,
     avgDepositAmount: avgDep,
     avgWithdrawalAmount: avgWit,
     avgDailyVolume: totalVolume / effectiveDays,

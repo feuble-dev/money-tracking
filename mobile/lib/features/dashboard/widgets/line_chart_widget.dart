@@ -36,7 +36,7 @@ class LineChartWidget extends StatelessWidget {
                 final index = spot.x.toInt();
                 if (index < 0 || index >= data.length) return null;
                 final date = data[index]['date'] as DateTime;
-                final label = spot.barIndex == 0 ? 'Dépôts' : 'Retraits';
+                final label = spot.barIndex == 0 ? 'Entrées' : 'Sorties';
                 final color = spot.barIndex == 0
                     ? AppColors.depositColor
                     : AppColors.withdrawColor;
