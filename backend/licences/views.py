@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from datetime import date
 from django.utils import timezone
+from django.contrib.auth.hashers import make_password, check_password
 from .models import Client, Agence, Licence, DemandeActivation, Notification, AchatHistorique
 from .services import LicenceService, HistoriqueService
 from .serializers import NotificationSerializer
@@ -11,14 +12,18 @@ from .serializers import NotificationSerializer
 class EssaiGratuitView(APIView):
     """
     POST /api/licence/essai/
-    Body: { telephone, device_id, account_type, agence_nom }
+    Body: { telephone, device_id, account_type, agence_nom, password }
     Crée le compte (si nouveau) + sa première agence + l'essai gratuit de cette agence.
+    `password` (D13) est obligatoire pour tout nouveau compte — c'est ce qui
+    permet ensuite une connexion instantanée depuis un autre appareil
+    (LoginView) sans passer par l'affiliation/approbation.
     """
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
         device_id = request.data.get('device_id', '').strip()
         account_type = request.data.get('account_type', 'agence').strip()
         agence_nom = request.data.get('agence_nom', '').strip() or 'Agence principale'
+        password = request.data.get('password', '').strip()
 
         if not telephone or not device_id:
             return Response(
@@ -29,10 +34,20 @@ class EssaiGratuitView(APIView):
         if account_type not in dict(Client.ACCOUNT_TYPE_CHOICES):
             account_type = 'agence'
 
-        client, _ = Client.objects.get_or_create(
+        client_existant = Client.objects.filter(telephone=telephone).exists()
+        if not client_existant and not password:
+            return Response(
+                {'erreur': 'password requis pour créer un compte'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        client, cree = Client.objects.get_or_create(
             telephone=telephone,
             defaults={'account_type': account_type}
         )
+        if cree and password:
+            client.password_hash = make_password(password)
+            client.save(update_fields=['password_hash'])
 
         resultat = LicenceService.creer_agence_avec_essai(client, agence_nom, device_id)
         agence = resultat['agence']
@@ -125,6 +140,83 @@ class AgencesListView(APIView):
                 'code': licence.code if licence else None,
                 'date_fin': str(licence.date_fin) if licence else None,
                 'jours_restants': (licence.date_fin - today).days if licence else 0,
+            })
+
+        return Response({
+            'account_type': client.account_type,
+            'agences': agences_data,
+        })
+
+
+class LoginView(APIView):
+    """
+    POST /api/licence/login/
+    Body: { telephone, password, device_id }
+
+    Connexion instantanée à un compte existant depuis un nouvel appareil
+    (D13) : le mot de passe prouve la propriété du compte, ce qui évite de
+    passer par l'affiliation/approbation manuelle du patron
+    (sync.AffiliationRequest — toujours valable pour un agent qui n'est PAS
+    le propriétaire du compte). Émet, pour chaque agence du client, une
+    licence dédiée à ce device_id si aucune n'existe déjà
+    (LicenceService.cloner_licence_pour_device, déjà utilisé pour
+    l'affiliation) — après ça, le flux licence normal fonctionne pour ce
+    device sans rien savoir de la façon dont il a été autorisé.
+    """
+    def post(self, request):
+        telephone = request.data.get('telephone', '').strip()
+        password = request.data.get('password', '').strip()
+        device_id = request.data.get('device_id', '').strip()
+
+        if not telephone or not password or not device_id:
+            return Response(
+                {'erreur': 'telephone, password et device_id requis'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            client = Client.objects.get(telephone=telephone)
+        except Client.DoesNotExist:
+            return Response(
+                {'erreur': 'Identifiants incorrects'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        if not client.password_hash or not check_password(password, client.password_hash):
+            return Response(
+                {'erreur': 'Identifiants incorrects'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        today = date.today()
+        agences_data = []
+        for agence in client.agences.filter(is_active=True).order_by('created_at'):
+            licence = Licence.objects.filter(
+                agence=agence, device_id=device_id
+            ).order_by('-date_fin').first()
+            if licence is None:
+                licence = LicenceService.cloner_licence_pour_device(agence, device_id)
+
+            if licence is None:
+                # Agence sans aucune licence active/essai à cloner — on la
+                # liste quand même comme expirée, cohérent avec AgencesListView.
+                agences_data.append({
+                    'id': agence.id,
+                    'nom': agence.nom,
+                    'statut': 'expiree',
+                    'code': None,
+                    'date_fin': None,
+                    'jours_restants': 0,
+                })
+                continue
+
+            agences_data.append({
+                'id': agence.id,
+                'nom': agence.nom,
+                'statut': licence.statut,
+                'code': licence.code,
+                'date_fin': str(licence.date_fin),
+                'jours_restants': (licence.date_fin - today).days,
             })
 
         return Response({

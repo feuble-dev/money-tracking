@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:another_telephony/telephony.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'core/database/database_helper.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/onboarding/catalog_sync_service.dart';
@@ -10,6 +12,7 @@ import 'core/onboarding/onboarding_state.dart';
 import 'core/permissions/permission_service.dart';
 import 'core/router.dart';
 import 'core/sms/background_sms_handler.dart';
+import 'core/sms/sms_catchup_service.dart';
 import 'core/sms/sms_listener.dart';
 import 'core/sync/sync_service.dart';
 import 'core/theme/app_theme.dart';
@@ -57,16 +60,20 @@ class MoneyTrackingApp extends ConsumerStatefulWidget {
   ConsumerState<MoneyTrackingApp> createState() => _MoneyTrackingAppState();
 }
 
-class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
+class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
+    with WidgetsBindingObserver {
   // ignore: cancel_subscriptions
   dynamic _pollSub;
   // ignore: cancel_subscriptions
   dynamic _syncSub;
+  bool _smsListenersRegistered = false;
+  bool _permanentlyDeniedDialogShown = false;
 
   @override
   void initState() {
     super.initState();
     debugPrint('[MoneyTracking] initState');
+    WidgetsBinding.instance.addObserver(this);
     _initPermissionsAndSms();
     _initNotificationHandler();
     // Polling toutes les 60s pour notifs générales
@@ -85,11 +92,65 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pollSub?.cancel();
     _syncSub?.cancel();
     SmsListenerService().stopListening();
     NotificationService().onNotificationTapped = null;
     super.dispose();
+  }
+
+  /// Re-vérifie les permissions SMS à chaque retour au premier plan — pas
+  /// seulement au premier lancement. Si l'utilisateur les a accordées entre
+  /// temps depuis les réglages système (après un refus initial), on démarre
+  /// enfin l'écoute SMS sans attendre un redémarrage complet de l'app.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _recheckSmsPermissions();
+    }
+  }
+
+  Future<void> _recheckSmsPermissions() async {
+    if (_smsListenersRegistered) return;
+    final granted = await PermissionService.hasSmsPermissions();
+    if (granted) {
+      await _startSmsListening();
+      return;
+    }
+    if (_permanentlyDeniedDialogShown) return;
+    final permanentlyDenied = await PermissionService.isSmsPermanentlyDenied();
+    if (permanentlyDenied && mounted) {
+      _permanentlyDeniedDialogShown = true;
+      final navigatorContext = ref.read(routerProvider).routerDelegate.navigatorKey.currentContext;
+      if (navigatorContext != null && navigatorContext.mounted) {
+        await showDialog<void>(
+          context: navigatorContext,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Permission SMS refusée'),
+            content: const Text(
+              'MoneyTracking a besoin de lire les SMS pour détecter vos '
+              'transactions automatiquement. Cette permission a été refusée '
+              'définitivement — vous pouvez l\'accorder depuis les réglages '
+              'de l\'application.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Plus tard'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  openAppSettings();
+                },
+                child: const Text('Ouvrir les réglages'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
   }
 
   /// Gère le tap sur une notification
@@ -100,7 +161,11 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
     notifService.onNotificationTapped = (payload) {
       if (payload == null) return;
       final router = ref.read(routerProvider);
-      router.push('/notifications');
+      if (payload.startsWith('tx:')) {
+        router.push('/transactions/pending/${payload.substring(3)}');
+      } else {
+        router.push('/notifications');
+      }
     };
     // Quand une action est effectuée depuis la notif (confirmer/rejeter)
     notifService.onActionPerformed = () {
@@ -138,36 +203,52 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp> {
       final granted = await PermissionService.requestSmsPermissions();
       debugPrint('[MoneyTracking] Permissions SMS: $granted');
       if (granted) {
-        final smsService = SmsListenerService();
-        smsService.onTransactionDetected = (_) {
-          // Rafraîchir TOUT après détection SMS — le push sync est déjà
-          // déclenché par le pipeline lui-même (sms_processing_pipeline.dart),
-          // partagé avec le chemin headless (app fermée).
-          ref.read(transactionsProvider.notifier).loadTransactions();
-          ref.read(pendingTransactionsProvider.notifier).loadPending();
-          ref.invalidate(dashboardStatsProvider(null));
-          ref.invalidate(recentActivityProvider);
-          ref.invalidate(commissionsStatsProvider);
-          ref.read(caissesProvider.notifier).load();
-        };
-        await smsService.startListening();
-        ref.read(smsServiceActiveProvider.notifier).state = true;
-        debugPrint('[MoneyTracking] SMS listener démarré');
-
-        // Détection en arrière-plan (app fermée) via l'isolate headless
-        // `another_telephony` — onNewMessage reste un no-op : le temps réel
-        // premier plan est déjà couvert par SmsListenerService ci-dessus,
-        // pas besoin de traiter deux fois le même SMS.
-        Telephony.instance.listenIncomingSms(
-          onNewMessage: (_) {},
-          onBackgroundMessage: backgroundSmsHandler,
-          listenInBackground: true,
-        );
-        debugPrint('[MoneyTracking] SMS background handler enregistré');
+        await _startSmsListening();
       }
     } catch (e) {
       debugPrint('[MoneyTracking] Permissions ERROR: $e');
     }
+  }
+
+  /// Démarre l'écoute SMS temps réel + le handler arrière-plan. Idempotent
+  /// (`_smsListenersRegistered`) car appelé à la fois au premier lancement
+  /// et, si les permissions n'étaient pas encore accordées à ce moment-là,
+  /// à chaque retour au premier plan (`didChangeAppLifecycleState`) tant
+  /// qu'elles ne l'ont pas été.
+  Future<void> _startSmsListening() async {
+    if (_smsListenersRegistered) return;
+    _smsListenersRegistered = true;
+
+    final smsService = SmsListenerService();
+    smsService.onTransactionDetected = (_) {
+      // Rafraîchir TOUT après détection SMS — le push sync est déjà
+      // déclenché par le pipeline lui-même (sms_processing_pipeline.dart),
+      // partagé avec le chemin headless (app fermée).
+      ref.read(transactionsProvider.notifier).loadTransactions();
+      ref.read(pendingTransactionsProvider.notifier).loadPending();
+      ref.invalidate(dashboardStatsProvider(null));
+      ref.invalidate(recentActivityProvider);
+      ref.invalidate(commissionsStatsProvider);
+      ref.read(caissesProvider.notifier).load();
+    };
+    await smsService.startListening();
+    ref.read(smsServiceActiveProvider.notifier).state = true;
+    debugPrint('[MoneyTracking] SMS listener démarré');
+
+    // Détection en arrière-plan (app fermée) via l'isolate headless
+    // `another_telephony` — onNewMessage reste un no-op : le temps réel
+    // premier plan est déjà couvert par SmsListenerService ci-dessus,
+    // pas besoin de traiter deux fois le même SMS.
+    Telephony.instance.listenIncomingSms(
+      onNewMessage: (_) {},
+      onBackgroundMessage: backgroundSmsHandler,
+      listenInBackground: true,
+    );
+    debugPrint('[MoneyTracking] SMS background handler enregistré');
+
+    // Rattrapage silencieux des SMS reçus pendant que l'app était fermée
+    // (D15) — non-bloquant, aucune UI d'attente.
+    unawaited(SmsCatchupService().run());
   }
 
   @override

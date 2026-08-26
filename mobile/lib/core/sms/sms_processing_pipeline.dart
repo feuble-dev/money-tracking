@@ -26,9 +26,15 @@ Future<void> processIncomingSms(
   String sender,
   String body, {
   ValueChanged<Map<String, dynamic>>? onTransactionDetected,
+  // Date réelle de réception du SMS — passée explicitement par le
+  // rattrapage au démarrage (sms_catchup_service.dart) pour un SMS lu
+  // depuis la boîte de réception plutôt que reçu à l'instant. Par défaut
+  // "maintenant", pour les deux chemins temps réel (EventChannel + isolate
+  // headless) qui traitent bien un SMS qui vient d'arriver.
+  DateTime? receivedAt,
 }) async {
   final db = await DatabaseHelper.instance.database;
-  final now = DateTime.now();
+  final now = receivedAt ?? DateTime.now();
 
   // 1. Vérifier si ce SMS est déjà en base (déduplication — un même SMS
   // peut être livré par plusieurs BroadcastReceivers en parallèle).

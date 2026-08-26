@@ -29,9 +29,9 @@ class _LockScreenState extends ConsumerState<LockScreen> {
     if (!mounted) return;
     try {
       final bioService = ref.read(biometricServiceProvider);
-      final isAvailable = await bioService.isAvailable();
-      debugPrint('[BIO] isAvailable=$isAvailable');
-      if (isAvailable && mounted) {
+      final shouldOffer = await ref.read(shouldOfferBiometricProvider.future);
+      debugPrint('[BIO] shouldOffer=$shouldOffer');
+      if (shouldOffer && mounted) {
         final success = await bioService.authenticate();
         debugPrint('[BIO] authenticate=$success');
         if (success && mounted) {
@@ -79,7 +79,7 @@ class _LockScreenState extends ConsumerState<LockScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final biometricAvailable = ref.watch(isBiometricAvailableProvider);
+    final biometricAvailable = ref.watch(shouldOfferBiometricProvider);
 
     return Scaffold(
       body: SafeArea(

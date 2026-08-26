@@ -11,6 +11,9 @@
          continuer même app fermée (demandée explicitement à l'utilisateur
          depuis les paramètres, jamais silencieusement) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- Notifications (Android 13+ / API 33 exige cette permission
+         d'exécution en plus de la déclaration manifeste) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="MoneyTracking"

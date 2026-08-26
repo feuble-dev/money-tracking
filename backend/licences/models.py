@@ -19,6 +19,16 @@ class Client(models.Model):
         default='agence',
         help_text="Particulier: suivi personnel multi-opérateur. Agence: usage professionnel avec commissions."
     )
+    password_hash = models.CharField(
+        max_length=128, blank=True, null=True,
+        help_text=(
+            "Hash (django.contrib.auth.hashers) du mot de passe compte — "
+            "D13, permet une connexion instantanée depuis un nouvel appareil "
+            "sans passer par l'affiliation/approbation (sync.AffiliationRequest). "
+            "Nullable pour les comptes créés avant l'introduction du mot de "
+            "passe ; obligatoire pour tout nouveau compte (imposé côté mobile)."
+        )
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

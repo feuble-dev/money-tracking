@@ -170,6 +170,10 @@ class LicenceService {
     required String telephone,
     required String accountType,
     required String agenceNom,
+    // Mot de passe compte (D13) — obligatoire à la création, permet
+    // ensuite une connexion instantanée depuis un autre appareil (login()
+    // ci-dessous) sans passer par l'affiliation/approbation.
+    required String password,
   }) async {
     final deviceId = await getDeviceId();
     try {
@@ -182,6 +186,7 @@ class LicenceService {
               'device_id': deviceId,
               'account_type': accountType,
               'agence_nom': agenceNom,
+              'password': password,
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -236,6 +241,44 @@ class LicenceService {
     }
   }
 
+  // ── Connexion à un compte existant depuis un nouvel appareil (D13) ──
+  // Le mot de passe prouve la propriété du compte : aucune approbation
+  // manuelle nécessaire (contrairement à AffiliationService.demander), à
+  // la différence d'un agent qui rejoint l'agence de quelqu'un d'autre.
+  static Future<ResultatLogin> login({
+    required String telephone,
+    required String password,
+  }) async {
+    final deviceId = await getDeviceId();
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/login/'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'telephone': telephone,
+              'password': password,
+              'device_id': deviceId,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        final agences = ((data['agences'] as List?) ?? [])
+            .map((a) => AgenceLogin.fromJson(a as Map<String, dynamic>))
+            .toList();
+        return ResultatLogin.succes(
+          accountType: data['account_type'] as String? ?? 'agence',
+          agences: agences,
+        );
+      }
+      return ResultatLogin.erreur(data['erreur'] ?? 'Identifiants incorrects');
+    } catch (e) {
+      return ResultatLogin.erreur('Impossible de se connecter au serveur');
+    }
+  }
+
   static Future<bool> _estConnecte() async {
     final results = await Connectivity().checkConnectivity();
     if (results is List) {
@@ -264,4 +307,32 @@ class ResultatEssaiAgence {
   ResultatEssaiAgence.erreur(this.message)
       : reussi = false,
         agenceBackendId = null;
+}
+
+/// Agence retournée par LoginView — uniquement celles réellement utilisables
+/// (statut 'active'/'essai') doivent être proposées au choix de l'utilisateur.
+class AgenceLogin {
+  final int id;
+  final String nom;
+  final String statut;
+  AgenceLogin({required this.id, required this.nom, required this.statut});
+  factory AgenceLogin.fromJson(Map<String, dynamic> json) => AgenceLogin(
+        id: json['id'] as int,
+        nom: json['nom'] as String,
+        statut: json['statut'] as String? ?? 'expiree',
+      );
+}
+
+class ResultatLogin {
+  final bool reussi;
+  final String message;
+  final String? accountType;
+  final List<AgenceLogin> agences;
+  ResultatLogin.succes({required this.accountType, required this.agences})
+      : reussi = true,
+        message = '';
+  ResultatLogin.erreur(this.message)
+      : reussi = false,
+        accountType = null,
+        agences = const [];
 }

@@ -4,6 +4,7 @@ import '../providers/auth_provider.dart';
 import '../../../shared/widgets/pin_dots.dart';
 import '../../../shared/widgets/numpad_widget.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/security/biometric_service.dart';
 
 /// Écran de création du PIN initial
 class SetupPinScreen extends ConsumerStatefulWidget {
@@ -67,6 +68,12 @@ class _SetupPinScreenState extends ConsumerState<SetupPinScreen> {
     if (_pin == _confirmPin) {
       final pinService = ref.read(pinServiceProvider);
       await pinService.setPin(_pin);
+
+      final bioService = ref.read(biometricServiceProvider);
+      if (await bioService.isAvailable() && mounted) {
+        await _askEnableBiometric(bioService);
+      }
+
       // Rafraîchir isPinSet pour que le router redirige vers le dashboard
       ref.invalidate(isPinSetProvider);
       ref.read(isAuthenticatedProvider.notifier).state = true;
@@ -86,6 +93,31 @@ class _SetupPinScreenState extends ConsumerState<SetupPinScreen> {
         }
       });
     }
+  }
+
+  Future<void> _askEnableBiometric(BiometricService bioService) async {
+    final activer = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Déverrouillage par empreinte ?'),
+        content: const Text(
+          'Une empreinte digitale est configurée sur cet appareil. '
+          'Voulez-vous l\'utiliser pour déverrouiller MoneyTracking ?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Non'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Oui'),
+          ),
+        ],
+      ),
+    );
+    await bioService.setEnabled(activer ?? false);
   }
 
   @override

@@ -8,6 +8,7 @@ import '../../../core/onboarding/catalog_sync_service.dart';
 import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_notifier.dart';
+import '../../auth/providers/auth_provider.dart';
 
 /// Provider pour le device ID
 final deviceIdProvider = FutureProvider<String>((ref) async {
@@ -66,6 +67,46 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 24),
+
+          // === Sécurité (biométrie) ===
+          ref.watch(isBiometricAvailableProvider).when(
+                data: (available) => available
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _sectionTitle(context, 'Sécurité'),
+                          Card(
+                            child: Consumer(builder: (context, ref, _) {
+                              final enabled =
+                                  ref.watch(isBiometricEnabledProvider);
+                              return SwitchListTile(
+                                title: const Text('Déverrouillage biométrique'),
+                                subtitle: Text(
+                                  enabled.asData?.value == true
+                                      ? 'Activé - votre empreinte déverrouille l\'app'
+                                      : 'Désactivé - seul le code PIN est demandé',
+                                ),
+                                value: enabled.asData?.value ?? false,
+                                onChanged: (value) async {
+                                  final bioService =
+                                      ref.read(biometricServiceProvider);
+                                  await bioService.setEnabled(value);
+                                  ref.invalidate(isBiometricEnabledProvider);
+                                },
+                                secondary: const Icon(
+                                  Icons.fingerprint,
+                                  color: AppColors.primaryColor,
+                                ),
+                              );
+                            }),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                      )
+                    : const SizedBox.shrink(),
+                loading: () => const SizedBox.shrink(),
+                error: (_, _) => const SizedBox.shrink(),
+              ),
 
           // === Diagnostic ===
           _sectionTitle(context, 'Diagnostic'),

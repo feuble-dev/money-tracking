@@ -1,13 +1,28 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Service d'authentification biométrique
 class BiometricService {
+  static const _enabledKey = 'moneytracking_biometric_enabled';
   final LocalAuthentication _auth;
+  final FlutterSecureStorage _storage;
 
-  BiometricService({LocalAuthentication? auth})
-      : _auth = auth ?? LocalAuthentication();
+  BiometricService({LocalAuthentication? auth, FlutterSecureStorage? storage})
+      : _auth = auth ?? LocalAuthentication(),
+        _storage = storage ?? const FlutterSecureStorage();
+
+  /// Vérifie si l'utilisateur a choisi d'activer le déverrouillage biométrique
+  Future<bool> isEnabled() async {
+    final value = await _storage.read(key: _enabledKey);
+    return value == 'true';
+  }
+
+  /// Active ou désactive le déverrouillage biométrique (choix utilisateur)
+  Future<void> setEnabled(bool enabled) async {
+    await _storage.write(key: _enabledKey, value: enabled ? 'true' : 'false');
+  }
 
   /// Vérifie si la biométrie est disponible et configurée
   Future<bool> isAvailable() async {

@@ -47,6 +47,11 @@ class NotificationService {
       importance: Importance.high,
     );
     await androidPlugin?.createNotificationChannel(channel);
+
+    // Android 13+ (API 33) exige une permission d'exécution explicite pour
+    // afficher la moindre notification — sans cet appel, toutes les notifs
+    // ci-dessous échouaient silencieusement sur les appareils récents.
+    await androidPlugin?.requestNotificationsPermission();
   }
 
   /// Gère la réponse à une notification (tap ou bouton d'action)
@@ -57,9 +62,12 @@ class NotificationService {
     debugPrint('[NOTIF] Response: action=$actionId, payload=$payload');
 
     if (actionId == _actionReject && payload != null) {
-      _rejectTransaction(payload);
+      final transactionId =
+          payload.startsWith('tx:') ? payload.substring(3) : payload;
+      _rejectTransaction(transactionId);
     } else {
-      // Tap simple sur la notification → ouvrir la page notifications
+      // Tap simple sur la notification → laisse main.dart router selon le
+      // préfixe du payload ('tx:<id>' → la transaction, sinon → la liste)
       onNotificationTapped?.call(payload);
     }
   }
@@ -116,7 +124,7 @@ class NotificationService {
           ],
         ),
       ),
-      payload: transactionId,
+      payload: 'tx:$transactionId',
     );
   }
 
@@ -140,6 +148,7 @@ class NotificationService {
           icon: '@mipmap/ic_launcher',
         ),
       ),
+      payload: 'general',
     );
   }
 }

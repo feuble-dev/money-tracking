@@ -25,6 +25,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   int _step = 0;
   String _accountType = 'agence';
   final _telephoneController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _passwordConfirmController = TextEditingController();
   List<CatalogCountry> _countries = [];
   String? _countryCode;
   final _agenceNomController =
@@ -40,6 +42,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   bool _loading = false;
   String? _error;
 
+  // Étape 0 (D13) : "avez-vous déjà un compte ?" — 'non' = nouveau compte
+  // (flux existant, inchangé), 'oui' = connexion instantanée par mot de
+  // passe depuis un nouvel appareil, sans passer par l'affiliation.
+  String _hasAccountMode = 'non';
+  final _loginTelephoneController = TextEditingController();
+  final _loginPasswordController = TextEditingController();
+  List<AgenceLogin>? _loginAgences;
+  String? _loginAccountType;
+
   @override
   void initState() {
     super.initState();
@@ -49,8 +60,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   @override
   void dispose() {
     _telephoneController.dispose();
+    _passwordController.dispose();
+    _passwordConfirmController.dispose();
     _agenceNomController.dispose();
     _linkTelephoneController.dispose();
+    _loginTelephoneController.dispose();
+    _loginPasswordController.dispose();
     super.dispose();
   }
 
@@ -67,9 +82,129 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     }
   }
 
+  /// Connexion instantanée à un compte existant (D13) — le mot de passe
+  /// prouve la propriété du compte, contrairement à _rejoindreCompte() qui
+  /// demande l'approbation d'un patron pour une agence qui n'est pas la
+  /// sienne. Le backend (LoginView) a déjà émis une licence pour ce
+  /// device_id sur chaque agence du compte ; il ne reste qu'à la récupérer
+  /// (recupererLicencePourAgence, même endpoint que l'affiliation) pour
+  /// l'agence choisie.
+  Future<void> _seConnecter() async {
+    if (_loginTelephoneController.text.trim().isEmpty ||
+        _loginPasswordController.text.isEmpty) {
+      setState(() => _error = 'Entrez votre numéro et votre mot de passe');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final resultat = await LicenceService.login(
+      telephone: _loginTelephoneController.text.trim(),
+      password: _loginPasswordController.text,
+    );
+
+    if (!resultat.reussi) {
+      setState(() {
+        _loading = false;
+        _error = resultat.message;
+      });
+      return;
+    }
+
+    final utilisables = resultat.agences
+        .where((a) => a.statut == 'active' || a.statut == 'essai')
+        .toList();
+    if (utilisables.isEmpty) {
+      setState(() {
+        _loading = false;
+        _error = 'Aucune agence active trouvée sur ce compte.';
+      });
+      return;
+    }
+
+    _loginAccountType = resultat.accountType;
+    if (utilisables.length == 1) {
+      await _finaliserLogin(utilisables.first);
+    } else {
+      setState(() {
+        _loading = false;
+        _loginAgences = utilisables;
+      });
+    }
+  }
+
+  /// Termine la connexion pour l'agence choisie (auto-sélectionnée s'il n'y
+  /// en a qu'une) — récupère + persiste la licence, puis reproduit
+  /// exactement ce que fait le flux normal après _createAgenceAndTrial pour
+  /// rester indiscernable du reste de l'app (LicenceGuard, router).
+  Future<void> _finaliserLogin(AgenceLogin agence) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final telephone = _loginTelephoneController.text.trim();
+    final ok = await AffiliationService.recupererLicencePourAgence(
+      telephone: telephone,
+      agenceId: agence.id,
+    );
+    if (!ok) {
+      setState(() {
+        _loading = false;
+        _error = 'Impossible de récupérer la licence pour cette agence.';
+      });
+      return;
+    }
+
+    final accountType = _loginAccountType ?? 'agence';
+    // L'app ne sert aujourd'hui que le Burkina Faso (catalogue seedé) — le
+    // compte n'a pas de pays enregistré côté backend, donc pas d'autre
+    // source pour ce choix qu'un défaut, cohérent avec celui
+    // d'OnboardingStatusService.
+    const countryCode = 'BF';
+    await ref.read(onboardingStatusServiceProvider).saveAccountType(accountType);
+    ref.invalidate(accountTypeProvider);
+    await ref.read(onboardingStatusServiceProvider).saveCountryCode(countryCode);
+
+    final localAgenceId = await _catalogService.createLocalAgence(
+      nom: agence.nom,
+      backendAgenceId: agence.id,
+      isDefault: true,
+    );
+    try {
+      final ops = await _catalogService.fetchOperators(
+        countryCode,
+        accountType: accountType,
+      );
+      if (mounted) setState(() => _operators = ops);
+    } catch (_) {
+      // L'agent pourra configurer manuellement depuis les paramètres.
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _accountType = accountType;
+      _localAgenceId = localAgenceId;
+      _loading = false;
+      _step = 4;
+    });
+  }
+
   Future<void> _createAgenceAndTrial() async {
     if (_telephoneController.text.trim().isEmpty) {
       setState(() => _error = 'Entrez votre numéro de téléphone');
+      return;
+    }
+    // Mot de passe compte obligatoire à la création (D13) — c'est ce qui
+    // permettra ensuite une connexion instantanée depuis un autre appareil.
+    if (_passwordController.text.length < 4) {
+      setState(() => _error = 'Choisissez un mot de passe d\'au moins 4 caractères');
+      return;
+    }
+    if (_passwordController.text != _passwordConfirmController.text) {
+      setState(() => _error = 'Les mots de passe ne correspondent pas');
       return;
     }
     setState(() {
@@ -81,6 +216,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       telephone: _telephoneController.text.trim(),
       accountType: _accountType,
       agenceNom: _agenceNomController.text.trim(),
+      password: _passwordController.text,
     );
 
     if (!resultat.reussi) {
@@ -118,7 +254,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     setState(() {
       _localAgenceId = localAgenceId;
       _loading = false;
-      _step = 3;
+      _step = 4;
     });
   }
 
@@ -165,7 +301,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (!mounted) return;
     setState(() {
       _loading = false;
-      _step = 4;
+      _step = 5;
     });
     _pollApprobation();
   }
@@ -200,19 +336,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         if (!mounted) return;
         setState(() {
           _localAgenceId = localAgenceId;
-          _step = 3;
+          _step = 4;
         });
       } else if (poll.statut == 'rejete') {
         setState(() {
           _error = _accountType == 'particulier'
               ? 'Votre demande a été refusée depuis votre autre téléphone.'
               : 'Votre demande d\'affiliation a été refusée par le patron.';
-          _step = 2;
+          _step = 3;
         });
       } else if (poll.statut == 'timeout') {
         setState(() {
           _error = 'Délai d\'attente dépassé - réessayez.';
-          _step = 2;
+          _step = 3;
         });
       }
     });
@@ -248,7 +384,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(),
+            if (_step > 0) _buildHeader(),
             if (_error != null)
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -264,6 +400,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               child: IndexedStack(
                 index: _step,
                 children: [
+                  _buildHasAccountStep(),
                   _buildAccountTypeStep(),
                   _buildPhoneCountryStep(),
                   _buildAgenceStep(),
@@ -285,7 +422,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       ? const ['Compte', 'Téléphone', 'Configuration', 'Opérateurs']
       : const ['Compte', 'Téléphone', 'Agence', 'Opérateurs'];
 
-  int get _displayStep => _step;
+  // La barre de progression ne représente que le flux "nouveau compte"
+  // (steps 1-4 réels) — l'étape 0 ("avez-vous déjà un compte ?") est un
+  // préalable, masqué (voir build()), donc pas besoin de la refléter ici.
+  int get _displayStep => (_step - 1).clamp(0, _stepLabels.length - 1);
 
   Widget _buildHeader() {
     final labels = _stepLabels;
@@ -322,6 +462,87 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
+  /// Étape 0 (D13) : préalable à tout le reste du flux — un utilisateur qui
+  /// a déjà un compte (installe l'app sur un nouveau téléphone) peut s'y
+  /// connecter directement par mot de passe, sans repasser par la création
+  /// ou l'affiliation. Affiche aussi le sélecteur d'agence si le compte en
+  /// possède plusieurs.
+  Widget _buildHasAccountStep() {
+    if (_loginAgences != null) {
+      return _StepScaffold(
+        title: 'Quelle agence sur cet appareil ?',
+        subtitle: 'Ce compte possède plusieurs agences — choisissez celle que cet appareil va opérer.',
+        onBack: () => setState(() {
+          _loginAgences = null;
+          _error = null;
+        }),
+        child: Column(
+          children: _loginAgences!.map((a) {
+            return Card(
+              child: ListTile(
+                title: Text(a.nom),
+                subtitle: Text(a.statut == 'essai' ? 'Essai gratuit' : 'Active'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _loading ? null : () => _finaliserLogin(a),
+              ),
+            );
+          }).toList(),
+        ),
+      );
+    }
+
+    final seConnecter = _hasAccountMode == 'oui';
+    return _StepScaffold(
+      title: 'Avez-vous déjà un compte ?',
+      subtitle: seConnecter
+          ? 'Connectez-vous avec le numéro et le mot de passe de votre compte existant.'
+          : 'Si MoneyTracking est déjà installé sur un de vos autres téléphones avec ce compte, connectez-vous directement au lieu d\'en recréer un.',
+      onNext: seConnecter
+          ? (_loading ? null : _seConnecter)
+          : () => setState(() => _step = 1),
+      nextLabel: seConnecter
+          ? (_loading ? 'Connexion...' : 'Se connecter')
+          : 'Continuer',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'non', label: Text('Non, nouveau compte')),
+              ButtonSegment(value: 'oui', label: Text('Oui, me connecter')),
+            ],
+            selected: {_hasAccountMode},
+            onSelectionChanged: (v) => setState(() {
+              _hasAccountMode = v.first;
+              _error = null;
+            }),
+          ),
+          if (seConnecter) ...[
+            const SizedBox(height: 16),
+            TextField(
+              controller: _loginTelephoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Numéro de téléphone',
+                hintText: '70123456',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _loginPasswordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Mot de passe',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildAccountTypeStep() {
     return _StepScaffold(
       title: 'Particulier ou agence ?',
@@ -344,7 +565,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           ),
         ],
       ),
-      onNext: () => setState(() => _step = 1),
+      onNext: () => setState(() => _step = 2),
     );
   }
 
@@ -353,8 +574,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       title: 'Votre numéro et votre pays',
       subtitle:
           'Ça détermine les opérateurs mobile money qu\'on va vous proposer.',
-      onBack: () => setState(() => _step = 0),
-      onNext: _loading ? null : () => setState(() => _step = 2),
+      onBack: () => setState(() => _step = 1),
+      onNext: _loading ? null : () => setState(() => _step = 3),
       nextLabel: _loading ? 'Création...' : 'Continuer',
       child: Column(
         children: [
@@ -406,7 +627,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       subtitle: rejoindre
           ? 'Entrez le numéro de votre patron - il devra approuver votre demande et vous assigner une agence.'
           : 'Vous pourrez en ajouter d\'autres plus tard. Chaque agence démarre avec un essai gratuit.',
-      onBack: () => setState(() => _step = 1),
+      onBack: () => setState(() => _step = 2),
       onNext: _loading ? null : (rejoindre ? _rejoindreCompte : _createAgenceAndTrial),
       nextLabel: _loading
           ? (rejoindre ? 'Envoi...' : 'Création...')
@@ -433,7 +654,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 border: OutlineInputBorder(),
               ),
             )
-          else
+          else ...[
             TextField(
               controller: _agenceNomController,
               decoration: const InputDecoration(
@@ -441,8 +662,45 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 16),
+            _buildPasswordFields(),
+          ],
         ],
       ),
+    );
+  }
+
+  /// Mot de passe compte (D13), obligatoire à la création — permet ensuite
+  /// une connexion instantanée depuis un autre appareil (LicenceService.login),
+  /// sans passer par l'affiliation/approbation.
+  Widget _buildPasswordFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Choisissez un mot de passe pour ce compte — il vous permettra de '
+          'vous reconnecter directement depuis un autre téléphone plus tard.',
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _passwordController,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: 'Mot de passe',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _passwordConfirmController,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: 'Confirmez le mot de passe',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ],
     );
   }
 
@@ -457,7 +715,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       subtitle: relier
           ? 'Entrez le numéro de votre autre téléphone MoneyTracking - vous devrez approuver la demande depuis cet appareil.'
           : 'Si vous utilisez déjà MoneyTracking sur un autre téléphone, vous pouvez relier celui-ci au lieu d\'en repartir de zéro.',
-      onBack: () => setState(() => _step = 1),
+      onBack: () => setState(() => _step = 2),
       onNext: _loading
           ? null
           : (relier
@@ -491,6 +749,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 border: OutlineInputBorder(),
               ),
             ),
+          ] else ...[
+            const SizedBox(height: 16),
+            _buildPasswordFields(),
           ],
         ],
       ),
@@ -503,7 +764,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       subtitle:
           'Votre demande a été envoyée à ${_linkTelephoneController.text.trim()}. '
           'Cet écran se mettra à jour automatiquement dès qu\'il aura répondu.',
-      onBack: () => setState(() => _step = 2),
+      onBack: () => setState(() => _step = 3),
       child: const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(child: CircularProgressIndicator()),
