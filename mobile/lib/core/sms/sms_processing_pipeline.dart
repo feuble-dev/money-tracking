@@ -1,11 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import '../categories/category_repository.dart';
 import '../database/caisse_repository.dart';
 import '../database/database_helper.dart';
 import '../database/transaction_repository.dart';
 import '../licence/licence_storage.dart';
 import '../notifications/notification_service.dart';
+import '../onboarding/onboarding_state.dart';
 import '../sync/sync_service.dart';
 import 'commission_calculator.dart';
 import 'sms_dedup.dart';
@@ -157,6 +159,23 @@ Future<void> processIncomingSms(
     }
   }
 
+  // 6b. Motif auto (D-catégories) — seulement pour un compte Particulier, et
+  // seulement quand c'est certain (type évident « crédit téléphone », ou une
+  // règle « ce numéro/ce nom → cette catégorie » déjà mémorisée). Sinon
+  // `category` reste null → la transaction rejoint la file « à catégoriser »,
+  // sans aucune étape bloquante à la détection (on ne casse pas D3).
+  String? autoCategory;
+  final accountType = await OnboardingStatusService().getAccountType();
+  final isParticulier = accountType == 'particulier';
+  if (isParticulier) {
+    autoCategory = await CategoryRepository.autoCategoryFor(
+      transactionTypeCode: transactionType,
+      clientPhone: clientPhone,
+      clientName: clientName,
+      direction: smsMatch.direction,
+    );
+  }
+
   // 7. Vérifier licence avant de créer la transaction
   final licenceStatut = await LicenceStorage.verifierLocalement();
   final peutCreer = licenceStatut == LicenceStatut.active ||
@@ -200,6 +219,7 @@ Future<void> processIncomingSms(
     // l'écran de transaction (déjà existant pour ce statut).
     'status': smsMatch.needsConfirmation ? 'pending' : 'completed',
     'source': 'sms_auto',
+    'category': autoCategory,
     'sms_id': smsId,
     'sms_raw': body,
     'match_confidence': smsMatch.confidence < 100 ? smsMatch.confidence : null,
@@ -235,9 +255,20 @@ Future<void> processIncomingSms(
   // 8. Notification selon client connu/inconnu, et selon la confiance du
   // match — un match flou à confirmer le dit explicitement, pour que
   // l'agent sache qu'il doit vérifier/corriger plutôt que juste annuler.
+  // Un Particulier ne « complète » jamais d'infos client (D18). Pour une
+  // dépense non rangée automatiquement, la notif propose de catégoriser.
+  final offerCategorize = isParticulier &&
+      !smsMatch.needsConfirmation &&
+      smsMatch.direction == 'out' &&
+      autoCategory == null;
+
   final String contexte;
   if (smsMatch.needsConfirmation) {
     contexte = '$typeLabel incertain (${smsMatch.confidence}%) - Appuyez pour vérifier';
+  } else if (offerCategorize) {
+    contexte = '$operatorName - Appuyez pour catégoriser';
+  } else if (isParticulier) {
+    contexte = '$typeLabel - $operatorName';
   } else if (clientExists) {
     contexte = '$typeLabel - $clientName';
   } else {
@@ -250,6 +281,7 @@ Future<void> processIncomingSms(
     amount: amount,
     clientPhone: clientPhone ?? (clientExists ? '' : 'inconnu'),
     operatorName: contexte,
+    offerCategorize: offerCategorize,
   );
 
   onTransactionDetected?.call({...txData, 'operator_name': operatorName});

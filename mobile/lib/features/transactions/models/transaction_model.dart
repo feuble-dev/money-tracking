@@ -23,6 +23,11 @@ class TransactionModel {
   final String? operatorReference;
   final String status; // 'pending' | 'completed' | 'rejected' | 'cancelled'
   final String source; // 'manual' | 'sms_auto' | 'sms_import'
+  // Motif de dépense/revenu (D-catégories) — code de `expense_categories`,
+  // null = non catégorisée (file « à catégoriser »). Concept distinct du
+  // type de transaction. Note libre optionnelle.
+  final String? category;
+  final String? note;
   final String? smsRaw;
   // 0-100, null si non-ambigu (manuel/import historique/match exact) —
   // score du matching flou (SmsMatchingEngine) quand status == 'pending'
@@ -51,12 +56,18 @@ class TransactionModel {
     this.operatorReference,
     this.status = 'completed',
     this.source = 'manual',
+    this.category,
+    this.note,
     this.smsRaw,
     this.matchConfidence,
     DateTime? createdAt,
     this.operatorName,
     this.typeLabel,
   }) : createdAt = createdAt ?? DateTime.now();
+
+  /// `true` tant qu'aucun motif n'a été renseigné — alimente la file
+  /// « à catégoriser » (particulier).
+  bool get isUncategorized => category == null || category!.isEmpty;
 
   /// Repli legacy uniquement : `code == 'deposit'`. Ne plus utiliser pour
   /// l'affichage (voir [displayLabel]/[isEntrant]) — reste utile pour les
@@ -91,6 +102,8 @@ class TransactionModel {
         'operator_reference': operatorReference,
         'status': status,
         'source': source,
+        'category': category,
+        'note': note,
         'sms_raw': smsRaw,
         'match_confidence': matchConfidence,
         'created_at': createdAt.toIso8601String(),
@@ -114,6 +127,8 @@ class TransactionModel {
         operatorReference: map['operator_reference'] as String?,
         status: map['status'] as String? ?? 'completed',
         source: map['source'] as String? ?? 'manual',
+        category: map['category'] as String?,
+        note: map['note'] as String?,
         smsRaw: map['sms_raw'] as String?,
         matchConfidence: (map['match_confidence'] as num?)?.toInt(),
         createdAt: DateTime.parse(map['created_at'] as String),
@@ -129,6 +144,8 @@ class TransactionModel {
     String? clientPhone,
     String? status,
     double? commission,
+    String? category,
+    String? note,
   }) =>
       TransactionModel(
         id: id,
@@ -147,6 +164,8 @@ class TransactionModel {
         operatorReference: operatorReference,
         status: status ?? this.status,
         source: source,
+        category: category ?? this.category,
+        note: note ?? this.note,
         smsRaw: smsRaw,
         createdAt: createdAt,
         operatorName: operatorName,

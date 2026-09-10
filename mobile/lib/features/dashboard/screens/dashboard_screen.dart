@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/sms/sms_listener.dart';
 import '../../notifications/screens/notifications_screen.dart';
 import '../../../core/theme/app_colors.dart';
@@ -10,6 +11,7 @@ import '../../caisse/providers/caisse_provider.dart';
 import '../../operators/providers/operator_provider.dart';
 import '../models/dashboard_filter.dart';
 import '../providers/dashboard_provider.dart';
+import '../widgets/particulier/particulier_dashboard_tab.dart';
 import '../widgets/bar_chart_widget.dart';
 import '../widgets/hourly_chart_widget.dart';
 import '../widgets/line_chart_widget.dart';
@@ -42,12 +44,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     _tabController = TabController(length: 1, vsync: this);
   }
 
-  void _updateTabs(int operatorCount) {
+  /// Recrée le TabController quand le nombre d'opérateurs change — mais
+  /// APRÈS la frame en cours, jamais pendant `build()` (disposer/recréer un
+  /// controller en cours de build peut casser une animation d'onglet en
+  /// vol). Un onglet peut donc être brièvement « en retard » d'une frame
+  /// après ajout/suppression d'un opérateur, ce qui est rare et sans impact.
+  void _syncTabs(int operatorCount) {
     final newLength = operatorCount + 1;
-    if (_tabController.length != newLength) {
-      _tabController.dispose();
-      _tabController = TabController(length: newLength, vsync: this);
-    }
+    if (_tabController.length == newLength) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _tabController.length == newLength) return;
+      setState(() {
+        _tabController.dispose();
+        _tabController = TabController(length: newLength, vsync: this);
+      });
+    });
   }
 
   @override
@@ -60,6 +71,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   Widget build(BuildContext context) {
     final operatorsAsync = ref.watch(operatorsProvider);
     final filter = ref.watch(dashboardFilterProvider);
+    // Le tableau de bord Particulier est orienté finances perso (dépenses
+    // par motif, portefeuilles, à qui je donne), là où celui d'un compte
+    // Agence est orienté activité d'agent (caisse, commissions, clients).
+    // Gaté ici (accountTypeProvider) — pas d'écran dupliqué (D7/D18).
+    final isParticulier =
+        ref.watch(accountTypeProvider).valueOrNull == 'particulier';
 
     return operatorsAsync.when(
       loading: () => const Scaffold(
@@ -68,7 +85,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       error: (e, _) => Scaffold(body: Center(child: Text('Erreur: $e'))),
       data: (operators) {
         final activeOps = operators.where((o) => o.isActive).toList();
-        _updateTabs(activeOps.length);
+        _syncTabs(activeOps.length);
 
         return Scaffold(
           appBar: AppBar(
@@ -131,19 +148,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           body: TabBarView(
             controller: _tabController,
             children: [
-              _DashboardTab(
-                operatorId: null,
-                currencyFormat: _currencyFormat,
-              ),
-              ...activeOps.map((op) => _DashboardTab(
-                    operatorId: op.id,
-                    currencyFormat: _currencyFormat,
-                  )),
+              _tabFor(null, isParticulier),
+              ...activeOps.map((op) => _tabFor(op.id, isParticulier)),
             ],
           ),
         );
       },
     );
+  }
+
+  Widget _tabFor(String? operatorId, bool isParticulier) {
+    return isParticulier
+        ? ParticulierDashboardTab(
+            operatorId: operatorId, currencyFormat: _currencyFormat)
+        : _DashboardTab(
+            operatorId: operatorId, currencyFormat: _currencyFormat);
   }
 
   Widget _buildPeriodSelector(DashboardFilter filter) {

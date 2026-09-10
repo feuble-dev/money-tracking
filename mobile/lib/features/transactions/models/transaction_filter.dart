@@ -17,6 +17,8 @@ class TransactionFilter {
   final DateTime? dateFrom;
   final DateTime? dateTo;
   final String? searchQuery; // Recherche par numéro ou nom
+  // Motif (D-catégories). Valeur spéciale '__uncat__' = non catégorisées.
+  final String? category;
 
   const TransactionFilter({
     this.operatorId,
@@ -26,6 +28,7 @@ class TransactionFilter {
     this.dateFrom,
     this.dateTo,
     this.searchQuery,
+    this.category,
   });
 
   bool get hasFilter =>
@@ -34,6 +37,7 @@ class TransactionFilter {
       transactionType != null ||
       direction != null ||
       dateFrom != null ||
+      category != null ||
       (searchQuery != null && searchQuery!.isNotEmpty);
 
   TransactionFilter copyWith({
@@ -44,6 +48,7 @@ class TransactionFilter {
     Object? dateFrom = _sentinel,
     Object? dateTo = _sentinel,
     Object? searchQuery = _sentinel,
+    Object? category = _sentinel,
   }) => TransactionFilter(
     operatorId: operatorId == _sentinel ? this.operatorId : operatorId as String?,
     clientId: clientId == _sentinel ? this.clientId : clientId as String?,
@@ -52,7 +57,11 @@ class TransactionFilter {
     dateFrom: dateFrom == _sentinel ? this.dateFrom : dateFrom as DateTime?,
     dateTo: dateTo == _sentinel ? this.dateTo : dateTo as DateTime?,
     searchQuery: searchQuery == _sentinel ? this.searchQuery : searchQuery as String?,
+    category: category == _sentinel ? this.category : category as String?,
   );
 }
+
+/// Valeur de [TransactionFilter.category] ciblant les transactions sans motif.
+const kFilterUncategorized = '__uncat__';
 
 const _sentinel = Object();

@@ -63,6 +63,16 @@ class SettingsScreen extends ConsumerWidget {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => context.push('/settings/caisse'),
                 ),
+                if (ref.watch(accountTypeProvider).valueOrNull == 'particulier')
+                  ListTile(
+                    leading: Icon(Icons.label_outline,
+                        color: Theme.of(context).colorScheme.primary),
+                    title: const Text('Catégories & règles'),
+                    subtitle: const Text(
+                        'Motifs de dépense, auto-catégorisation, budgets'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push('/categories/manage'),
+                  ),
               ],
             ),
           ),

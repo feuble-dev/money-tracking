@@ -210,6 +210,36 @@ class AppDrawer extends ConsumerWidget {
                     ),
                   ] else if (accountType == 'particulier') ...[
                     const Divider(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(
+                        'FINANCES',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.primary,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.savings_outlined),
+                      title: const Text('Budget & motifs'),
+                      dense: true,
+                      onTap: () {
+                        Navigator.pop(context);
+                        context.push('/budget');
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.label_outline),
+                      title: const Text('Catégoriser les dépenses'),
+                      dense: true,
+                      onTap: () {
+                        Navigator.pop(context);
+                        context.push('/categorize');
+                      },
+                    ),
                     ListTile(
                       leading: const Icon(Icons.phone_android),
                       title: const Text('Mes téléphones'),

@@ -11,8 +11,8 @@ import 'app_drawer.dart';
 final mainScaffoldKey = GlobalKey<ScaffoldState>();
 
 /// Shell avec 3 onglets : Dashboard, Transactions, puis Commissions (Agence)
-/// ou Paramètres (Particulier, D7 — pas de notion de commission). Clients
-/// déplacé dans le sidebar.
+/// ou Budget (Particulier, D7 — pas de notion de commission ; le 3ᵉ onglet
+/// ouvre l'écran Budget/motifs). Clients déplacé dans le sidebar.
 class MainShell extends ConsumerWidget {
   final StatefulNavigationShell navigationShell;
 
@@ -102,10 +102,9 @@ class MainShell extends ConsumerWidget {
         selectedIndex: currentIndex,
         onDestinationSelected: (index) {
           // Particulier : le 3e onglet n'est pas une branche du shell (pas
-          // de notion de commission, D7) — il ouvre juste Paramètres,
-          // exactement l'écran déjà accessible depuis le tiroir.
+          // de notion de commission, D7) — il ouvre l'écran Budget/motifs.
           if (!showCommissions && index == 2) {
-            context.push('/settings');
+            context.push('/budget');
             return;
           }
           navigationShell.goBranch(
@@ -142,9 +141,9 @@ class MainShell extends ConsumerWidget {
             )
           else
             const NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings),
-              label: 'Paramètres',
+              icon: Icon(Icons.savings_outlined),
+              selectedIcon: Icon(Icons.savings),
+              label: 'Budget',
             ),
         ],
       ),

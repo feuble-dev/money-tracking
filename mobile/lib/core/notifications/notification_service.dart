@@ -7,6 +7,10 @@ import '../database/transaction_repository.dart';
 /// l'annulation reste une action pertinente depuis la notification.
 const _actionReject = 'REJECT';
 
+/// Compte Particulier : bouton « Catégoriser » qui ouvre l'app sur l'écran
+/// de catégorisation rapide de cette transaction (D-catégories).
+const _actionCategorize = 'CATEGORIZE';
+
 /// Service de notifications locales MoneyTracking
 /// Avec un bouton Annuler directement dans la notif (la transaction
 /// détectée par SMS est déjà enregistrée, pas en attente de confirmation)
@@ -62,14 +66,19 @@ class NotificationService {
     debugPrint('[NOTIF] Response: action=$actionId, payload=$payload');
 
     if (actionId == _actionReject && payload != null) {
-      final transactionId =
-          payload.startsWith('tx:') ? payload.substring(3) : payload;
+      final transactionId = _stripPrefix(payload);
       _rejectTransaction(transactionId);
     } else {
-      // Tap simple sur la notification → laisse main.dart router selon le
-      // préfixe du payload ('tx:<id>' → la transaction, sinon → la liste)
+      // Tap simple, ou bouton « Catégoriser » (showsUserInterface) → laisse
+      // main.dart router selon le préfixe du payload ('tx:<id>' → la
+      // transaction, 'cat:<id>' → catégorisation rapide, sinon → la liste).
       onNotificationTapped?.call(payload);
     }
+  }
+
+  static String _stripPrefix(String payload) {
+    final i = payload.indexOf(':');
+    return i >= 0 ? payload.substring(i + 1) : payload;
   }
 
   /// Annuler une transaction directement depuis la notification (ex: SMS
@@ -96,11 +105,31 @@ class NotificationService {
     required String clientPhone,
     required String operatorName,
     String? typeLabel,
+    // Compte Particulier + dépense non encore catégorisée : la notif invite
+    // à catégoriser (bouton + tap qui ouvre l'écran de catégorisation
+    // rapide) plutôt que « compléter les infos client » (D18).
+    bool offerCategorize = false,
   }) async {
     // typeLabel permet d'afficher le libellé réel du type (ex: "Transfert")
     // pour les types au-delà de dépôt/retrait — sinon repli binaire.
     typeLabel ??= type == 'deposit' ? 'Dépôt' : 'Retrait';
     final amountStr = '${amount.toInt()} FCFA';
+
+    final actions = <AndroidNotificationAction>[
+      if (offerCategorize)
+        const AndroidNotificationAction(
+          _actionCategorize,
+          'Catégoriser',
+          showsUserInterface: true,
+          cancelNotification: true,
+        ),
+      const AndroidNotificationAction(
+        _actionReject,
+        'Annuler',
+        showsUserInterface: false,
+        cancelNotification: true,
+      ),
+    ];
 
     await _plugin.show(
       transactionId.hashCode,
@@ -114,17 +143,35 @@ class NotificationService {
           importance: Importance.high,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
-          actions: const [
-            AndroidNotificationAction(
-              _actionReject,
-              'Annuler',
-              showsUserInterface: false,
-              cancelNotification: true,
-            ),
-          ],
+          actions: actions,
         ),
       ),
-      payload: 'tx:$transactionId',
+      payload: offerCategorize ? 'cat:$transactionId' : 'tx:$transactionId',
+    );
+  }
+
+  /// Récapitulatif mensuel (compte Particulier) — affiché une fois par mois
+  /// au démarrage, résume les dépenses du mois écoulé. Tap → écran Budget.
+  Future<void> showMonthlySummary({
+    required String title,
+    required String body,
+  }) async {
+    await _plugin.show(
+      920001,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'mobitracking_general',
+          'Notifications générales',
+          channelDescription: 'Notifications envoyées par l\'administrateur',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          styleInformation: BigTextStyleInformation(''),
+        ),
+      ),
+      payload: 'summary',
     );
   }
 

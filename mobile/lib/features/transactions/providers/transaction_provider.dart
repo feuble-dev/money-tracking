@@ -88,6 +88,14 @@ class TransactionsNotifier
         where.write(' AND t.direction = ?');
         whereArgs.add(filter.direction);
       }
+      if (filter.category != null) {
+        if (filter.category == '__uncat__') {
+          where.write(" AND (t.category IS NULL OR t.category = '')");
+        } else {
+          where.write(' AND t.category = ?');
+          whereArgs.add(filter.category);
+        }
+      }
       if (filter.dateFrom != null) {
         where.write(' AND t.created_at >= ?');
         whereArgs.add(filter.dateFrom!.toIso8601String());
