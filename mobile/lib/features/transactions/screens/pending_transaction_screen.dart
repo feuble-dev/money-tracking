@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:sqflite/sqflite.dart';
 import '../../../core/database/database_helper.dart';
 import '../../../core/database/transaction_repository.dart';
 import '../../../core/licence/licence_guard.dart';
+import '../../../core/onboarding/onboarding_state.dart';
+import '../../../core/sms/commission_calculator.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../clients/models/client_model.dart';
 import '../../clients/providers/client_provider.dart';
@@ -37,8 +40,20 @@ class _PendingTransactionScreenState
   List<ClientModel> _suggestions = [];
   Timer? _debounce;
 
+  // Correction du type (match flou incertain, D-confiance) — uniquement
+  // proposée pour une transaction 'pending', puisqu'une transaction déjà
+  // 'completed' n'a jamais été ambiguë (match exact à 100%).
+  List<Map<String, Object?>> _availableTypes = [];
+  String? _selectedTypeId;
+
   final _currencyFormat = NumberFormat.currency(
       locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+
+  // La modification d'une transaction (type, infos porteur, gestion client)
+  // ne concerne que les comptes Agence (D18). Pour un Particulier, cet écran
+  // est réduit : résumé + Confirmer / Annuler / Revalider.
+  bool get _isAgence =>
+      ref.read(accountTypeProvider).valueOrNull != 'particulier';
 
   String get _status => _txData?['status'] as String? ?? 'pending';
   bool get _isPending => _status == 'pending';
@@ -69,14 +84,30 @@ class _PendingTransactionScreenState
         _nameController.text = (tx['client_name'] as String?) ?? '';
         _cnibController.text = (tx['client_cnib'] as String?) ?? '';
         _birthDateController.text = (tx['client_birth_date'] as String?) ?? '';
+        _selectedTypeId = tx['transaction_type_id'] as String?;
         _isLoading = false;
       });
       // Chercher un client existant par téléphone
       final phone = (tx['client_phone'] as String?) ?? '';
       if (phone.isNotEmpty) _searchClient(phone);
+      if (tx['status'] == 'pending') {
+        await _loadAvailableTypes(db, tx['operator_id'] as String);
+      }
     } else if (mounted) {
       setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _loadAvailableTypes(Database db, String operatorId) async {
+    final rows = await db.rawQuery('''
+      SELECT tt.id as type_id, tt.code as type_code, tt.label as type_label,
+             ott.commission_taux, tt.default_direction
+      FROM operator_transaction_types ott
+      JOIN transaction_types tt ON ott.transaction_type_id = tt.id
+      WHERE ott.operator_id = ? AND ott.is_active = 1
+      ORDER BY tt.label
+    ''', [operatorId]);
+    if (mounted) setState(() => _availableTypes = rows);
   }
 
   void _searchClient(String query) {
@@ -118,7 +149,7 @@ class _PendingTransactionScreenState
   }
 
   Map<String, dynamic> _buildUpdates() {
-    return {
+    final updates = <String, dynamic>{
       'client_id': _selectedClient?.id,
       'client_name': _nameController.text.trim().isEmpty
           ? null
@@ -131,6 +162,27 @@ class _PendingTransactionScreenState
           : _birthDateController.text.trim(),
       'client_phone': _phoneController.text.trim(),
     };
+
+    // Correction du type si l'agent en a choisi un différent de celui
+    // détecté (match flou incertain) — recalcule la commission avec le taux
+    // du nouveau type, direction alignée sur le type (pas de pattern précis
+    // à ce stade pour trancher reçu/envoyé sur un Transfert par exemple).
+    final original = _txData?['transaction_type_id'] as String?;
+    if (_selectedTypeId != null && _selectedTypeId != original) {
+      final selected =
+          _availableTypes.firstWhere((t) => t['type_id'] == _selectedTypeId);
+      final amount = (_txData?['amount'] as num?)?.toDouble() ?? 0;
+      final commissionTaux = (selected['commission_taux'] as num?)?.toDouble() ?? 0;
+      updates['transaction_type_id'] = selected['type_id'] as String;
+      updates['transaction_type'] = selected['type_code'] as String;
+      updates['direction'] = selected['default_direction'] as String;
+      updates['commission'] = CommissionCalculator.compute(
+        amount: amount,
+        commissionTaux: commissionTaux,
+      );
+    }
+
+    return updates;
   }
 
   void _refreshProviders() {
@@ -149,8 +201,11 @@ class _PendingTransactionScreenState
 
     final updates = _buildUpdates();
 
-    // Si nouveau client (pas sélectionné dans la liste), le créer
-    if (_selectedClient == null && _phoneController.text.trim().isNotEmpty) {
+    // Si nouveau client (pas sélectionné dans la liste), le créer — Agence
+    // uniquement (D18).
+    if (_isAgence &&
+        _selectedClient == null &&
+        _phoneController.text.trim().isNotEmpty) {
       await _createNewClient(updates);
     }
 
@@ -227,7 +282,9 @@ class _PendingTransactionScreenState
 
     final updates = _buildUpdates();
 
-    if (_selectedClient == null && _phoneController.text.trim().isNotEmpty) {
+    if (_isAgence &&
+        _selectedClient == null &&
+        _phoneController.text.trim().isNotEmpty) {
       await _createNewClient(updates);
     }
 
@@ -328,6 +385,7 @@ class _PendingTransactionScreenState
     }
 
     final tx = _txData!;
+    final isAgence = _isAgence;
     // Le sens réel (D1) fait foi ; repli sur l'ancien binaire seulement si
     // `direction` est absent (très vieilles lignes jamais backfillées).
     final isEntrant = tx['direction'] != null
@@ -358,6 +416,53 @@ class _PendingTransactionScreenState
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // Détection incertaine (match flou 60-79%, voir SmsMatchingEngine)
+            if (_isPending && tx['match_confidence'] != null)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 10),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.help_outline, color: Colors.orange.shade700, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Détection incertaine (${tx['match_confidence']}% de correspondance) '
+                        '— vérifiez le type et le montant avant de confirmer, ou corrigez si besoin.',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // Correction du type détecté — seulement utile quand la
+            // détection était incertaine (voir bandeau ci-dessus) ; l'agent
+            // choisit le bon type si le match flou s'est trompé. Agence
+            // uniquement (D18).
+            if (isAgence && _isPending && _availableTypes.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: DropdownButtonFormField<String>(
+                  initialValue: _selectedTypeId,
+                  decoration: const InputDecoration(
+                    labelText: 'Type de transaction',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _availableTypes
+                      .map((t) => DropdownMenuItem(
+                            value: t['type_id'] as String,
+                            child: Text(t['type_label'] as String),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setState(() => _selectedTypeId = v),
+                ),
+              ),
             // Statut badge
             if (_isCancelled)
               Container(
@@ -470,7 +575,10 @@ class _PendingTransactionScreenState
               ),
             const SizedBox(height: 16),
 
-            // Infos porteur
+            // Infos porteur — édition réservée aux comptes Agence (D18).
+            // Pour un Particulier : pas de champs porteur ni de gestion
+            // client, seulement Confirmer / Annuler / Revalider.
+            if (isAgence) ...[
             Text(
               _isPending
                   ? 'Informations du porteur'
@@ -594,6 +702,7 @@ class _PendingTransactionScreenState
               readOnly: true,
               onTap: _selectBirthDate,
             ),
+            ], // fin bloc "infos porteur" (Agence uniquement)
             const SizedBox(height: 32),
 
             // === BOUTONS ===
@@ -620,17 +729,21 @@ class _PendingTransactionScreenState
                 ),
               ),
             ] else if (_isCompleted) ...[
-              ElevatedButton.icon(
-                onPressed: _saveEdits,
-                icon: const Icon(Icons.save),
-                label: const Text('Enregistrer les modifications',
-                    style: TextStyle(fontSize: 16)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryColor,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+              // "Enregistrer les modifications" — Agence uniquement (D18).
+              // Un Particulier peut seulement annuler une détection erronée.
+              if (isAgence) ...[
+                ElevatedButton.icon(
+                  onPressed: _saveEdits,
+                  icon: const Icon(Icons.save),
+                  label: const Text('Enregistrer les modifications',
+                      style: TextStyle(fontSize: 16)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 12),
+              ],
               OutlinedButton.icon(
                 onPressed: _cancelTransaction,
                 icon: const Icon(Icons.cancel_outlined),

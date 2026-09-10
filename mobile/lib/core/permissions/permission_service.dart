@@ -41,4 +41,15 @@ class PermissionService {
     final status = await Permission.phone.request();
     return status.isGranted;
   }
+
+  /// Demande la permission contacts (sélection du numéro client au
+  /// lancement d'un USSD). Ne relance pas le popup système si l'utilisateur
+  /// a définitivement refusé — l'appelant retombe alors sur la saisie
+  /// manuelle du numéro.
+  static Future<bool> requestContactsPermission() async {
+    final status = await Permission.contacts.status;
+    if (status.isGranted) return true;
+    if (status.isPermanentlyDenied) return false;
+    return (await Permission.contacts.request()).isGranted;
+  }
 }

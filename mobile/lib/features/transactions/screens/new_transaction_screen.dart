@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
+import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/sms/commission_calculator.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/ussd/ussd_launcher.dart';
+import '../widgets/contact_picker_button.dart';
 import '../../caisse/providers/caisse_provider.dart';
 import '../../clients/models/client_model.dart';
 import '../../clients/providers/client_provider.dart';
@@ -112,6 +114,9 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
     return null;
   }
 
+  bool get _isAgence =>
+      ref.read(accountTypeProvider).valueOrNull != 'particulier';
+
   /// Lance le USSD — PAS de création de transaction ici, c'est le SMS
   /// entrant qui la crée automatiquement (sms_processing_pipeline.dart).
   Future<void> _launchUssd() async {
@@ -132,7 +137,9 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
     final amount = _amountValue;
     if (amount == null || amount <= 0) return;
 
-    await _ensureClientCreated();
+    // La gestion des clients ne concerne que les comptes Agence (D18) — un
+    // compte Particulier ne fait que lancer le USSD.
+    if (_isAgence) await _ensureClientCreated();
 
     final launched = await UssdLauncher.launch(
       template: template,
@@ -157,7 +164,10 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
     }
   }
 
-  /// Création manuelle — uniquement si pas de SMS attendu.
+  /// Création manuelle — DORMANT (D18) : le bouton est retiré de l'UI pour
+  /// l'instant, le `+` ne fait plus que lancer un USSD. Code conservé pour
+  /// une réactivation future.
+  // ignore: unused_element
   Future<void> _createManual() async {
     final autorise = await LicenceGuard.verifier(
         context, ActionType.creerTransactionManuelle);
@@ -217,6 +227,10 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
   @override
   Widget build(BuildContext context) {
     final operatorsAsync = ref.watch(operatorsProvider);
+    // La capture d'un client (nom/prénom/CNIB) ne concerne que les comptes
+    // Agence (D18) — un compte Particulier ne fait que lancer le USSD.
+    final isAgence =
+        ref.watch(accountTypeProvider).valueOrNull != 'particulier';
     final typesAsync = _selectedOperator != null
         ? ref.watch(operatorTransactionTypesProvider(_selectedOperator!.id))
         : null;
@@ -310,15 +324,51 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
               ),
             ],
 
+            // Type sélectionné sans code USSD → lancement impossible (D18).
+            if (_selectedType != null &&
+                (_selectedType!.ussdCode == null ||
+                    _selectedType!.ussdCode!.isEmpty)) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        color: Colors.orange.shade700, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Ce type n\'a pas de code USSD configuré — impossible '
+                        'de lancer. Ajoutez-le depuis "Opérateurs".',
+                        style: TextStyle(
+                            fontSize: 13, color: Colors.orange.shade900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 24),
 
             // Numéro client
             TextFormField(
               controller: _phoneController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Numéro du client *',
                 hintText: '70 12 34 56',
-                prefixIcon: Icon(Icons.phone),
+                prefixIcon: const Icon(Icons.phone),
+                suffixIcon: ContactPickerButton(
+                  onPicked: (n) {
+                    _phoneController.text = n;
+                    _searchClients(n);
+                  },
+                ),
               ),
               keyboardType: TextInputType.phone,
               validator: (v) =>
@@ -326,8 +376,8 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
               onChanged: _searchClients,
             ),
 
-            // Suggestions
-            if (_suggestions.isNotEmpty)
+            // Suggestions (Agence uniquement — D18)
+            if (isAgence && _suggestions.isNotEmpty)
               Container(
                 margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
@@ -349,8 +399,8 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
                 ),
               ),
 
-            // Client sélectionné
-            if (_selectedClient != null) ...[
+            // Client sélectionné (Agence uniquement — D18)
+            if (isAgence && _selectedClient != null) ...[
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -379,8 +429,8 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
               ),
             ],
 
-            // Nouveau client
-            if (_isNewClient) ...[
+            // Nouveau client (Agence uniquement — D18)
+            if (isAgence && _isNewClient) ...[
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -455,8 +505,12 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
 
             const SizedBox(height: 32),
 
-            // === DEUX BOUTONS : USSD ou Manuel ===
-            if (_selectedType?.ussdCode != null && _selectedType!.ussdCode!.isNotEmpty)
+            // Le `+` ne fait plus que lancer un USSD (D18) — la transaction
+            // est créée par le SMS entrant. Bouton visible seulement si le
+            // type sélectionné a un code USSD (sinon l'encart d'info plus
+            // haut explique pourquoi c'est impossible).
+            if (_selectedType?.ussdCode != null &&
+                _selectedType!.ussdCode!.isNotEmpty)
               ElevatedButton.icon(
                 onPressed: _launchUssd,
                 icon: const Icon(Icons.phone_forwarded),
@@ -469,18 +523,6 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
               ),
-
-            if (_selectedType?.ussdCode != null && _selectedType!.ussdCode!.isNotEmpty)
-              const SizedBox(height: 12),
-
-            OutlinedButton.icon(
-              onPressed: _selectedType == null ? null : _createManual,
-              icon: const Icon(Icons.edit_note),
-              label: const Text('Créer manuellement (sans SMS)'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-            ),
           ],
         ),
       ),

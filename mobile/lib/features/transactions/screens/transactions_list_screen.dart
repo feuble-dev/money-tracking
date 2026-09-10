@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets/main_shell.dart';
 import '../models/transaction_model.dart';
@@ -36,6 +37,10 @@ class _TransactionsListScreenState
     final filter = ref.watch(transactionFilterProvider);
     final pendingCount = ref.watch(pendingCountProvider);
     final operatorsAsync = ref.watch(operatorsProvider);
+    // La modification d'une transaction ne concerne que les comptes Agence
+    // (D18).
+    final isAgence =
+        ref.watch(accountTypeProvider).valueOrNull != 'particulier';
 
     return Scaffold(
       appBar: AppBar(
@@ -240,6 +245,7 @@ class _TransactionsListScreenState
                             transaction: transactions[index],
                             dateFormat: _dateFormat,
                             currencyFormat: _currencyFormat,
+                            isAgence: isAgence,
                           ),
                         ),
                       ),
@@ -477,11 +483,13 @@ class _TransactionCard extends StatelessWidget {
   final TransactionModel transaction;
   final DateFormat dateFormat;
   final NumberFormat currencyFormat;
+  final bool isAgence;
 
   const _TransactionCard({
     required this.transaction,
     required this.dateFormat,
     required this.currencyFormat,
+    required this.isAgence,
   });
 
   @override
@@ -657,23 +665,25 @@ class _TransactionCard extends StatelessWidget {
                               fontFamily: 'monospace', fontSize: 12)),
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  // Bouton modifier
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(ctx2);
-                        context.push('/transactions/pending/${transaction.id}');
-                      },
-                      icon: const Icon(Icons.edit, size: 18),
-                      label: const Text('Modifier les infos'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                  // Modification réservée aux comptes Agence (D18).
+                  if (isAgence) ...[
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(ctx2);
+                          context.push('/transactions/pending/${transaction.id}');
+                        },
+                        icon: const Icon(Icons.edit, size: 18),
+                        label: const Text('Modifier les infos'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryColor,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             );

@@ -1,12 +1,14 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import '../database/database_helper.dart';
 import '../sms/sms_pattern_builder.dart';
 import 'models/catalog_models.dart';
+import 'operator_logo_cache.dart';
 
-const _catalogBaseUrl = 'https://api-money-tracking.rf-appdev.online/api/catalog';
+const _catalogBaseUrl = 'https://api.money-tracking.site/api/catalog';
 // const _catalogBaseUrl = 'http://localhost:8000/api/catalog';
 
 const _uuid = Uuid();
@@ -38,7 +40,11 @@ class CatalogSyncService {
     String? accountType,
   }) async {
     final uri = Uri.parse('$_catalogBaseUrl/countries/$countryCode/operators/')
-        .replace(queryParameters: accountType != null ? {'account_type': accountType} : null);
+        .replace(
+          queryParameters: accountType != null
+              ? {'account_type': accountType}
+              : null,
+        );
     final response = await http.get(uri).timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) {
       throw Exception('Erreur serveur (${response.statusCode})');
@@ -78,6 +84,17 @@ class CatalogSyncService {
     final db = await DatabaseHelper.instance.database;
     final now = DateTime.now().toIso8601String();
 
+    // Télécharge les logos AVANT la transaction (appels réseau) — ils sont
+    // mis en cache localement, on ne stocke plus l'URL distante dans
+    // logo_path (elle serait rechargée depuis le serveur à chaque affichage).
+    final localLogos = <int, String>{};
+    for (final op in operators) {
+      final url = op.logoUrl;
+      if (url == null || url.isEmpty) continue;
+      final path = await OperatorLogoCache.fetch(url, op.id);
+      if (path != null) localLogos[op.id] = path;
+    }
+
     await db.transaction((txn) async {
       for (final catalogOp in operators) {
         // Un opérateur catalogue déjà importé (ex: agence supplémentaire du
@@ -95,7 +112,10 @@ class CatalogSyncService {
           await txn.insert('operators', {
             'id': operatorId,
             'name': catalogOp.name,
-            'logo_path': catalogOp.logoUrl,
+            // Fichier local mis en cache ; l'URL distante n'est gardée en
+            // secours que si le téléchargement a échoué.
+            'logo_path': localLogos[catalogOp.id] ?? catalogOp.logoUrl,
+            'logo_url': catalogOp.logoUrl,
             'sms_sender': catalogOp.smsSender,
             'is_active': 1,
             'catalog_operator_id': catalogOp.id,
@@ -105,15 +125,16 @@ class CatalogSyncService {
           });
         }
 
-        await txn.insert(
-          'agence_operators',
-          {'agence_id': agenceId, 'operator_id': operatorId},
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
+        await txn.insert('agence_operators', {
+          'agence_id': agenceId,
+          'operator_id': operatorId,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
 
         for (final catalogType in catalogOp.transactionTypes) {
-          final transactionTypeId =
-              await _findOrCreateTransactionType(txn, catalogType);
+          final transactionTypeId = await _findOrCreateTransactionType(
+            txn,
+            catalogType,
+          );
 
           final existingLink = await txn.query(
             'operator_transaction_types',
@@ -156,16 +177,22 @@ class CatalogSyncService {
             if (existingPattern.isNotEmpty) continue; // déjà importé
 
             final zones = pattern.taggedZones
-                .map((z) => TaggedZone(
-                      start: z['start'] as int,
-                      end: z['end'] as int,
-                      fieldName: z['fieldName'] as String,
-                      value: pattern.rawExample.substring(
-                          z['start'] as int, z['end'] as int),
-                    ))
+                .map(
+                  (z) => TaggedZone(
+                    start: z['start'] as int,
+                    end: z['end'] as int,
+                    fieldName: z['fieldName'] as String,
+                    value: pattern.rawExample.substring(
+                      z['start'] as int,
+                      z['end'] as int,
+                    ),
+                  ),
+                )
                 .toList();
             final regex = SmsPatternBuilder.buildRegex(
-                pattern.rawExample, zones);
+              pattern.rawExample,
+              zones,
+            );
 
             await txn.insert('sms_patterns', {
               'id': _uuid.v4(),
@@ -236,8 +263,39 @@ class CatalogSyncService {
     String? accountType,
   }) async {
     final db = await DatabaseHelper.instance.database;
-    final operators = await fetchOperators(countryCode, accountType: accountType);
+    final operators = await fetchOperators(
+      countryCode,
+      accountType: accountType,
+    );
     int changed = 0;
+
+    // Rafraîchit le cache local des logos AVANT la transaction (appels
+    // réseau). On (re)télécharge quand l'URL source a changé côté admin, ou
+    // quand le fichier local attendu est absent (install migrée depuis une
+    // version qui stockait l'URL distante dans logo_path — voir migration
+    // DB v13).
+    final localOps = await db.query(
+      'operators',
+      where: 'catalog_operator_id IS NOT NULL',
+    );
+    final byCatalogId = {
+      for (final r in localOps) r['catalog_operator_id'] as int: r,
+    };
+    final freshLogos = <int, String>{};
+    for (final catalogOp in operators) {
+      final row = byCatalogId[catalogOp.id];
+      if (row == null) continue; // resync ne rajoute pas d'opérateur
+      final url = catalogOp.logoUrl;
+      if (url == null || url.isEmpty) continue;
+      final currentPath = row['logo_path'] as String?;
+      final currentUrl = row['logo_url'] as String?;
+      final localOk = currentPath != null &&
+          !currentPath.startsWith('http') &&
+          File(currentPath).existsSync();
+      if (currentUrl == url && localOk) continue; // déjà à jour
+      final path = await OperatorLogoCache.fetch(url, catalogOp.id);
+      if (path != null) freshLogos[catalogOp.id] = path;
+    }
 
     await db.transaction((txn) async {
       for (final catalogOp in operators) {
@@ -250,21 +308,29 @@ class CatalogSyncService {
         final operatorId = existingOp.first['id'] as String;
         final now = DateTime.now().toIso8601String();
 
-        // Champs propres à l'opérateur (logo notamment) — un logo ajouté
-        // après coup dans le dashboard admin ne remontait jamais ici avant,
-        // seuls les types/patterns imbriqués étaient mis à jour.
+        // Champs propres à l'opérateur (logo notamment) — un logo ajouté ou
+        // modifié après coup dans le dashboard admin ne remontait jamais ici
+        // avant, seuls les types/patterns imbriqués étaient mis à jour.
+        // logo_path pointe sur le fichier local mis en cache ; logo_url ne
+        // suit l'URL admin que lorsque le fichier a effectivement été
+        // (re)téléchargé, sinon le prochain resync retentera.
         final current = existingOp.first;
-        if (current['logo_path'] != catalogOp.logoUrl ||
-            current['name'] != catalogOp.name ||
-            current['sms_sender'] != catalogOp.smsSender) {
+        final gotFreshLogo = freshLogos.containsKey(catalogOp.id);
+        final metaChanged = current['name'] != catalogOp.name ||
+            current['sms_sender'] != catalogOp.smsSender;
+        if (gotFreshLogo || metaChanged) {
+          final data = <String, Object?>{
+            'name': catalogOp.name,
+            'sms_sender': catalogOp.smsSender,
+            'synced_at': now,
+          };
+          if (gotFreshLogo) {
+            data['logo_path'] = freshLogos[catalogOp.id];
+            data['logo_url'] = catalogOp.logoUrl;
+          }
           await txn.update(
             'operators',
-            {
-              'logo_path': catalogOp.logoUrl,
-              'name': catalogOp.name,
-              'sms_sender': catalogOp.smsSender,
-              'synced_at': now,
-            },
+            data,
             where: 'id = ?',
             whereArgs: [operatorId],
           );
@@ -272,7 +338,10 @@ class CatalogSyncService {
         }
 
         for (final catalogType in catalogOp.transactionTypes) {
-          final transactionTypeId = await _findOrCreateTransactionType(txn, catalogType);
+          final transactionTypeId = await _findOrCreateTransactionType(
+            txn,
+            catalogType,
+          );
 
           final existingLink = await txn.query(
             'operator_transaction_types',
@@ -308,15 +377,22 @@ class CatalogSyncService {
 
           for (final pattern in catalogType.smsPatterns) {
             final zones = pattern.taggedZones
-                .map((z) => TaggedZone(
-                      start: z['start'] as int,
-                      end: z['end'] as int,
-                      fieldName: z['fieldName'] as String,
-                      value: pattern.rawExample.substring(
-                          z['start'] as int, z['end'] as int),
-                    ))
+                .map(
+                  (z) => TaggedZone(
+                    start: z['start'] as int,
+                    end: z['end'] as int,
+                    fieldName: z['fieldName'] as String,
+                    value: pattern.rawExample.substring(
+                      z['start'] as int,
+                      z['end'] as int,
+                    ),
+                  ),
+                )
                 .toList();
-            final regex = SmsPatternBuilder.buildRegex(pattern.rawExample, zones);
+            final regex = SmsPatternBuilder.buildRegex(
+              pattern.rawExample,
+              zones,
+            );
             final zonesJson = SmsPatternBuilder.zonesToJson(zones);
 
             final existingPattern = await txn.query(
@@ -345,7 +421,8 @@ class CatalogSyncService {
             }
 
             final current = existingPattern.first;
-            final unchanged = current['tagged_zones_json'] == zonesJson &&
+            final unchanged =
+                current['tagged_zones_json'] == zonesJson &&
                 current['regex_generated'] == regex &&
                 current['direction'] == pattern.direction;
             if (unchanged) continue;

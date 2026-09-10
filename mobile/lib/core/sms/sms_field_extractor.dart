@@ -6,12 +6,17 @@ class SmsFieldExtractor {
   /// Patterns prédéfinis pour extraire chaque champ
   /// Chaque pattern a un groupe de capture (group 1) pour la valeur
   static const Map<String, List<String>> fieldPatterns = {
-    // Montant : cherche un nombre suivi de FCFA
+    // Montant : cherche un nombre suivi de FCFA. Chaque alternative est
+    // ancrée par `(?<!\d)` (pas précédé d'un chiffre) — sans ça, un nombre
+    // contigu de 4+ chiffres sans séparateur (ex: "7000 FCFA", fréquent
+    // pour les montants ronds) pouvait matcher en plein milieu du nombre
+    // (le `\d{1,3}` des motifs à séparateurs trouvait "000" au lieu de
+    // "7000", parce que rien n'empêchait de démarrer après le premier "7").
     'montant': [
-      r'(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*FCFA',
-      r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*FCFA',
-      r'(\d+(?:[\s.]\d{3})*)\s*FCFA',
-      r'(\d+)\s*FCFA',
+      r'(?<!\d)(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*FCFA',
+      r'(?<!\d)(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*FCFA',
+      r'(?<!\d)(\d+(?:[\s.]\d{3})*)\s*FCFA',
+      r'(?<!\d)(\d+)\s*FCFA',
     ],
 
     // Numéro client : 8 chiffres après un mot-clé

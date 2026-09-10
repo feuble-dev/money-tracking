@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:uuid/uuid.dart';
+import '../sms/sms_dedup.dart';
 
 const _uuid = Uuid();
 
@@ -24,7 +25,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 11,
+      version: 14,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -46,6 +47,7 @@ class DatabaseHelper {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         logo_path TEXT,
+        logo_url TEXT,
         account_number TEXT,
         agent_number TEXT,
         sms_sender TEXT,
@@ -170,6 +172,7 @@ class DatabaseHelper {
         source TEXT DEFAULT 'manual',
         sms_id TEXT,
         sms_raw TEXT,
+        match_confidence INTEGER,
         created_at TEXT NOT NULL,
         FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
         FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
@@ -185,6 +188,7 @@ class DatabaseHelper {
         processed INTEGER DEFAULT 0,
         transaction_id TEXT,
         pattern_id TEXT,
+        content_hash TEXT,
         created_at TEXT
       )
     ''');
@@ -273,6 +277,12 @@ class DatabaseHelper {
     ''');
 
     await _createIndexes(db);
+    // Index unique de déduplication SMS (v14) — hors _createIndexes qui peut
+    // tourner en cours de migration avant que la colonne content_hash
+    // n'existe (voir _onUpgrade < 14). Ici, en création fraîche, la colonne
+    // est déjà présente dans le DDL de sms_messages.
+    await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_content_hash ON sms_messages(content_hash)');
     await _seedDefaultTransactionTypes(db);
   }
 
@@ -472,6 +482,63 @@ class DatabaseHelper {
       // désordre (import historique, redélivrance SMS) sans écraser une
       // valeur plus récente et donc plus vraie.
       await db.execute('ALTER TABLE caisse ADD COLUMN solde_ref_at TEXT');
+    }
+    if (oldVersion < 12) {
+      // Score de confiance (0-100) du matching flou (SmsMatchingEngine) —
+      // null pour toute transaction créée avant cette version, ou pour une
+      // transaction manuelle/import historique (toujours confiance 100,
+      // jamais stockée puisque non ambiguë par construction).
+      await db.execute('ALTER TABLE transactions ADD COLUMN match_confidence INTEGER');
+    }
+    if (oldVersion < 13) {
+      // Les logos des opérateurs du catalogue étaient stockés en tant qu'URL
+      // distante dans logo_path et rechargés depuis le serveur à chaque
+      // affichage. logo_path pointe désormais sur un fichier local mis en
+      // cache (OperatorLogoCache) ; logo_url conserve l'URL source pour
+      // détecter un changement de logo au resync catalogue (D6). L'URL déjà
+      // présente dans logo_path est recopiée dans logo_url — le prochain
+      // resync (main.dart, au démarrage) téléchargera le fichier local et
+      // remplacera logo_path.
+      try {
+        await db.execute('ALTER TABLE operators ADD COLUMN logo_url TEXT');
+      } catch (_) {}
+      await db.execute('''
+        UPDATE operators SET logo_url = logo_path
+        WHERE catalog_operator_id IS NOT NULL
+          AND logo_path LIKE 'http%'
+      ''');
+    }
+    if (oldVersion < 14) {
+      // Déduplication SMS atomique : un même SMS pouvait être traité en
+      // parallèle par deux BroadcastReceivers (isolate principal via
+      // EventChannel + isolate headless another_telephony), chacun avec sa
+      // connexion SQLite — le "SELECT puis INSERT" fenêtré n'étant pas
+      // atomique entre isolates, les deux créaient une ligne + une
+      // transaction. On pose une empreinte déterministe (smsContentHash) en
+      // index UNIQUE : l'INSERT OR IGNORE devient le point de sérialisation.
+      try {
+        await db.execute('ALTER TABLE sms_messages ADD COLUMN content_hash TEXT');
+      } catch (_) {}
+      final rows = await db.query('sms_messages', columns: ['id', 'sender', 'body']);
+      final batch = db.batch();
+      for (final r in rows) {
+        batch.update(
+          'sms_messages',
+          {'content_hash': smsContentHash((r['sender'] as String?) ?? '', r['body'] as String)},
+          where: 'id = ?',
+          whereArgs: [r['id']],
+        );
+      }
+      await batch.commit(noResult: true);
+      // Purge des doublons déjà en base avant de poser l'index unique
+      // (garde la plus ancienne ligne par empreinte).
+      await db.execute('''
+        DELETE FROM sms_messages WHERE id NOT IN (
+          SELECT MIN(id) FROM sms_messages WHERE content_hash IS NOT NULL GROUP BY content_hash
+        ) AND content_hash IS NOT NULL
+      ''');
+      await db.execute(
+          'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_content_hash ON sms_messages(content_hash)');
     }
   }
 

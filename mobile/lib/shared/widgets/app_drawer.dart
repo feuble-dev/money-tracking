@@ -149,39 +149,41 @@ class AppDrawer extends ConsumerWidget {
                     },
                   ),
 
-                  const Divider(height: 24),
-
-                  // === SECTION CLIENTS ===
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Text(
-                      'CLIENTS',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: theme.colorScheme.primary,
-                        letterSpacing: 1.2,
+                  // === SECTION CLIENTS === (Agence uniquement — D18 : un
+                  // compte Particulier ne gère pas de clients)
+                  if (accountType == 'agence') ...[
+                    const Divider(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(
+                        'CLIENTS',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.primary,
+                          letterSpacing: 1.2,
+                        ),
                       ),
                     ),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.people_outline),
-                    title: const Text('Liste des clients'),
-                    dense: true,
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.push('/clients');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.person_add_outlined),
-                    title: const Text('Ajouter un client'),
-                    dense: true,
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.push('/clients/add');
-                    },
-                  ),
+                    ListTile(
+                      leading: const Icon(Icons.people_outline),
+                      title: const Text('Liste des clients'),
+                      dense: true,
+                      onTap: () {
+                        Navigator.pop(context);
+                        context.push('/clients');
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.person_add_outlined),
+                      title: const Text('Ajouter un client'),
+                      dense: true,
+                      onTap: () {
+                        Navigator.pop(context);
+                        context.push('/clients/add');
+                      },
+                    ),
+                  ],
 
                   if (accountType == 'agence') ...[
                     const Divider(height: 24),

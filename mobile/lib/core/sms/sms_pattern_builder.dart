@@ -134,16 +134,21 @@ class SmsPatternBuilder {
     }
   }
 
-  /// Échappe les caractères regex ET ajoute de la flexibilité sur les espaces
-  /// Tous les types d'espaces (y compris Unicode) sont remplacés par \s+
+  /// Échappe les caractères regex ET ajoute de la flexibilité sur les espaces.
+  /// Tous les types d'espaces (y compris Unicode) sont remplacés par un
+  /// séparateur flexible **optionnel** (`*`, pas `+`) : certains opérateurs
+  /// envoient parfois le même SMS avec deux mots collés là où l'exemple
+  /// tagué avait un espace (ex: "Votre solde est de" devient "Votre solde
+  /// estde" sur un vrai message) — exiger au moins un espace y faisait
+  /// échouer le pattern entier alors que le contenu est identique.
   static String _escapeWithWhitespaceFlexibility(String text) {
     final buffer = StringBuffer();
     for (int i = 0; i < text.length; i++) {
       final char = text[i];
       if (_isWhitespace(char)) {
         // Remplacer tous les espaces consécutifs par un pattern flexible
-        if (buffer.isEmpty || !buffer.toString().endsWith(r'[\s\u00A0]+')) {
-          buffer.write(r'[\s\u00A0]+');
+        if (buffer.isEmpty || !buffer.toString().endsWith(r'[\s\u00A0]*')) {
+          buffer.write(r'[\s\u00A0]*');
         }
         // Sauter les espaces consécutifs
         while (i + 1 < text.length && _isWhitespace(text[i + 1])) {
@@ -154,6 +159,32 @@ class SmsPatternBuilder {
       }
     }
     return buffer.toString();
+  }
+
+  /// Segments littéraux d'un pattern (le texte hors zones taguées), dans
+  /// l'ordre — même segmentation que [buildRegex] mais renvoie le texte brut
+  /// au lieu de la regex compilée. Utilisé par le scoring flou
+  /// (`SmsMatchingEngine`) quand la regex exacte ne matche pas : une
+  /// formulation d'opérateur légèrement différente (espaces collés/séparés,
+  /// ponctuation) ne doit pas forcément faire ignorer tout le SMS.
+  static List<String> literalChunks(String rawSms, List<TaggedZone> zones) {
+    if (zones.isEmpty) return [rawSms];
+
+    final sortedZones = List<TaggedZone>.from(zones)
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    final chunks = <String>[];
+    int currentPos = 0;
+    for (final zone in sortedZones) {
+      if (zone.start > currentPos) {
+        chunks.add(rawSms.substring(currentPos, zone.start));
+      }
+      currentPos = zone.end;
+    }
+    if (currentPos < rawSms.length) {
+      chunks.add(rawSms.substring(currentPos));
+    }
+    return chunks;
   }
 
   /// Parse un SMS avec une regex et retourne les valeurs extraites

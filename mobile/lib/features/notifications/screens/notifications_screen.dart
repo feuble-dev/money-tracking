@@ -11,12 +11,13 @@ import '../../../core/theme/app_colors.dart';
 import '../../transactions/providers/transaction_provider.dart';
 
 // ── URL backend (même que licence_service) ──
-const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+const String _baseUrl = 'https://api.money-tracking.site/api/licence';
 // const String _baseUrl = 'http://localhost:8000/api/licence';
 
 /// Provider: transactions SMS récentes (utilise la vue optimisée)
-final recentActivityProvider =
-    FutureProvider<List<Map<String, dynamic>>>((ref) async {
+final recentActivityProvider = FutureProvider<List<Map<String, dynamic>>>((
+  ref,
+) async {
   final db = await DatabaseHelper.instance.database;
   return db.rawQuery('''
     SELECT * FROM v_transactions_with_operator
@@ -27,8 +28,9 @@ final recentActivityProvider =
 });
 
 /// Provider: notifications générales depuis le backend
-final generalNotificationsProvider =
-    FutureProvider<List<Map<String, dynamic>>>((ref) async {
+final generalNotificationsProvider = FutureProvider<List<Map<String, dynamic>>>((
+  ref,
+) async {
   final db = await DatabaseHelper.instance.database;
 
   // Tenter de fetch depuis le backend
@@ -39,18 +41,24 @@ final generalNotificationsProvider =
       // Construire l'URL correctement
       final url = '$_baseUrl/notifications/?telephone=$telephone';
       debugPrint('[Notifs] Fetch: $url');
-      final resp = await http.get(
-        Uri.parse(url),
-      ).timeout(const Duration(seconds: 8));
-      debugPrint('[Notifs] Response: ${resp.statusCode} body=${resp.body.length} chars');
+      final resp = await http
+          .get(Uri.parse(url))
+          .timeout(const Duration(seconds: 8));
+      debugPrint(
+        '[Notifs] Response: ${resp.statusCode} body=${resp.body.length} chars',
+      );
       if (resp.statusCode == 200) {
         final List<dynamic> data = jsonDecode(resp.body);
         debugPrint('[Notifs] ${data.length} notifications reçues');
         final now = DateTime.now().toIso8601String();
         for (final n in data) {
           // Vérifier si cette notif est déjà en base
-          final existing = await db.query('general_notifications',
-              where: 'id = ?', whereArgs: [n['id']], limit: 1);
+          final existing = await db.query(
+            'general_notifications',
+            where: 'id = ?',
+            whereArgs: [n['id']],
+            limit: 1,
+          );
           if (existing.isEmpty) {
             // Nouvelle notif → insérer + notification Android
             await db.insert('general_notifications', {
@@ -177,14 +185,20 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.accentColor,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Text('$pendingCount',
-                          style: const TextStyle(
-                              fontSize: 10, color: Colors.white)),
+                      child: Text(
+                        '$pendingCount',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
                   ],
                 ],
@@ -199,14 +213,20 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.red,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Text('$unreadCount',
-                          style: const TextStyle(
-                              fontSize: 10, color: Colors.white)),
+                      child: Text(
+                        '$unreadCount',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
                   ],
                 ],
@@ -217,10 +237,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _TransactionsTab(),
-          _GeneralTab(),
-        ],
+        children: [_TransactionsTab(), _GeneralTab()],
       ),
     );
   }
@@ -229,8 +246,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
 // ── Onglet Transactions ──────────────────────────────────────
 class _TransactionsTab extends ConsumerWidget {
   final dateFormat = DateFormat('dd/MM HH:mm', 'fr_FR');
-  final currencyFormat =
-      NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+  final currencyFormat = NumberFormat.currency(
+    locale: 'fr_FR',
+    symbol: 'FCFA',
+    decimalDigits: 0,
+  );
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -247,8 +267,10 @@ class _TransactionsTab extends ConsumerWidget {
               children: [
                 Icon(Icons.receipt_long, size: 64, color: Colors.grey[300]),
                 const SizedBox(height: 16),
-                Text('Aucune transaction SMS',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 16)),
+                Text(
+                  'Aucune transaction SMS',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                ),
               ],
             ),
           );
@@ -262,9 +284,11 @@ class _TransactionsTab extends ConsumerWidget {
             final isDeposit = tx['direction'] != null
                 ? tx['direction'] == 'in'
                 : tx['transaction_type'] == 'deposit';
-            final color =
-                isDeposit ? AppColors.depositColor : AppColors.withdrawColor;
-            final typeLabel = (tx['type_label'] as String?) ??
+            final color = isDeposit
+                ? AppColors.depositColor
+                : AppColors.withdrawColor;
+            final typeLabel =
+                (tx['type_label'] as String?) ??
                 (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait');
             final amount = (tx['amount'] as num).toDouble();
             final clientName = tx['client_name'] as String?;
@@ -297,9 +321,7 @@ class _TransactionsTab extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Icon(
-                          isDeposit
-                              ? Icons.arrow_downward
-                              : Icons.arrow_upward,
+                          isDeposit ? Icons.arrow_downward : Icons.arrow_upward,
                           color: color,
                           size: 20,
                         ),
@@ -309,31 +331,43 @@ class _TransactionsTab extends ConsumerWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('$typeLabel - $operatorName',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color: color,
-                                    fontSize: 13)),
+                            Text(
+                              '$typeLabel - $operatorName',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: color,
+                                fontSize: 13,
+                              ),
+                            ),
                             const SizedBox(height: 2),
-                            Text(clientName ?? clientPhone,
-                                style: const TextStyle(fontSize: 13)),
-                            Text(dateFormat.format(createdAt),
-                                style: Theme.of(context).textTheme.bodySmall),
+                            Text(
+                              clientName ?? clientPhone,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            Text(
+                              dateFormat.format(createdAt),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                           ],
                         ),
                       ),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text(currencyFormat.format(amount),
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: color,
-                                  fontSize: 14)),
+                          Text(
+                            currencyFormat.format(amount),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: color,
+                              fontSize: 14,
+                            ),
+                          ),
                           const SizedBox(height: 4),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
                               color: isPending
                                   ? Colors.orange.withAlpha(20)
@@ -382,14 +416,22 @@ class _GeneralTab extends ConsumerWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.notifications_none, size: 64, color: Colors.grey[300]),
+                Icon(
+                  Icons.notifications_none,
+                  size: 64,
+                  color: Colors.grey[300],
+                ),
                 const SizedBox(height: 16),
-                Text('Aucune notification',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 16)),
+                Text(
+                  'Aucune notification',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                ),
                 const SizedBox(height: 8),
-                Text('Les notifications envoyées par\nl\'administrateur apparaîtront ici.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey[400], fontSize: 13)),
+                Text(
+                  'Les notifications envoyées par\nl\'administrateur apparaîtront ici.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                ),
               ],
             ),
           );
@@ -412,8 +454,12 @@ class _GeneralTab extends ConsumerWidget {
                   // Marquer comme lu
                   if (!isRead) {
                     final db = await DatabaseHelper.instance.database;
-                    await db.update('general_notifications', {'is_read': 1},
-                        where: 'id = ?', whereArgs: [n['id']]);
+                    await db.update(
+                      'general_notifications',
+                      {'is_read': 1},
+                      where: 'id = ?',
+                      whereArgs: [n['id']],
+                    );
                     ref.invalidate(generalNotificationsProvider);
                   }
                   if (!context.mounted) return;
@@ -421,8 +467,10 @@ class _GeneralTab extends ConsumerWidget {
                   showDialog(
                     context: context,
                     builder: (ctx) => AlertDialog(
-                      title: Text(n['titre'] as String,
-                          style: const TextStyle(fontSize: 16)),
+                      title: Text(
+                        n['titre'] as String,
+                        style: const TextStyle(fontSize: 16),
+                      ),
                       content: Text(n['message'] as String),
                       actions: [
                         TextButton(
@@ -450,9 +498,7 @@ class _GeneralTab extends ConsumerWidget {
                           isRead
                               ? Icons.notifications_none
                               : Icons.notifications_active,
-                          color: isRead
-                              ? Colors.grey
-                              : AppColors.primaryColor,
+                          color: isRead ? Colors.grey : AppColors.primaryColor,
                           size: 20,
                         ),
                       ),
@@ -464,8 +510,9 @@ class _GeneralTab extends ConsumerWidget {
                             Text(
                               n['titre'] as String,
                               style: TextStyle(
-                                fontWeight:
-                                    isRead ? FontWeight.normal : FontWeight.w600,
+                                fontWeight: isRead
+                                    ? FontWeight.normal
+                                    : FontWeight.w600,
                                 fontSize: 14,
                               ),
                               maxLines: 1,
@@ -475,7 +522,9 @@ class _GeneralTab extends ConsumerWidget {
                             Text(
                               n['message'] as String,
                               style: TextStyle(
-                                  color: Colors.grey[600], fontSize: 12),
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -483,7 +532,9 @@ class _GeneralTab extends ConsumerWidget {
                             Text(
                               dateFormat.format(createdAt),
                               style: TextStyle(
-                                  color: Colors.grey[400], fontSize: 11),
+                                color: Colors.grey[400],
+                                fontSize: 11,
+                              ),
                             ),
                           ],
                         ),

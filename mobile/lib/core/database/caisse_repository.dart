@@ -1,4 +1,7 @@
+import 'package:uuid/uuid.dart';
 import 'database_helper.dart';
+
+const _uuid = Uuid();
 
 /// Mise à jour du solde caisse, indépendante de Riverpod — utilisée par les
 /// chemins qui ne tournent pas dans un widget tree (pipeline SMS temps réel
@@ -14,15 +17,18 @@ class CaisseRepository {
   ///   deltas (qui dérive au moindre SMS manqué/mal parsé). Protégé contre le
   ///   désordre (import historique, redélivrance) par [transactionAt] : un
   ///   SMS plus ancien que le dernier solde déjà connu est ignoré, pour ne
-  ///   jamais écraser une valeur plus récente donc plus vraie.
+  ///   jamais écraser une valeur plus récente donc plus vraie. Si aucune
+  ///   caisse n'existe encore pour cet opérateur, elle est créée directement
+  ///   avec ce solde annoncé comme référence — inutile d'attendre que
+  ///   l'agent clique "Configurer" pour que le solde réel apparaisse au
+  ///   tableau de bord, alors que le SMS vient justement de le donner.
   /// - [soldeApres] absent (transaction manuelle, aucun SMS ne le rapporte) :
-  ///   seul cas où on retombe sur un ajustement delta (+/- amount) relatif au
-  ///   dernier solde connu.
+  ///   on retombe sur un ajustement delta (+/- amount) relatif au dernier
+  ///   solde connu — mais seulement si une caisse existe déjà, faute de
+  ///   référence de départ pour en créer une.
   ///
   /// direction='in' (l'argent du client augmente, ex-dépôt) : solde diminue.
   /// direction='out' (l'argent du client diminue, ex-retrait) : solde augmente.
-  /// No-op si aucune caisse n'a été initialisée pour cet opérateur (la
-  /// caisse est une fonctionnalité opt-in, pas un suivi forcé).
   static Future<void> updateSoldeAfterTransaction({
     required String operatorId,
     required double amount,
@@ -33,7 +39,21 @@ class CaisseRepository {
     final db = await DatabaseHelper.instance.database;
     final existing = await db.query('caisse',
         where: 'operator_id = ?', whereArgs: [operatorId]);
-    if (existing.isEmpty) return;
+
+    if (existing.isEmpty) {
+      if (soldeApres == null) return;
+      final at = transactionAt ?? DateTime.now();
+      await db.insert('caisse', {
+        'id': _uuid.v4(),
+        'operator_id': operatorId,
+        'solde_initial': soldeApres,
+        'solde_actuel': soldeApres,
+        'solde_ref_at': at.toIso8601String(),
+        'seuil_alerte': 0,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+      return;
+    }
 
     if (soldeApres != null) {
       final refAtStr = existing.first['solde_ref_at'] as String?;

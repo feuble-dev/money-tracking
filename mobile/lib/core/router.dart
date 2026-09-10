@@ -85,6 +85,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/dashboard';
       }
 
+      // Gestion des clients réservée aux comptes Agence (D18) — masquée du
+      // tiroir ET bloquée en accès direct.
+      if (accountType == 'particulier' && currentPath.startsWith('/clients')) {
+        return '/dashboard';
+      }
+
       return null;
     },
     routes: [

@@ -1,24 +1,30 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-const _syncBaseUrl = 'https://api-money-tracking.rf-appdev.online/api/sync';
+const _syncBaseUrl = 'https://api.money-tracking.site/api/sync';
 // const _syncBaseUrl = 'http://localhost:8000/api/sync';
-const _licenceBaseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+const _licenceBaseUrl = 'https://api.money-tracking.site/api/licence';
 // const _licenceBaseUrl = 'http://localhost:8000/api/licence';
 
 /// Vue "patron" multi-agence (D-affiliation) — visibilité en lecture seule
 /// confirmée, jamais d'écriture distante sur une agence affiliée.
 class PatronApi {
-  static Future<List<Map<String, dynamic>>> demandesEnAttente(String telephone) async {
+  static Future<List<Map<String, dynamic>>> demandesEnAttente(
+    String telephone,
+  ) async {
     final res = await http
-        .get(Uri.parse('$_syncBaseUrl/demandes-en-attente/?telephone=$telephone'))
+        .get(
+          Uri.parse('$_syncBaseUrl/demandes-en-attente/?telephone=$telephone'),
+        )
         .timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) return [];
     final data = jsonDecode(res.body);
     return List<Map<String, dynamic>>.from(data['demandes'] as List);
   }
 
-  static Future<List<Map<String, dynamic>>> mesAgencesOwned(String telephone) async {
+  static Future<List<Map<String, dynamic>>> mesAgencesOwned(
+    String telephone,
+  ) async {
     final res = await http
         .get(Uri.parse('$_licenceBaseUrl/agences/?telephone=$telephone'))
         .timeout(const Duration(seconds: 15));
@@ -27,7 +33,9 @@ class PatronApi {
     return List<Map<String, dynamic>>.from(data['agences'] as List);
   }
 
-  static Future<List<Map<String, dynamic>>> mesAgencesSync(String telephone) async {
+  static Future<List<Map<String, dynamic>>> mesAgencesSync(
+    String telephone,
+  ) async {
     final res = await http
         .get(Uri.parse('$_syncBaseUrl/mes-agences/?telephone=$telephone'))
         .timeout(const Duration(seconds: 15));
@@ -36,9 +44,16 @@ class PatronApi {
     return List<Map<String, dynamic>>.from(data['agences'] as List);
   }
 
-  static Future<Map<String, dynamic>?> agenceDetail(String telephone, int agenceId) async {
+  static Future<Map<String, dynamic>?> agenceDetail(
+    String telephone,
+    int agenceId,
+  ) async {
     final res = await http
-        .get(Uri.parse('$_syncBaseUrl/agence-detail/$agenceId/?telephone=$telephone'))
+        .get(
+          Uri.parse(
+            '$_syncBaseUrl/agence-detail/$agenceId/?telephone=$telephone',
+          ),
+        )
         .timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) return null;
     return jsonDecode(res.body) as Map<String, dynamic>;

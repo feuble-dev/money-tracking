@@ -19,6 +19,9 @@ dependencies:
   # SMS & Téléphonie
   another_telephony: ^0.3.0
 
+  # Contacts (sélection du numéro client au lancement USSD)
+  flutter_contacts: ^1.1.9+2
+
   # USSD
   url_launcher: ^6.3.1
 

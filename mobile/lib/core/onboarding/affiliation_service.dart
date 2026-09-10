@@ -3,9 +3,9 @@ import 'package:http/http.dart' as http;
 import '../licence/licence_service.dart';
 import '../licence/licence_storage.dart';
 
-const _syncBaseUrl = 'https://api-money-tracking.rf-appdev.online/api/sync';
+const _syncBaseUrl = 'https://api.money-tracking.site/api/sync';
 // const _syncBaseUrl = 'http://localhost:8000/api/sync';
-const _licenceBaseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+const _licenceBaseUrl = 'https://api.money-tracking.site/api/licence';
 // const _licenceBaseUrl = 'http://localhost:8000/api/licence';
 
 /// Rattachement d'un agent à un "patron" multi-agence (D-affiliation) —
@@ -32,11 +32,17 @@ class AffiliationService {
           .timeout(const Duration(seconds: 15));
       final data = jsonDecode(response.body);
       if (response.statusCode == 201 || response.statusCode == 200) {
-        return AffiliationResultat.succes(data['message'] as String? ?? 'Demande envoyée');
+        return AffiliationResultat.succes(
+          data['message'] as String? ?? 'Demande envoyée',
+        );
       }
-      return AffiliationResultat.erreur(data['erreur'] as String? ?? 'Erreur inconnue');
+      return AffiliationResultat.erreur(
+        data['erreur'] as String? ?? 'Erreur inconnue',
+      );
     } catch (_) {
-      return AffiliationResultat.erreur('Impossible de se connecter au serveur');
+      return AffiliationResultat.erreur(
+        'Impossible de se connecter au serveur',
+      );
     }
   }
 
@@ -48,7 +54,11 @@ class AffiliationService {
       // 8640 * 10s = 24h max
       try {
         final response = await http
-            .get(Uri.parse('$_syncBaseUrl/affiliation-statut/?device_id=$deviceId'))
+            .get(
+              Uri.parse(
+                '$_syncBaseUrl/affiliation-statut/?device_id=$deviceId',
+              ),
+            )
             .timeout(const Duration(seconds: 10));
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -118,15 +128,25 @@ class AffiliationStatutPoll {
   final String? agenceNom;
   final String? licenceCode;
 
-  AffiliationStatutPoll._(this.statut, {this.agenceId, this.agenceNom, this.licenceCode});
+  AffiliationStatutPoll._(
+    this.statut, {
+    this.agenceId,
+    this.agenceNom,
+    this.licenceCode,
+  });
 
-  factory AffiliationStatutPoll.enAttente() => AffiliationStatutPoll._('en_attente');
+  factory AffiliationStatutPoll.enAttente() =>
+      AffiliationStatutPoll._('en_attente');
   factory AffiliationStatutPoll.rejete() => AffiliationStatutPoll._('rejete');
   factory AffiliationStatutPoll.timeout() => AffiliationStatutPoll._('timeout');
   factory AffiliationStatutPoll.approuve({
     required int agenceId,
     required String agenceNom,
     String? licenceCode,
-  }) =>
-      AffiliationStatutPoll._('approuve', agenceId: agenceId, agenceNom: agenceNom, licenceCode: licenceCode);
+  }) => AffiliationStatutPoll._(
+    'approuve',
+    agenceId: agenceId,
+    agenceNom: agenceNom,
+    licenceCode: licenceCode,
+  );
 }

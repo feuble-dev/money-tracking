@@ -87,6 +87,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     _resyncCatalog();
     _syncSub = Stream.periodic(const Duration(minutes: 2)).listen((_) {
       SyncService.pushIfNeeded();
+      markSmsForegroundAlive();
     });
   }
 
@@ -107,6 +108,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      markSmsForegroundAlive();
       _recheckSmsPermissions();
     }
   }
@@ -233,6 +235,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     };
     await smsService.startListening();
     ref.read(smsServiceActiveProvider.notifier).state = true;
+    markSmsForegroundAlive();
     debugPrint('[MoneyTracking] SMS listener démarré');
 
     // Détection en arrière-plan (app fermée) via l'isolate headless

@@ -11,11 +11,13 @@ import '../sms/sms_matching_engine.dart';
 import 'historique_storage.dart';
 
 // Même URL que licence_service
-const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+const String _baseUrl = 'https://api.money-tracking.site/api/licence';
 // const String _baseUrl = 'http://localhost:8000/api/licence';
 
 class HistoriqueImportService {
-  static const _smsChannel = MethodChannel('com.rftech.moneytracking/sms_inbox');
+  static const _smsChannel = MethodChannel(
+    'com.rftech.moneytracking/sms_inbox',
+  );
 
   /// Aperçu client du coût (D5) — miroir exact de
   /// HistoriqueService.calculer_cout côté backend, qui reste la seule
@@ -38,15 +40,17 @@ class HistoriqueImportService {
     final dateDebutStr =
         '${dateDebut.year.toString().padLeft(4, '0')}-${dateDebut.month.toString().padLeft(2, '0')}-${dateDebut.day.toString().padLeft(2, '0')}';
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/historique/demander/'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'telephone': telephone,
-          'device_id': deviceId,
-          'date_debut': dateDebutStr,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/historique/demander/'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'telephone': telephone,
+              'device_id': deviceId,
+              'date_debut': dateDebutStr,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       final data = jsonDecode(response.body);
 
@@ -56,7 +60,9 @@ class HistoriqueImportService {
 
       if (data['statut'] == 'deja_active' || data['statut'] == 'active') {
         await HistoriqueStorage.sauvegarderToken(data['token']);
-        return ResultatAchat.active(montant: (data['montant'] as num?)?.toInt() ?? 0);
+        return ResultatAchat.active(
+          montant: (data['montant'] as num?)?.toInt() ?? 0,
+        );
       }
 
       return ResultatAchat.enAttente(
@@ -69,9 +75,7 @@ class HistoriqueImportService {
   }
 
   /// Polling: attendre validation
-  static Stream<StatutAchat> attendreValidation(
-    String telephone,
-  ) async* {
+  static Stream<StatutAchat> attendreValidation(String telephone) async* {
     yield StatutAchat.enAttente;
     final deviceId = await LicenceService.getDeviceId();
 
@@ -81,10 +85,7 @@ class HistoriqueImportService {
         final response = await http.post(
           Uri.parse('$_baseUrl/historique/recuperer/'),
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'telephone': telephone,
-            'device_id': deviceId,
-          }),
+          body: jsonEncode({'telephone': telephone, 'device_id': deviceId}),
         );
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -121,12 +122,15 @@ class HistoriqueImportService {
         'dateTo': dateFin.millisecondsSinceEpoch,
       });
       final rawList = result as List? ?? [];
-      allSms = rawList.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+      allSms = rawList
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
       debugPrint('[Import] ${allSms.length} SMS lus depuis inbox');
     } catch (e) {
       debugPrint('[Import] MethodChannel error: $e');
       return ResultatImport.erreur(
-          'Impossible de lire les SMS. Vérifiez la permission SMS.');
+        'Impossible de lire les SMS. Vérifiez la permission SMS.',
+      );
     }
 
     if (allSms.isEmpty) {
@@ -148,7 +152,10 @@ class HistoriqueImportService {
       final sender = (op['sms_sender'] as String?) ?? '';
       if (sender.isEmpty) continue;
 
-      final patterns = await SmsMatchingEngine.loadPatternsForOperator(db, opId);
+      final patterns = await SmsMatchingEngine.loadPatternsForOperator(
+        db,
+        opId,
+      );
       opConfigs[opId] = _OpConfig(sender: sender, patterns: patterns);
     }
 
@@ -209,10 +216,12 @@ class HistoriqueImportService {
 
         // 7. Vérifier doublon par operator_transaction_id (le plus fiable)
         if (opTxId != null && opTxId.isNotEmpty) {
-          final existing = await db.query('transactions',
-              where: 'operator_transaction_id = ?',
-              whereArgs: [opTxId],
-              limit: 1);
+          final existing = await db.query(
+            'transactions',
+            where: 'operator_transaction_id = ?',
+            whereArgs: [opTxId],
+            limit: 1,
+          );
           if (existing.isNotEmpty) {
             ignores++;
             if (totalAnalyses % 20 == 0) onProgress(totalAnalyses, totalSms);
@@ -220,10 +229,16 @@ class HistoriqueImportService {
           }
         } else {
           // Fallback doublon par montant + date
-          final existing = await db.query('transactions',
-              where: 'operator_id = ? AND amount = ? AND created_at LIKE ?',
-              whereArgs: [opId, amount, '${date.toIso8601String().substring(0, 16)}%'],
-              limit: 1);
+          final existing = await db.query(
+            'transactions',
+            where: 'operator_id = ? AND amount = ? AND created_at LIKE ?',
+            whereArgs: [
+              opId,
+              amount,
+              '${date.toIso8601String().substring(0, 16)}%',
+            ],
+            limit: 1,
+          );
           if (existing.isNotEmpty) {
             ignores++;
             if (totalAnalyses % 20 == 0) onProgress(totalAnalyses, totalSms);
@@ -292,7 +307,6 @@ class HistoriqueImportService {
       ignores: ignores,
     );
   }
-
 }
 
 class _OpConfig {
@@ -310,18 +324,18 @@ class ResultatAchat {
   final int montant;
   final String message;
   ResultatAchat.active({required this.montant})
-      : succes = true,
-        dejaActive = true,
-        message = montant == 0
-            ? 'Import historique activé gratuitement'
-            : 'Import historique activé';
+    : succes = true,
+      dejaActive = true,
+      message = montant == 0
+          ? 'Import historique activé gratuitement'
+          : 'Import historique activé';
   ResultatAchat.enAttente({required this.montant, required this.message})
-      : succes = false,
-        dejaActive = false;
+    : succes = false,
+      dejaActive = false;
   ResultatAchat.erreur(this.message)
-      : succes = false,
-        dejaActive = false,
-        montant = 0;
+    : succes = false,
+      dejaActive = false,
+      montant = 0;
 }
 
 class ResultatImport {
@@ -335,19 +349,19 @@ class ResultatImport {
     required this.total,
     required this.crees,
     required this.ignores,
-  })  : succes = true,
-        message = '$crees transactions créées sur $total SMS analysés';
+  }) : succes = true,
+       message = '$crees transactions créées sur $total SMS analysés';
 
   ResultatImport.vide()
-      : succes = true,
-        total = 0,
-        crees = 0,
-        ignores = 0,
-        message = 'Aucun SMS trouvé sur cette période';
+    : succes = true,
+      total = 0,
+      crees = 0,
+      ignores = 0,
+      message = 'Aucun SMS trouvé sur cette période';
 
   ResultatImport.erreur(this.message)
-      : succes = false,
-        total = 0,
-        crees = 0,
-        ignores = 0;
+    : succes = false,
+      total = 0,
+      crees = 0,
+      ignores = 0;
 }

@@ -6,7 +6,7 @@ import 'licence_storage.dart';
 import 'licence_validator.dart';
 
 // Changer par l'URL réelle du backend en production
-const String _baseUrl = 'https://api-money-tracking.rf-appdev.online/api/licence';
+const String _baseUrl = 'https://api.money-tracking.site/api/licence';
 // const String _baseUrl = 'http://localhost:8000/api/licence';
 
 class LicenceService {
@@ -55,19 +55,14 @@ class LicenceService {
   }
 
   // ── MODE 1 : Essai gratuit ────────────────────────────────
-  static Future<ResultatActivation> demarrerEssai(
-    String telephone,
-  ) async {
+  static Future<ResultatActivation> demarrerEssai(String telephone) async {
     final deviceId = await getDeviceId();
     try {
       final response = await http
           .post(
             Uri.parse('$_baseUrl/essai/'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'telephone': telephone,
-              'device_id': deviceId,
-            }),
+            body: jsonEncode({'telephone': telephone, 'device_id': deviceId}),
           )
           .timeout(const Duration(seconds: 10));
 
@@ -80,13 +75,9 @@ class LicenceService {
           'Essai gratuit activé pour 30 jours !',
         );
       }
-      return ResultatActivation.erreur(
-        data['erreur'] ?? 'Erreur inconnue',
-      );
+      return ResultatActivation.erreur(data['erreur'] ?? 'Erreur inconnue');
     } catch (e) {
-      return ResultatActivation.erreur(
-        'Impossible de se connecter au serveur',
-      );
+      return ResultatActivation.erreur('Impossible de se connecter au serveur');
     }
   }
 
@@ -98,10 +89,7 @@ class LicenceService {
           .post(
             Uri.parse('$_baseUrl/recuperer/'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'telephone': telephone,
-              'device_id': deviceId,
-            }),
+            body: jsonEncode({'telephone': telephone, 'device_id': deviceId}),
           )
           .timeout(const Duration(seconds: 10));
 
@@ -118,9 +106,7 @@ class LicenceService {
   }
 
   // ── MODE 2 : Attente validation (polling 30 sec) ──────────
-  static Stream<StatutDemande> attendreValidation(
-    String telephone,
-  ) async* {
+  static Stream<StatutDemande> attendreValidation(String telephone) async* {
     yield StatutDemande.enAttente;
     for (int i = 0; i < 2880; i++) {
       // 2880 * 30s = 24h max
@@ -201,9 +187,7 @@ class LicenceService {
           message: data['message'] as String? ?? 'Essai gratuit activé',
         );
       }
-      return ResultatEssaiAgence.erreur(
-        data['erreur'] ?? 'Erreur inconnue',
-      );
+      return ResultatEssaiAgence.erreur(data['erreur'] ?? 'Erreur inconnue');
     } catch (e) {
       return ResultatEssaiAgence.erreur(
         'Impossible de se connecter au serveur',
@@ -302,11 +286,13 @@ class ResultatEssaiAgence {
   final bool reussi;
   final String message;
   final int? agenceBackendId;
-  ResultatEssaiAgence.succes({required this.agenceBackendId, required this.message})
-      : reussi = true;
+  ResultatEssaiAgence.succes({
+    required this.agenceBackendId,
+    required this.message,
+  }) : reussi = true;
   ResultatEssaiAgence.erreur(this.message)
-      : reussi = false,
-        agenceBackendId = null;
+    : reussi = false,
+      agenceBackendId = null;
 }
 
 /// Agence retournée par LoginView — uniquement celles réellement utilisables
@@ -317,10 +303,10 @@ class AgenceLogin {
   final String statut;
   AgenceLogin({required this.id, required this.nom, required this.statut});
   factory AgenceLogin.fromJson(Map<String, dynamic> json) => AgenceLogin(
-        id: json['id'] as int,
-        nom: json['nom'] as String,
-        statut: json['statut'] as String? ?? 'expiree',
-      );
+    id: json['id'] as int,
+    nom: json['nom'] as String,
+    statut: json['statut'] as String? ?? 'expiree',
+  );
 }
 
 class ResultatLogin {
@@ -329,10 +315,10 @@ class ResultatLogin {
   final String? accountType;
   final List<AgenceLogin> agences;
   ResultatLogin.succes({required this.accountType, required this.agences})
-      : reussi = true,
-        message = '';
+    : reussi = true,
+      message = '';
   ResultatLogin.erreur(this.message)
-      : reussi = false,
-        accountType = null,
-        agences = const [];
+    : reussi = false,
+      accountType = null,
+      agences = const [];
 }

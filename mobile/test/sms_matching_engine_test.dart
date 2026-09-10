@@ -190,4 +190,56 @@ void main() {
     final result = SmsMatchingEngine.match('SMS totalement hors sujet.', [pattern]);
     expect(result, isNull);
   });
+
+  group('SmsMatchingEngine — repli flou (confiance)', () {
+    // Mots-clés distincts (pas de sous-chaîne accidentelle entre eux, hormis
+    // "eta"/"theta" — volontaire, testé) pour rendre le calcul de score
+    // déterministe : le montant reste toujours suivi de "FCFA" (nécessaire
+    // pour que SmsFieldExtractor.extractAll, utilisé en repli, l'extraie).
+    const rawExample =
+        'ALPHA BETA 5000 FCFA GAMMA DELTA EPSILON ZETA ETA THETA IOTA KAPPA LAMBDA';
+    final zones = [
+      TaggedZone(start: 11, end: 15, fieldName: 'montant', value: '5000'),
+    ];
+    final pattern = _structuredPattern(
+      rawExample: rawExample,
+      zones: zones,
+      code: 'retrait',
+      label: 'Retrait',
+      defaultDirection: 'out',
+    );
+
+    test('un seul mot manquant hors zone taguée -> confiance haute, '
+        'création directe (needsConfirmation == false)', () {
+      const body =
+          'ALPHA BETA 7000 FCFA GAMMA DELTA EPSILON ZETA THETA IOTA KAPPA LAMBDA';
+
+      final result = SmsMatchingEngine.match(body, [pattern]);
+
+      expect(result, isNotNull);
+      expect(result!.confidence, greaterThanOrEqualTo(SmsMatchingEngine.autoCreateMin));
+      expect(result.needsConfirmation, isFalse);
+      expect(result.extractedFields['montant'], '7000');
+    });
+
+    test('plusieurs mots manquants -> confiance moyenne, nécessite '
+        'confirmation (needsConfirmation == true)', () {
+      const body = 'ALPHA BETA 7000 FCFA ZETA ETA THETA IOTA KAPPA LAMBDA';
+
+      final result = SmsMatchingEngine.match(body, [pattern]);
+
+      expect(result, isNotNull);
+      expect(result!.confidence, greaterThanOrEqualTo(SmsMatchingEngine.minConfidence));
+      expect(result.confidence, lessThan(SmsMatchingEngine.autoCreateMin));
+      expect(result.needsConfirmation, isTrue);
+    });
+
+    test('quasi rien en commun -> sous le seuil, ignoré (null)', () {
+      const body = 'ALPHA BETA 7000 FCFA';
+
+      final result = SmsMatchingEngine.match(body, [pattern]);
+
+      expect(result, isNull);
+    });
+  });
 }

@@ -4,12 +4,18 @@ import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import androidx.annotation.NonNull
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+// FlutterFragmentActivity (pas FlutterActivity) est requis par local_auth :
+// BiometricPrompt a besoin d'un FragmentActivity pour s'attacher. Avec
+// FlutterActivity, authenticate() échouait silencieusement (exception
+// "no_fragment_activity" avalée par le try/catch de BiometricService), donc
+// le prompt d'empreinte ne s'affichait jamais, quel que soit l'état de
+// isBiometricEnabledProvider.
+class MainActivity : FlutterFragmentActivity() {
 
     private val USSD_CHANNEL = "com.rftech.moneytracking/ussd"
     private val SMS_EVENT_CHANNEL = "com.rftech.moneytracking/sms"

@@ -24,6 +24,10 @@ class TransactionModel {
   final String status; // 'pending' | 'completed' | 'rejected' | 'cancelled'
   final String source; // 'manual' | 'sms_auto' | 'sms_import'
   final String? smsRaw;
+  // 0-100, null si non-ambigu (manuel/import historique/match exact) —
+  // score du matching flou (SmsMatchingEngine) quand status == 'pending'
+  // à cause d'une formulation opérateur qui ne matchait pas exactement.
+  final int? matchConfidence;
   final DateTime createdAt;
 
   // Champs joints (non stockés en base)
@@ -48,6 +52,7 @@ class TransactionModel {
     this.status = 'completed',
     this.source = 'manual',
     this.smsRaw,
+    this.matchConfidence,
     DateTime? createdAt,
     this.operatorName,
     this.typeLabel,
@@ -87,6 +92,7 @@ class TransactionModel {
         'status': status,
         'source': source,
         'sms_raw': smsRaw,
+        'match_confidence': matchConfidence,
         'created_at': createdAt.toIso8601String(),
       };
 
@@ -109,6 +115,7 @@ class TransactionModel {
         status: map['status'] as String? ?? 'completed',
         source: map['source'] as String? ?? 'manual',
         smsRaw: map['sms_raw'] as String?,
+        matchConfidence: (map['match_confidence'] as num?)?.toInt(),
         createdAt: DateTime.parse(map['created_at'] as String),
         operatorName: map['operator_name'] as String?,
         typeLabel: map['type_label'] as String?,
