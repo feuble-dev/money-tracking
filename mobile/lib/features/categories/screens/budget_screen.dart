@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/categories/category_providers.dart';
+import '../../../core/format/formats.dart';
 import '../../../core/categories/category_repository.dart';
 import '../../../core/categories/expense_category.dart';
 import '../../../core/theme/app_colors.dart';
@@ -18,8 +19,7 @@ class BudgetScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final currency =
-        NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+    final currency = AppFormats.currency;
     final cats = ref.watch(expenseCategoriesProvider);
     final budgets = ref.watch(categoryBudgetsProvider);
     final spend = ref.watch(monthlySpendByCategoryProvider);

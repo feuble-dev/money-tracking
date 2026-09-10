@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database/database_helper.dart';
+import '../format/formats.dart';
 import '../notifications/notification_service.dart';
 import '../onboarding/onboarding_state.dart';
 import 'category_repository.dart';
@@ -69,8 +70,7 @@ class MonthlySummaryService {
         topAmount = (named.first['total'] as num).toDouble();
       }
 
-      final currency = NumberFormat.currency(
-          locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+      final currency = AppFormats.currency;
       final monthName = DateFormat.MMMM('fr_FR').format(prevMonthStart);
 
       final buffer = StringBuffer('${currency.format(total)} dépensés');

@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/categories/category_providers.dart';
 import 'core/categories/monthly_summary_service.dart';
 import 'core/database/database_helper.dart';
@@ -211,9 +212,26 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     }
   }
 
-  /// Demande les permissions puis démarre l'écoute SMS
+  /// Demande les permissions puis démarre l'écoute SMS. Au tout premier
+  /// besoin, on explique POURQUOI l'app a besoin des SMS avant d'ouvrir le
+  /// dialog système (permission priming) — un octroi accordé en contexte est
+  /// bien plus fréquent qu'un dialog système surgi sans explication.
   Future<void> _initPermissionsAndSms() async {
     try {
+      if (await PermissionService.hasSmsPermissions()) {
+        await _startSmsListening();
+        return;
+      }
+      if (await PermissionService.isSmsPermanentlyDenied()) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final primingShown = prefs.getBool('sms_priming_shown') ?? false;
+      if (!primingShown) {
+        await prefs.setBool('sms_priming_shown', true);
+        final proceed = await _showSmsPrimingDialog();
+        if (proceed != true) return; // "Plus tard" — re-tenté au resume
+      }
+
       final granted = await PermissionService.requestSmsPermissions();
       debugPrint('[MoneyTracking] Permissions SMS: $granted');
       if (granted) {
@@ -222,6 +240,48 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     } catch (e) {
       debugPrint('[MoneyTracking] Permissions ERROR: $e');
     }
+  }
+
+  /// Explique l'usage des SMS avant le dialog système. Renvoie `true` si
+  /// l'utilisateur accepte de continuer vers la demande de permission.
+  Future<bool?> _showSmsPrimingDialog() async {
+    final completer = Completer<bool?>();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final ctx = ref
+          .read(routerProvider)
+          .routerDelegate
+          .navigatorKey
+          .currentContext;
+      if (ctx == null || !ctx.mounted) {
+        completer.complete(false);
+        return;
+      }
+      final result = await showDialog<bool>(
+        context: ctx,
+        builder: (d) => AlertDialog(
+          title: const Text('Détection automatique de vos transactions'),
+          content: const Text(
+            'MoneyTracking lit les SMS de vos opérateurs Mobile Money '
+            '(Orange, Moov, Coris, Wave…) pour enregistrer vos transactions '
+            'automatiquement — sans saisie manuelle.\n\n'
+            'Les SMS sont analysés uniquement sur votre téléphone. Aucun '
+            'message n\'est envoyé ni partagé.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(d).pop(false),
+              child: const Text('Plus tard'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(d).pop(true),
+              child: const Text('Continuer'),
+            ),
+          ],
+        ),
+      );
+      completer.complete(result);
+    });
+    return completer.future;
   }
 
   /// Démarre l'écoute SMS temps réel + le handler arrière-plan. Idempotent

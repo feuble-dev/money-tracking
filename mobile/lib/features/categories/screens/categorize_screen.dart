@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import '../../../core/categories/category_providers.dart';
+import '../../../core/format/formats.dart';
 import '../../../core/categories/category_repository.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../transactions/models/transaction_model.dart';
@@ -25,9 +25,8 @@ class CategorizeScreen extends ConsumerStatefulWidget {
 }
 
 class _CategorizeScreenState extends ConsumerState<CategorizeScreen> {
-  final _currency =
-      NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
-  final _dateFormat = DateFormat('dd/MM/yyyy HH:mm', 'fr_FR');
+  final _currency = AppFormats.currency;
+  final _dateFormat = AppFormats.dateTime;
 
   List<TransactionModel>? _queue;
   int _index = 0;

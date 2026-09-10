@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/categories/category_providers.dart';
+import '../../../../core/format/formats.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../caisse/providers/caisse_provider.dart';
 import '../../../categories/providers/recurring_provider.dart';
@@ -600,7 +601,7 @@ class _RecurringCard extends ConsumerWidget {
     final catMap = ref.watch(categoriesByCodeProvider).valueOrNull ?? {};
     final list = seriesAsync.valueOrNull ?? const [];
     if (list.isEmpty) return const SizedBox.shrink();
-    final df = DateFormat('d MMM', 'fr_FR');
+    final df = AppFormats.dayMonth;
 
     return ParticulierDashboardTab._card(
       context,
