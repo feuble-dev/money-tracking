@@ -23,6 +23,7 @@ import 'features/commissions/screens/commissions_screen.dart';
 import 'features/notifications/screens/notifications_screen.dart';
 import 'features/transactions/providers/transaction_provider.dart';
 import 'features/dashboard/providers/dashboard_provider.dart';
+import 'features/dashboard/providers/particulier_dashboard_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -177,6 +178,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       ref.read(transactionsProvider.notifier).loadTransactions();
       ref.read(pendingTransactionsProvider.notifier).loadPending();
       ref.invalidate(dashboardStatsProvider(null));
+      ref.invalidate(particulierDashboardProvider);
       ref.invalidate(uncategorizedCountProvider);
     };
   }
@@ -233,6 +235,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       ref.read(transactionsProvider.notifier).loadTransactions();
       ref.read(pendingTransactionsProvider.notifier).loadPending();
       ref.invalidate(dashboardStatsProvider(null));
+      ref.invalidate(particulierDashboardProvider);
       ref.invalidate(recentActivityProvider);
       ref.invalidate(commissionsStatsProvider);
       ref.invalidate(uncategorizedCountProvider);

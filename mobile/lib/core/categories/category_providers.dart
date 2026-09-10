@@ -8,6 +8,12 @@ final expenseCategoriesProvider =
   return CategoryRepository.getAll(activeOnly: true);
 });
 
+/// Toutes les catégories, actives ou non — pour l'écran de gestion.
+final allExpenseCategoriesProvider =
+    FutureProvider<List<ExpenseCategory>>((ref) async {
+  return CategoryRepository.getAll(activeOnly: false);
+});
+
 /// Toutes les catégories (même inactives/custom) indexées par code — pour
 /// résoudre l'affichage d'une transaction déjà catégorisée.
 final categoriesByCodeProvider =
@@ -40,5 +46,6 @@ void invalidateCategoryProviders(WidgetRef ref) {
   ref.invalidate(categoryRulesProvider);
   ref.invalidate(categoryBudgetsProvider);
   ref.invalidate(expenseCategoriesProvider);
+  ref.invalidate(allExpenseCategoriesProvider);
   ref.invalidate(categoriesByCodeProvider);
 }

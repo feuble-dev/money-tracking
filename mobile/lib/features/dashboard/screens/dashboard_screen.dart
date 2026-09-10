@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/sms/sms_listener.dart';
 import '../../notifications/screens/notifications_screen.dart';
 import '../../../core/theme/app_colors.dart';
@@ -10,6 +11,7 @@ import '../../caisse/providers/caisse_provider.dart';
 import '../../operators/providers/operator_provider.dart';
 import '../models/dashboard_filter.dart';
 import '../providers/dashboard_provider.dart';
+import '../widgets/particulier/particulier_dashboard_tab.dart';
 import '../widgets/bar_chart_widget.dart';
 import '../widgets/hourly_chart_widget.dart';
 import '../widgets/line_chart_widget.dart';
@@ -60,6 +62,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   Widget build(BuildContext context) {
     final operatorsAsync = ref.watch(operatorsProvider);
     final filter = ref.watch(dashboardFilterProvider);
+    // Le tableau de bord Particulier est orienté finances perso (dépenses
+    // par motif, portefeuilles, à qui je donne), là où celui d'un compte
+    // Agence est orienté activité d'agent (caisse, commissions, clients).
+    // Gaté ici (accountTypeProvider) — pas d'écran dupliqué (D7/D18).
+    final isParticulier =
+        ref.watch(accountTypeProvider).valueOrNull == 'particulier';
 
     return operatorsAsync.when(
       loading: () => const Scaffold(
@@ -131,19 +139,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           body: TabBarView(
             controller: _tabController,
             children: [
-              _DashboardTab(
-                operatorId: null,
-                currencyFormat: _currencyFormat,
-              ),
-              ...activeOps.map((op) => _DashboardTab(
-                    operatorId: op.id,
-                    currencyFormat: _currencyFormat,
-                  )),
+              _tabFor(null, isParticulier),
+              ...activeOps.map((op) => _tabFor(op.id, isParticulier)),
             ],
           ),
         );
       },
     );
+  }
+
+  Widget _tabFor(String? operatorId, bool isParticulier) {
+    return isParticulier
+        ? ParticulierDashboardTab(
+            operatorId: operatorId, currencyFormat: _currencyFormat)
+        : _DashboardTab(
+            operatorId: operatorId, currencyFormat: _currencyFormat);
   }
 
   Widget _buildPeriodSelector(DashboardFilter filter) {
