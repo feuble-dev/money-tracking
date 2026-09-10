@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'core/categories/category_providers.dart';
+import 'core/categories/monthly_summary_service.dart';
 import 'core/database/database_helper.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/onboarding/catalog_sync_service.dart';
@@ -87,6 +88,8 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     // Particulier) : visibilité "détail complet" du patron sur ses agences.
     SyncService.pushIfNeeded();
     _resyncCatalog();
+    // Récap mensuel des dépenses (compte Particulier) — une fois par mois.
+    unawaited(MonthlySummaryService.maybeShow());
     _syncSub = Stream.periodic(const Duration(minutes: 2)).listen((_) {
       SyncService.pushIfNeeded();
       markSmsForegroundAlive();
@@ -169,6 +172,8 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
         router.push('/categorize/${payload.substring(4)}');
       } else if (payload.startsWith('tx:')) {
         router.push('/transactions/pending/${payload.substring(3)}');
+      } else if (payload == 'summary') {
+        router.push('/budget');
       } else {
         router.push('/notifications');
       }

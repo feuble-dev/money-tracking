@@ -269,7 +269,8 @@ class _TransactionsListScreenState
 
   Widget _buildActiveFilters(TransactionFilter filter) {
     final hasFilter = filter.direction != null ||
-        filter.dateFrom != null;
+        filter.dateFrom != null ||
+        filter.category != null;
 
     if (!hasFilter) return const SizedBox.shrink();
 
@@ -293,6 +294,14 @@ class _TransactionsListScreenState
               AppColors.primaryDark,
               () => _updateFilter(
                   ref, filter.copyWith(dateFrom: null, dateTo: null)),
+            ),
+          if (filter.category != null)
+            _filterChip(
+              filter.category == kFilterUncategorized
+                  ? 'Non catégorisé'
+                  : 'Motif',
+              AppColors.accentColor,
+              () => _updateFilter(ref, filter.copyWith(category: null)),
             ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
@@ -378,6 +387,10 @@ class _TransactionsListScreenState
                 ),
                 const SizedBox(height: 20),
 
+                // Motif — compte Particulier uniquement (D-catégories)
+                if (ref.watch(accountTypeProvider).valueOrNull == 'particulier')
+                  _buildCategoryFilterSection(context, ref, currentFilter),
+
                 // Période
                 const Text('Période',
                     style: TextStyle(fontWeight: FontWeight.w600)),
@@ -409,6 +422,51 @@ class _TransactionsListScreenState
     );
   }
 
+  Widget _buildCategoryFilterSection(
+      BuildContext context, WidgetRef ref, TransactionFilter filter) {
+    final cats = ref.watch(expenseCategoriesProvider).valueOrNull ?? const [];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Motif', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            ChoiceChip(
+              label: const Text('Tous', style: TextStyle(fontSize: 12)),
+              selected: filter.category == null,
+              onSelected: (_) {
+                _applyFilter(ref, filter.copyWith(category: null));
+                Navigator.pop(context);
+              },
+            ),
+            ChoiceChip(
+              label: const Text('Non catégorisé', style: TextStyle(fontSize: 12)),
+              selected: filter.category == kFilterUncategorized,
+              onSelected: (_) {
+                _applyFilter(
+                    ref, filter.copyWith(category: kFilterUncategorized));
+                Navigator.pop(context);
+              },
+            ),
+            ...cats.where((c) => c.matchesDirection('out')).map((c) => ChoiceChip(
+                  avatar: Text(c.icon, style: const TextStyle(fontSize: 13)),
+                  label: Text(c.label, style: const TextStyle(fontSize: 12)),
+                  selected: filter.category == c.code,
+                  onSelected: (_) {
+                    _applyFilter(ref, filter.copyWith(category: c.code));
+                    Navigator.pop(context);
+                  },
+                )),
+          ],
+        ),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
   // Filtre par SENS (D1), pas par code de type littéral — un opérateur du
   // catalogue et un opérateur custom peuvent avoir des codes différents
   // pour un type "équivalent" (voir TransactionFilter).
@@ -421,13 +479,7 @@ class _TransactionsListScreenState
       selected: isSelected,
       selectedColor: color,
       onSelected: (_) {
-        _applyFilter(ref, TransactionFilter(
-          operatorId: filter.operatorId,
-          clientId: filter.clientId,
-          direction: direction,
-          dateFrom: filter.dateFrom,
-          dateTo: filter.dateTo,
-        ));
+        _applyFilter(ref, filter.copyWith(direction: direction));
         Navigator.pop(context);
       },
     );
@@ -445,13 +497,7 @@ class _TransactionsListScreenState
           from = DateTime(now.year, now.month, now.day - daysBack);
           to = DateTime(now.year, now.month, now.day - (daysEnd ?? 0), 23, 59, 59);
         }
-        _applyFilter(ref, TransactionFilter(
-          operatorId: filter.operatorId,
-          clientId: filter.clientId,
-          direction: filter.direction,
-          dateFrom: from,
-          dateTo: to,
-        ));
+        _applyFilter(ref, filter.copyWith(dateFrom: from, dateTo: to));
         Navigator.pop(context);
       },
     );
@@ -466,14 +512,14 @@ class _TransactionsListScreenState
       locale: const Locale('fr', 'FR'),
     );
     if (range != null) {
-      _applyFilter(ref, TransactionFilter(
-        operatorId: filter.operatorId,
-        clientId: filter.clientId,
-        transactionType: filter.transactionType,
-        dateFrom: range.start,
-        dateTo: DateTime(
-            range.end.year, range.end.month, range.end.day, 23, 59, 59),
-      ));
+      _applyFilter(
+        ref,
+        filter.copyWith(
+          dateFrom: range.start,
+          dateTo: DateTime(
+              range.end.year, range.end.month, range.end.day, 23, 59, 59),
+        ),
+      );
       if (context.mounted) Navigator.pop(context);
     }
   }

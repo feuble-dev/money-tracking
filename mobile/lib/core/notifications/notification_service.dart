@@ -150,6 +150,31 @@ class NotificationService {
     );
   }
 
+  /// Récapitulatif mensuel (compte Particulier) — affiché une fois par mois
+  /// au démarrage, résume les dépenses du mois écoulé. Tap → écran Budget.
+  Future<void> showMonthlySummary({
+    required String title,
+    required String body,
+  }) async {
+    await _plugin.show(
+      920001,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'mobitracking_general',
+          'Notifications générales',
+          channelDescription: 'Notifications envoyées par l\'administrateur',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          styleInformation: BigTextStyleInformation(''),
+        ),
+      ),
+      payload: 'summary',
+    );
+  }
+
   /// Notification générale (envoyée par l'admin)
   Future<void> showGeneralNotification({
     required int id,

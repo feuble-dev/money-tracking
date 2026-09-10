@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart';
 import '../../../core/database/database_helper.dart';
 import '../../../core/database/transaction_repository.dart';
 import '../../../core/licence/licence_guard.dart';
@@ -341,7 +342,7 @@ class _PendingTransactionScreenState
     }
 
     final newClient = ClientModel(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: const Uuid().v4(),
       firstName: firstName.isNotEmpty ? firstName : 'Client',
       lastName: lastName.isNotEmpty ? lastName : _phoneController.text.trim(),
       phoneNumber: _phoneController.text.trim(),

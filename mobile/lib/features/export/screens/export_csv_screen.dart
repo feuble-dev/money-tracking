@@ -70,6 +70,7 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
       SELECT t.*,
              o.name as operator_name,
              tt.label as type_label,
+             ec.label as category_label,
              c.first_name as client_first_name,
              c.last_name as client_last_name,
              c.cnib_number as client_cnib_num,
@@ -77,6 +78,7 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
       FROM transactions t
       LEFT JOIN operators o ON t.operator_id = o.id
       LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
+      LEFT JOIN expense_categories ec ON ec.code = t.category
       LEFT JOIN clients c ON t.client_id = c.id
       WHERE t.status = 'completed' AND t.created_at BETWEEN ? AND ?
       ORDER BY t.created_at DESC
@@ -86,7 +88,7 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
 
     final rows = <List<dynamic>>[
       [
-        'Date', 'Type', 'Montant (FCFA)', 'Commission (FCFA)',
+        'Date', 'Type', 'Motif', 'Note', 'Montant (FCFA)', 'Commission (FCFA)',
         'Nom client', 'Prénom client', 'Téléphone', 'CNIB client',
         'Date naissance', 'CNIB transaction', 'Date naissance transaction',
         'Opérateur', 'Source', 'ID Transaction opérateur', 'Référence',
@@ -98,6 +100,8 @@ class _ExportCsvScreenState extends ConsumerState<ExportCsvScreen> {
           dateFormat.format(date),
           (tx['type_label'] as String?) ??
               (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait'),
+          (tx['category_label'] as String?) ?? (tx['category'] as String?) ?? '',
+          (tx['note'] as String?) ?? '',
           (tx['amount'] as num).toDouble(),
           (tx['commission'] as num?)?.toDouble() ?? 0,
           (tx['client_last_name'] as String?) ??

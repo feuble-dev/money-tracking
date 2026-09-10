@@ -33,14 +33,20 @@ class ParticulierDashboardTab extends ConsumerWidget {
     return statsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('Erreur: $e')),
-      data: (stats) => RefreshIndicator(
-        onRefresh: () async {
-          ref.invalidate(particulierDashboardProvider(operatorId));
-          ref.read(caissesProvider.notifier).load();
-        },
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+      data: (stats) {
+        final empty = stats.totalIn == 0 &&
+            stats.totalOut == 0 &&
+            stats.byOperator.isEmpty;
+        return RefreshIndicator(
+          onRefresh: () async {
+            ref.invalidate(particulierDashboardProvider(operatorId));
+            ref.read(caissesProvider.notifier).load();
+          },
+          child: empty
+              ? _EmptyState(operatorId: operatorId)
+              : ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
             _OverviewCard(stats: stats, currency: currencyFormat),
             const SizedBox(height: 16),
             _WalletsCard(operatorId: operatorId, currency: currencyFormat),
@@ -71,10 +77,11 @@ class ParticulierDashboardTab extends ConsumerWidget {
               const SizedBox(height: 16),
               _OperatorSplit(stats: stats, currency: currencyFormat),
             ],
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+        );
+      },
     );
   }
 
@@ -97,6 +104,54 @@ class ParticulierDashboardTab extends ConsumerWidget {
           child,
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/// Aucune activité : on guide vers la détection SMS et l'import d'historique
+/// plutôt que d'afficher des graphes vides.
+class _EmptyState extends StatelessWidget {
+  final String? operatorId;
+  const _EmptyState({this.operatorId});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        const SizedBox(height: 40),
+        Icon(Icons.insights_outlined, size: 64, color: Colors.grey[400]),
+        const SizedBox(height: 16),
+        Text(
+          'Aucune activité pour l\'instant',
+          textAlign: TextAlign.center,
+          style: Theme.of(context)
+              .textTheme
+              .titleMedium
+              ?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Vos transactions Mobile Money apparaîtront ici automatiquement, '
+          'dès qu\'un SMS d\'opérateur est reçu.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 24),
+        OutlinedButton.icon(
+          onPressed: () => context.push('/settings/sms-test'),
+          icon: const Icon(Icons.sms_outlined, size: 18),
+          label: const Text('Vérifier la détection SMS'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => context.push('/historique/import'),
+          icon: const Icon(Icons.history, size: 18),
+          label: const Text('Importer mon historique SMS'),
+        ),
+      ],
     );
   }
 }

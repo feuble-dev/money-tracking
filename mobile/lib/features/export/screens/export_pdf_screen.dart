@@ -56,12 +56,14 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
         SELECT t.*,
                o.name as operator_name,
                tt.label as type_label,
+               ec.label as category_label,
                c.first_name as client_first_name,
                c.last_name as client_last_name,
                c.cnib_number as client_cnib_num
         FROM transactions t
         LEFT JOIN operators o ON t.operator_id = o.id
         LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
+        LEFT JOIN expense_categories ec ON ec.code = t.category
         LEFT JOIN clients c ON t.client_id = c.id
         WHERE t.status = 'completed' AND t.created_at BETWEEN ? AND ?
         ORDER BY t.created_at DESC
@@ -130,7 +132,7 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
           build: (ctx) => [
             pw.TableHelper.fromTextArray(
               headers: [
-                'Date', 'Type', 'Montant', 'Commission',
+                'Date', 'Type', 'Motif', 'Montant', 'Commission',
                 'Client', 'Téléphone', 'CNIB', 'Naissance',
                 'Opérateur', 'Source', 'ID Transaction',
               ],
@@ -143,6 +145,8 @@ class _ExportPdfScreenState extends ConsumerState<ExportPdfScreen> {
                   dateFormat.format(date),
                   (tx['type_label'] as String?) ??
                       (tx['transaction_type'] == 'deposit' ? 'Dépôt' : 'Retrait'),
+                  (tx['category_label'] as String?) ??
+                      (tx['category'] as String?) ?? '',
                   '${currFmt.format((tx['amount'] as num).toDouble())} F',
                   '${currFmt.format((tx['commission'] as num?)?.toDouble() ?? 0)} F',
                   clientName,

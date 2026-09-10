@@ -44,12 +44,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     _tabController = TabController(length: 1, vsync: this);
   }
 
-  void _updateTabs(int operatorCount) {
+  /// Recrée le TabController quand le nombre d'opérateurs change — mais
+  /// APRÈS la frame en cours, jamais pendant `build()` (disposer/recréer un
+  /// controller en cours de build peut casser une animation d'onglet en
+  /// vol). Un onglet peut donc être brièvement « en retard » d'une frame
+  /// après ajout/suppression d'un opérateur, ce qui est rare et sans impact.
+  void _syncTabs(int operatorCount) {
     final newLength = operatorCount + 1;
-    if (_tabController.length != newLength) {
-      _tabController.dispose();
-      _tabController = TabController(length: newLength, vsync: this);
-    }
+    if (_tabController.length == newLength) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _tabController.length == newLength) return;
+      setState(() {
+        _tabController.dispose();
+        _tabController = TabController(length: newLength, vsync: this);
+      });
+    });
   }
 
   @override
@@ -76,7 +85,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       error: (e, _) => Scaffold(body: Center(child: Text('Erreur: $e'))),
       data: (operators) {
         final activeOps = operators.where((o) => o.isActive).toList();
-        _updateTabs(activeOps.length);
+        _syncTabs(activeOps.length);
 
         return Scaffold(
           appBar: AppBar(
