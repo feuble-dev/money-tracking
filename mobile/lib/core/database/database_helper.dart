@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:uuid/uuid.dart';
+import '../categories/expense_category.dart';
 import '../sms/sms_dedup.dart';
 
 const _uuid = Uuid();
@@ -13,6 +15,12 @@ class DatabaseHelper {
 
   static Database? _database;
 
+  /// Nom du fichier SQLite — surchargé uniquement par les tests pour éviter
+  /// que plusieurs fichiers de test tournant en parallèle ne se partagent
+  /// (et ne suppriment mutuellement) la même base sur disque.
+  @visibleForTesting
+  static String debugDatabaseName = 'moneytracking.db';
+
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDatabase();
@@ -21,11 +29,11 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'moneytracking.db');
+    final path = join(dbPath, debugDatabaseName);
 
     return await openDatabase(
       path,
-      version: 14,
+      version: 15,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -173,6 +181,8 @@ class DatabaseHelper {
         sms_id TEXT,
         sms_raw TEXT,
         match_confidence INTEGER,
+        category TEXT,
+        note TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
         FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
@@ -267,6 +277,8 @@ class DatabaseHelper {
       )
     ''');
 
+    await _createCategoryTables(db);
+
     // Vue optimisée transactions + opérateur + libellé réel du type (D3)
     await db.execute('''
       CREATE VIEW v_transactions_with_operator AS
@@ -284,6 +296,59 @@ class DatabaseHelper {
     await db.execute(
         'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_content_hash ON sms_messages(content_hash)');
     await _seedDefaultTransactionTypes(db);
+    await _seedExpenseCategories(db);
+    await _createCategoryIndexes(db);
+  }
+
+  /// Motif d'une transaction (D-catégories, DB v15) — 100 % local, jamais
+  /// synchronisé au serveur (données de finances personnelles). Le catalogue
+  /// par défaut vit dans `core/categories/expense_category.dart` ;
+  /// `category_rules` mémorise « ce numéro/ce marchand → cette catégorie »
+  /// pour l'auto-catégorisation ; `category_budgets` porte un plafond
+  /// mensuel optionnel par catégorie.
+  Future<void> _createCategoryTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS expense_categories (
+        code TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        icon TEXT NOT NULL,
+        color TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        is_custom INTEGER DEFAULT 0,
+        sort_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS category_rules (
+        id TEXT PRIMARY KEY,
+        match_type TEXT NOT NULL,
+        match_value TEXT NOT NULL,
+        category TEXT NOT NULL,
+        created_at TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_category_rules_match ON category_rules(match_type, match_value)');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS category_budgets (
+        category TEXT PRIMARY KEY,
+        monthly_limit REAL NOT NULL,
+        updated_at TEXT
+      )
+    ''');
+  }
+
+  /// Idempotent (INSERT OR IGNORE par `code`) — un réordonnancement ou un
+  /// masquage fait côté utilisateur n'est jamais réécrasé. Rappelé à chaque
+  /// migration future qui ajoute des catégories par défaut.
+  Future<void> _seedExpenseCategories(Database db) async {
+    final batch = db.batch();
+    for (final c in kDefaultExpenseCategories) {
+      batch.insert('expense_categories', c.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+    await batch.commit(noResult: true);
   }
 
   /// Types globaux 'deposit'/'withdrawal' toujours présents, même sur une
@@ -348,6 +413,16 @@ class DatabaseHelper {
         'CREATE INDEX IF NOT EXISTS idx_clients_agence ON clients(agence_id)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_daily_v2_day_agence ON daily_summaries_v2(day, agence_id)');
+  }
+
+  /// Index qui dépendent de colonnes ajoutées tardivement (`transactions.
+  /// category`, v15) — hors [_createIndexes], que les migrations anciennes
+  /// (`_upgradeToV9`) rappellent avant que ces colonnes n'existent.
+  Future<void> _createCategoryIndexes(Database db) async {
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category, direction, created_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_tx_dir_status_date ON transactions(direction, status, created_at)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -539,6 +614,23 @@ class DatabaseHelper {
       ''');
       await db.execute(
           'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_content_hash ON sms_messages(content_hash)');
+    }
+    if (oldVersion < 15) {
+      // Motif de dépense (D-catégories) : `category` (code, nullable =
+      // « à catégoriser ») + `note` libre sur la transaction, catalogue
+      // local de catégories, règles d'auto-catégorisation, budgets mensuels.
+      // Purement additif — aucune transaction existante n'est touchée.
+      for (final stmt in [
+        'ALTER TABLE transactions ADD COLUMN category TEXT',
+        'ALTER TABLE transactions ADD COLUMN note TEXT',
+      ]) {
+        try {
+          await db.execute(stmt);
+        } catch (_) {}
+      }
+      await _createCategoryTables(db);
+      await _seedExpenseCategories(db);
+      await _createCategoryIndexes(db);
     }
   }
 

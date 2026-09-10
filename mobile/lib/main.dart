@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'core/categories/category_providers.dart';
 import 'core/database/database_helper.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/onboarding/catalog_sync_service.dart';
@@ -163,7 +164,9 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     notifService.onNotificationTapped = (payload) {
       if (payload == null) return;
       final router = ref.read(routerProvider);
-      if (payload.startsWith('tx:')) {
+      if (payload.startsWith('cat:')) {
+        router.push('/categorize/${payload.substring(4)}');
+      } else if (payload.startsWith('tx:')) {
         router.push('/transactions/pending/${payload.substring(3)}');
       } else {
         router.push('/notifications');
@@ -174,6 +177,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       ref.read(transactionsProvider.notifier).loadTransactions();
       ref.read(pendingTransactionsProvider.notifier).loadPending();
       ref.invalidate(dashboardStatsProvider(null));
+      ref.invalidate(uncategorizedCountProvider);
     };
   }
 
@@ -231,6 +235,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       ref.invalidate(dashboardStatsProvider(null));
       ref.invalidate(recentActivityProvider);
       ref.invalidate(commissionsStatsProvider);
+      ref.invalidate(uncategorizedCountProvider);
       ref.read(caissesProvider.notifier).load();
     };
     await smsService.startListening();

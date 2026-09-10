@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import '../../../core/categories/category_providers.dart';
+import '../../../core/categories/category_repository.dart';
 import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets/main_shell.dart';
+import '../../categories/providers/categorize_provider.dart';
+import '../../categories/widgets/category_picker_sheet.dart';
 import '../models/transaction_model.dart';
 import '../providers/transaction_provider.dart';
 import '../../operators/providers/operator_provider.dart';
@@ -173,6 +177,9 @@ class _TransactionsListScreenState
 
           // Chips filtres actifs (type, date)
           _buildActiveFilters(filter),
+
+          // Bandeau « à catégoriser » (compte Particulier)
+          if (!isAgence) const _UncategorizedBanner(),
 
           // Liste
           Expanded(
@@ -479,7 +486,7 @@ class _TransactionsListScreenState
 
 // === Transaction Card ===
 
-class _TransactionCard extends StatelessWidget {
+class _TransactionCard extends ConsumerWidget {
   final TransactionModel transaction;
   final DateFormat dateFormat;
   final NumberFormat currencyFormat;
@@ -493,15 +500,19 @@ class _TransactionCard extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isEntrant = transaction.isEntrant;
     final color = isEntrant ? AppColors.depositColor : AppColors.withdrawColor;
+    // Motif (particulier) — pastille compacte, résolue depuis le catalogue.
+    final catMap = ref.watch(categoriesByCodeProvider).valueOrNull;
+    final catCode = transaction.category;
+    final cat = (catCode != null && catMap != null) ? catMap[catCode] : null;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _showDetail(context),
+        onTap: () => _showDetail(context, ref),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -565,6 +576,20 @@ class _TransactionCard extends StatelessWidget {
                       '${transaction.operatorName ?? ''} - ${dateFormat.format(transaction.createdAt)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                    if (!isAgence && !isEntrant) ...[
+                      const SizedBox(height: 4),
+                      if (cat != null)
+                        _MiniPill(
+                          text: '${cat.icon} ${cat.label}',
+                          color: cat.color,
+                        )
+                      else if (transaction.isUncategorized)
+                        _MiniPill(
+                          text: 'À catégoriser',
+                          color: Colors.orange.shade700,
+                          outlined: true,
+                        ),
+                    ],
                   ],
                 ),
               ),
@@ -592,7 +617,7 @@ class _TransactionCard extends StatelessWidget {
     );
   }
 
-  void _showDetail(BuildContext context) {
+  void _showDetail(BuildContext context, WidgetRef ref) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -684,6 +709,18 @@ class _TransactionCard extends StatelessWidget {
                       ),
                     ),
                   ],
+
+                  // Motif & note — compte Particulier (D-catégories). Le
+                  // Particulier n'édite pas les infos client (D18) mais peut
+                  // toujours annoter sa transaction.
+                  if (!isAgence)
+                    _CategoryDetailSection(
+                      transaction: transaction,
+                      onChanged: () {
+                        ref.read(transactionsProvider.notifier)
+                            .loadTransactions();
+                      },
+                    ),
                 ],
               ),
             );
@@ -709,6 +746,212 @@ class _TransactionCard extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w500))),
         ],
       ),
+    );
+  }
+}
+
+/// Bandeau discret « N dépenses à catégoriser » → écran de catégorisation
+/// rapide. Masqué quand la file est vide.
+class _UncategorizedBanner extends ConsumerWidget {
+  const _UncategorizedBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(uncategorizedCountProvider).valueOrNull ?? 0;
+    if (count == 0) return const SizedBox.shrink();
+    return Material(
+      color: Colors.orange.shade50,
+      child: InkWell(
+        onTap: () => context.push('/categorize'),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Icon(Icons.label_outline, size: 18, color: Colors.orange.shade800),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '$count dépense${count > 1 ? 's' : ''} à catégoriser',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.orange.shade900),
+                ),
+              ),
+              Text('Catégoriser',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange.shade900)),
+              Icon(Icons.chevron_right, size: 18, color: Colors.orange.shade800),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Pastille compacte (motif / « à catégoriser ») dans la carte transaction.
+class _MiniPill extends StatelessWidget {
+  final String text;
+  final Color color;
+  final bool outlined;
+
+  const _MiniPill({required this.text, required this.color, this.outlined = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: outlined ? null : color.withAlpha(28),
+        border: outlined ? Border.all(color: color, width: 1) : null,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+            fontSize: 11, color: color, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+/// Section « Motif & note » du détail d'une transaction (compte Particulier).
+class _CategoryDetailSection extends ConsumerStatefulWidget {
+  final TransactionModel transaction;
+  final VoidCallback onChanged;
+
+  const _CategoryDetailSection({
+    required this.transaction,
+    required this.onChanged,
+  });
+
+  @override
+  ConsumerState<_CategoryDetailSection> createState() =>
+      _CategoryDetailSectionState();
+}
+
+class _CategoryDetailSectionState
+    extends ConsumerState<_CategoryDetailSection> {
+  late final TextEditingController _noteCtrl =
+      TextEditingController(text: widget.transaction.note ?? '');
+  late String? _category = widget.transaction.category;
+  bool _noteDirty = false;
+
+  @override
+  void dispose() {
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickCategory() async {
+    final tx = widget.transaction;
+    final target = (tx.clientName ?? '').trim().isNotEmpty
+        ? tx.clientName!.trim()
+        : (tx.clientPhone.trim().isNotEmpty ? tx.clientPhone.trim() : null);
+    final choice = await showCategoryPicker(
+      context,
+      direction: tx.isEntrant ? 'in' : 'out',
+      current: _category,
+      rememberTarget: target,
+    );
+    if (choice == null) return;
+    ({String matchType, String matchValue})? rule;
+    if (choice.remember && target != null) {
+      rule = (tx.clientName ?? '').trim().isNotEmpty
+          ? (matchType: 'name', matchValue: target)
+          : (matchType: 'phone', matchValue: target);
+    }
+    await CategoryRepository.setTransactionCategory(tx.id,
+        category: choice.code, rememberFor: rule);
+    if (!mounted) return;
+    setState(() => _category = choice.code);
+    invalidateCategoryProviders(ref);
+    ref.invalidate(uncategorizedTransactionsProvider);
+    widget.onChanged();
+  }
+
+  Future<void> _saveNote() async {
+    await CategoryRepository.setTransactionCategory(widget.transaction.id,
+        category: _category, note: _noteCtrl.text);
+    if (!mounted) return;
+    setState(() => _noteDirty = false);
+    widget.onChanged();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Note enregistrée')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final catMap = ref.watch(categoriesByCodeProvider).valueOrNull;
+    final catCode = _category;
+    final cat = (catCode != null && catMap != null) ? catMap[catCode] : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        const Divider(),
+        const SizedBox(height: 8),
+        const Text('Motif', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: _pickCategory,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: cat?.color ?? Colors.grey.withAlpha(90),
+              ),
+            ),
+            child: Row(
+              children: [
+                Text(cat?.icon ?? '❓', style: const TextStyle(fontSize: 20)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    cat?.label ?? 'Non catégorisé — appuyez pour choisir',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: cat != null ? null : Colors.grey[600],
+                    ),
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 20),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text('Note', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _noteCtrl,
+          minLines: 1,
+          maxLines: 3,
+          decoration: InputDecoration(
+            hintText: 'Ajouter une note (facultatif)',
+            border: const OutlineInputBorder(),
+            isDense: true,
+            suffixIcon: _noteDirty
+                ? IconButton(
+                    icon: const Icon(Icons.check),
+                    onPressed: _saveNote,
+                  )
+                : null,
+          ),
+          onChanged: (_) {
+            if (!_noteDirty) setState(() => _noteDirty = true);
+          },
+          onSubmitted: (_) => _saveNote(),
+        ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 }

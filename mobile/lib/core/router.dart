@@ -18,6 +18,7 @@ import '../features/dashboard/screens/sms_journal_screen.dart';
 import '../features/notifications/screens/notifications_screen.dart';
 import '../features/dashboard/screens/sms_test_screen.dart';
 import '../features/commissions/screens/commissions_screen.dart';
+import '../features/categories/screens/categorize_screen.dart';
 import '../features/agences/screens/mes_agences_screen.dart';
 import '../features/agences/screens/mes_telephones_screen.dart';
 import '../features/agences/screens/agence_sync_detail_screen.dart';
@@ -227,6 +228,19 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/transactions/cancelled',
         builder: (context, state) => const CancelledTransactionsScreen(),
+      ),
+
+      // Catégorisation rapide des dépenses (D-catégories). `/categorize`
+      // enchaîne toute la file « à catégoriser » ; `/categorize/:id` place
+      // une transaction précise en tête (tap notification / détail).
+      GoRoute(
+        path: '/categorize',
+        builder: (context, state) => const CategorizeScreen(),
+      ),
+      GoRoute(
+        path: '/categorize/:id',
+        builder: (context, state) =>
+            CategorizeScreen(startId: state.pathParameters['id']),
       ),
 
       // Opérateurs
