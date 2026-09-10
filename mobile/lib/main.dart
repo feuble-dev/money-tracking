@@ -23,6 +23,7 @@ import 'features/caisse/providers/caisse_provider.dart';
 import 'features/commissions/screens/commissions_screen.dart';
 import 'features/notifications/screens/notifications_screen.dart';
 import 'features/transactions/providers/transaction_provider.dart';
+import 'features/categories/providers/recurring_provider.dart';
 import 'features/dashboard/providers/dashboard_provider.dart';
 import 'features/dashboard/providers/particulier_dashboard_provider.dart';
 
@@ -244,6 +245,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       ref.invalidate(recentActivityProvider);
       ref.invalidate(commissionsStatsProvider);
       ref.invalidate(uncategorizedCountProvider);
+      ref.invalidate(recurringPaymentsProvider);
       ref.read(caissesProvider.notifier).load();
     };
     await smsService.startListening();

@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/categories/category_providers.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../caisse/providers/caisse_provider.dart';
+import '../../../categories/providers/recurring_provider.dart';
 import '../../providers/particulier_dashboard_provider.dart';
 import '../../screens/dashboard_screen.dart' show balanceVisibleProvider;
 import '../bar_chart_widget.dart';
@@ -73,11 +74,15 @@ class ParticulierDashboardTab extends ConsumerWidget {
             ),
             const SizedBox(height: 16),
             _TopBeneficiaries(stats: stats, currency: currencyFormat),
+            if (operatorId == null) ...[
+              const SizedBox(height: 16),
+              _RecurringCard(currency: currencyFormat),
+            ],
             if (operatorId == null && stats.byOperator.length > 1) ...[
               const SizedBox(height: 16),
               _OperatorSplit(stats: stats, currency: currencyFormat),
             ],
-                    const SizedBox(height: 24),
+            const SizedBox(height: 24),
                   ],
                 ),
         );
@@ -563,6 +568,71 @@ class _TopBeneficiaries extends StatelessWidget {
                   ),
                 ),
                 Text(currency.format(b.amount),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.withdrawColor)),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+class _RecurringCard extends ConsumerWidget {
+  final NumberFormat currency;
+  const _RecurringCard({required this.currency});
+
+  static String _cadence(int days) {
+    if (days <= 9) return 'chaque semaine';
+    if (days <= 18) return 'toutes les 2 semaines';
+    if (days <= 38) return 'chaque mois';
+    if (days <= 70) return 'tous les 2 mois';
+    return 'tous les ~$days j';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final seriesAsync = ref.watch(recurringPaymentsProvider);
+    final catMap = ref.watch(categoriesByCodeProvider).valueOrNull ?? {};
+    final list = seriesAsync.valueOrNull ?? const [];
+    if (list.isEmpty) return const SizedBox.shrink();
+    final df = DateFormat('d MMM', 'fr_FR');
+
+    return ParticulierDashboardTab._card(
+      context,
+      'Paiements récurrents',
+      Column(
+        children: list.take(6).map((s) {
+          final cat = s.dominantCategory != null
+              ? catMap[s.dominantCategory]
+              : null;
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Text(cat?.icon ?? '🔁', style: const TextStyle(fontSize: 16)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(s.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        '${_cadence(s.avgIntervalDays)} · prochain vers le ${df.format(s.nextExpected)}'
+                        '${cat != null ? ' · ${cat.label}' : ''}',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+                Text('~${currency.format(s.typicalAmount)}',
                     style: const TextStyle(
                         fontWeight: FontWeight.w600,
                         color: AppColors.withdrawColor)),

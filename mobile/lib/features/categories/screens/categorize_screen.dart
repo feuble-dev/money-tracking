@@ -8,6 +8,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../transactions/models/transaction_model.dart';
 import '../../transactions/providers/transaction_provider.dart';
 import '../providers/categorize_provider.dart';
+import '../providers/recurring_provider.dart';
 import '../widgets/category_picker_sheet.dart';
 
 /// Catégorisation rapide des dépenses — une transaction à la fois, grande
@@ -82,6 +83,7 @@ class _CategorizeScreenState extends ConsumerState<CategorizeScreen> {
   void _refreshProviders() {
     invalidateCategoryProviders(ref);
     ref.invalidate(uncategorizedTransactionsProvider);
+    ref.invalidate(recurringPaymentsProvider);
     ref.read(transactionsProvider.notifier).loadTransactions();
   }
 
@@ -206,6 +208,12 @@ class _CategorizeScreenState extends ConsumerState<CategorizeScreen> {
             ),
           Text(_dateFormat.format(tx.createdAt),
               style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          _RecurringHint(
+            label: (tx.clientName ?? '').trim().isNotEmpty
+                ? tx.clientName!.trim()
+                : tx.clientPhone.trim(),
+            onApply: (code) => _assign(code, remember: true),
+          ),
         ],
       ),
     );
@@ -240,6 +248,57 @@ class _CategorizeScreenState extends ConsumerState<CategorizeScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Encart « paiement récurrent » sur l'écran de catégorisation : si le
+/// bénéficiaire a une série récurrente avec un motif dominant, propose de
+/// l'appliquer en un tap (et de créer la règle).
+class _RecurringHint extends ConsumerWidget {
+  final String label;
+  final ValueChanged<String> onApply;
+
+  const _RecurringHint({required this.label, required this.onApply});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (label.isEmpty) return const SizedBox.shrink();
+    final series =
+        ref.watch(recurringForBeneficiaryProvider(label)).valueOrNull;
+    if (series == null) return const SizedBox.shrink();
+    final catMap = ref.watch(categoriesByCodeProvider).valueOrNull ?? {};
+    final cat = series.dominantCategory != null
+        ? catMap[series.dominantCategory]
+        : null;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          const Icon(Icons.autorenew, size: 15, color: AppColors.primaryColor),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              cat != null
+                  ? 'Paiement récurrent — d\'habitude : ${cat.label}'
+                  : 'Paiement récurrent (${series.count}×)',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.primaryColor),
+            ),
+          ),
+          if (cat != null)
+            TextButton(
+              onPressed: () => onApply(cat.code),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Appliquer'),
+            ),
+        ],
       ),
     );
   }
