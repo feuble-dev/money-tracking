@@ -7,6 +7,7 @@ import '../../../features/caisse/providers/caisse_provider.dart';
 import '../../../features/dashboard/providers/dashboard_provider.dart';
 import '../../../features/transactions/providers/transaction_provider.dart';
 import '../../licence/licence_storage.dart';
+import '../../onboarding/onboarding_state.dart';
 import '../../theme/app_colors.dart';
 import '../historique_service.dart';
 import '../historique_storage.dart';
@@ -29,6 +30,9 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
   bool _isError = false;
   bool _loading = false;
   bool _dejaActif = false;
+  // Aucun flux payant pour un compte Particulier (D-particulier-gratuit) —
+  // l'import est illimité et gratuit, sans passer par la demande d'achat.
+  bool _isParticulier = false;
 
   // Période
   DateTime _dateDebut = DateTime.now().subtract(const Duration(days: 90));
@@ -47,8 +51,15 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
   }
 
   Future<void> _checkStatus() async {
-    final active = await HistoriqueStorage.estActive();
-    if (mounted) setState(() => _dejaActif = active);
+    final accountType = await OnboardingStatusService().getAccountType();
+    final isParticulier = accountType == 'particulier';
+    final active = isParticulier || await HistoriqueStorage.estActive();
+    if (mounted) {
+      setState(() {
+        _isParticulier = isParticulier;
+        _dejaActif = active;
+      });
+    }
   }
 
   /// Bouton principal de l'étape "période" : si déjà activé sur cet
@@ -233,7 +244,13 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
           style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        if (!_dejaActif)
+        if (_isParticulier)
+          Text(
+            'Gratuit et illimité pour votre compte, quelle que soit la période.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.green.shade700, fontSize: 13, fontWeight: FontWeight.w500),
+          )
+        else if (!_dejaActif)
           Text(
             'Gratuit jusqu\'à 1 an en arrière. Au-delà, 200 FCFA par année supplémentaire.',
             textAlign: TextAlign.center,

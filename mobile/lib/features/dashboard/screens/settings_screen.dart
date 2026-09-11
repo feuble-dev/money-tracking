@@ -3,9 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../../../core/onboarding/catalog_sync_service.dart';
 import '../../../core/onboarding/onboarding_state.dart';
+import '../../../core/permissions/battery_optimization_helper.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_notifier.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -145,6 +145,15 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: const Text('Autoriser la détection même app fermée'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _demanderExemptionBatterie(context),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.rocket_launch_outlined, color: Colors.deepOrange),
+                  title: const Text('Démarrage automatique'),
+                  subtitle: const Text(
+                      'Xiaomi, Tecno, Infinix, itel... — étape supplémentaire souvent nécessaire'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _ouvrirDemarrageAutomatique(context),
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -360,13 +369,13 @@ class SettingsScreen extends ConsumerWidget {
     }
   }
 
-  /// Demande l'exemption d'optimisation batterie — nécessaire sur beaucoup
-  /// d'appareils (Xiaomi, Tecno, Infinix, Samsung...) pour que la détection
-  /// SMS continue de fonctionner quand l'app est fermée. Toujours précédé
-  /// d'une explication : jamais demandé silencieusement.
+  /// Demande l'exemption d'optimisation batterie (Doze) — nécessaire pour
+  /// que la détection SMS continue de fonctionner quand l'app est fermée.
+  /// Toujours précédé d'une explication : jamais demandé silencieusement.
+  /// Logique partagée avec le priming au premier lancement (main.dart) via
+  /// BatteryOptimizationHelper.
   Future<void> _demanderExemptionBatterie(BuildContext context) async {
-    final statut = await Permission.ignoreBatteryOptimizations.status;
-    if (statut.isGranted) {
+    if (await BatteryOptimizationHelper.hasExemption()) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Déjà autorisé - l\'app peut fonctionner en arrière-plan')),
@@ -374,39 +383,50 @@ class SettingsScreen extends ConsumerWidget {
       }
       return;
     }
-
     if (!context.mounted) return;
-    final confirme = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Fonctionnement en arrière-plan'),
-        content: const Text(
-          'Pour que MoneyTracking détecte vos SMS même quand l\'app est '
-          'fermée, Android doit être autorisé à ne pas la mettre en veille '
-          'forcée. Sans ça, certains téléphones (Xiaomi, Tecno, Infinix, '
-          'Samsung...) coupent la détection après quelques minutes.\n\n'
-          'L\'écran suivant vient d\'Android - choisissez "Autoriser" ou '
-          '"Ne pas optimiser".',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Continuer')),
-        ],
-      ),
-    );
-    if (confirme != true) return;
-
-    final resultat = await Permission.ignoreBatteryOptimizations.request();
+    final accorde = await BatteryOptimizationHelper.requestExemption(context);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          resultat.isGranted
+          accorde
               ? 'Autorisé - MoneyTracking peut fonctionner en arrière-plan'
               : 'Non autorisé - la détection pourrait s\'arrêter app fermée sur certains téléphones',
         ),
       ),
     );
+  }
+
+  /// Écran constructeur "démarrage automatique" (Xiaomi/MIUI, Transsion —
+  /// Tecno/Infinix/itel, Oppo, Vivo, Huawei, Samsung...) — l'exemption Doze
+  /// ci-dessus NE SUFFIT PAS sur ces surcouches : elles ont leur propre
+  /// gestionnaire "autostart", sans API Android standard. C'est souvent la
+  /// vraie cause d'une détection SMS qui s'arrête après un redémarrage du
+  /// téléphone sur les modèles vendus au Burkina Faso.
+  Future<void> _ouvrirDemarrageAutomatique(BuildContext context) async {
+    final confirme = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Démarrage automatique'),
+        content: const Text(
+          'Sur certains téléphones (Xiaomi, Tecno, Infinix, itel, Oppo, '
+          'Vivo, Huawei, Samsung...), le fabricant ajoute son propre réglage '
+          '"Démarrage automatique" en plus de celui d\'Android — sans lui, '
+          'l\'app peut être arrêtée après un redémarrage du téléphone même '
+          'si "Fonctionnement en arrière-plan" est déjà autorisé.\n\n'
+          'Activez "MoneyTracking" dans l\'écran qui va s\'ouvrir. Si '
+          'l\'écran ne correspond pas, cherchez "Démarrage automatique" / '
+          '"Autostart" dans les réglages de gestion des applications de '
+          'votre téléphone.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Ouvrir')),
+        ],
+      ),
+    );
+    if (confirme != true) return;
+    await BatteryOptimizationHelper.openAutostartSettings();
   }
 
   Widget _sectionTitle(BuildContext context, String title) {

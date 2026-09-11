@@ -1,6 +1,7 @@
 import 'package:another_telephony/telephony.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../notifications/notification_service.dart';
 import 'sms_processing_pipeline.dart';
 
 const _fgHeartbeatKey = 'sms_fg_heartbeat';
@@ -31,6 +32,13 @@ Future<void> backgroundSmsHandler(SmsMessage message) async {
   final sender = message.address ?? '';
   final body = message.body ?? '';
   if (sender.isEmpty || body.isEmpty) return;
+
+  // Chaque isolate Dart a sa propre instance de FlutterLocalNotificationsPlugin
+  // — sans ré-initialisation ICI, la notification affichée par
+  // processIncomingSms() (via NotificationService, plus bas) pouvait
+  // échouer silencieusement dans cet isolate headless, même si le canal et
+  // la permission avaient déjà été acquis depuis l'isolate principal.
+  await NotificationService().initializeForBackground();
 
   // Le manifest déclare DEUX receivers SMS_RECEIVED (.SmsReceiver +
   // IncomingSmsReceiver d'another_telephony) : quand l'app tourne, les deux

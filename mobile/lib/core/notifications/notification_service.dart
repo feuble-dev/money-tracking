@@ -28,34 +28,61 @@ class NotificationService {
   /// Callback quand une action est effectuée (pour rafraîchir l'UI)
   VoidCallback? onActionPerformed;
 
+  static const _initSettings = InitializationSettings(
+    android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+  );
+
   Future<void> initialize() async {
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    const initSettings = InitializationSettings(android: androidSettings);
-
     await _plugin.initialize(
-      initSettings,
+      _initSettings,
       onDidReceiveNotificationResponse: _handleNotificationResponse,
     );
 
-    // Créer le canal avec les actions
+    // Créer les canaux avec leurs actions — les deux, pas seulement celui
+    // des transactions SMS : `mobitracking_general` (notifs admin + récap
+    // mensuel) était jusque-là créé implicitement au premier `.show()`
+    // (support présent dans les versions récentes du plugin, mais jamais
+    // garanti selon la ROM) ; le créer explicitement ici lève toute
+    // ambiguïté, comme pour `mobitracking_sms`.
     final androidPlugin = _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
 
-    const channel = AndroidNotificationChannel(
+    const smsChannel = AndroidNotificationChannel(
       'mobitracking_sms',
       'Transactions SMS',
       description: 'Notifications de transactions détectées par SMS',
       importance: Importance.high,
     );
-    await androidPlugin?.createNotificationChannel(channel);
+    const generalChannel = AndroidNotificationChannel(
+      'mobitracking_general',
+      'Notifications générales',
+      description: 'Notifications envoyées par l\'administrateur',
+      importance: Importance.high,
+    );
+    await androidPlugin?.createNotificationChannel(smsChannel);
+    await androidPlugin?.createNotificationChannel(generalChannel);
 
     // Android 13+ (API 33) exige une permission d'exécution explicite pour
     // afficher la moindre notification — sans cet appel, toutes les notifs
     // ci-dessous échouaient silencieusement sur les appareils récents.
     await androidPlugin?.requestNotificationsPermission();
+  }
+
+  /// Initialisation minimale pour l'isolate headless (SMS reçu app fermée,
+  /// `background_sms_handler.dart`) : câble juste le plugin dans CET
+  /// isolate — chaque isolate Dart a sa propre instance en mémoire, même si
+  /// le canal/la permission sont déjà acquis côté OS depuis l'isolate
+  /// principal. Ni callback de réponse (aucune UI à router depuis un
+  /// isolate headless) ni re-demande de permission (jamais depuis un
+  /// isolate sans Activity visible).
+  Future<void> initializeForBackground() async {
+    try {
+      await _plugin.initialize(_initSettings);
+    } catch (_) {
+      // Best-effort : si l'initialisation échoue, `.show()` est tenté quand
+      // même juste après (voir sms_processing_pipeline.dart).
+    }
   }
 
   /// Gère la réponse à une notification (tap ou bouton d'action)

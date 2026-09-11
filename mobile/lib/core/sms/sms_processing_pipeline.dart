@@ -176,9 +176,12 @@ Future<void> processIncomingSms(
     );
   }
 
-  // 7. Vérifier licence avant de créer la transaction
+  // 7. Vérifier licence avant de créer la transaction — jamais bloquant
+  // pour un compte Particulier (aucun flux payant pour ce profil, quel que
+  // soit l'état de son essai/licence sous le capot).
   final licenceStatut = await LicenceStorage.verifierLocalement();
-  final peutCreer = licenceStatut == LicenceStatut.active ||
+  final peutCreer = isParticulier ||
+      licenceStatut == LicenceStatut.active ||
       licenceStatut == LicenceStatut.essaiActif ||
       licenceStatut == LicenceStatut.expireBientot;
 

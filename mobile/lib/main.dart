@@ -12,6 +12,7 @@ import 'core/database/database_helper.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/onboarding/catalog_sync_service.dart';
 import 'core/onboarding/onboarding_state.dart';
+import 'core/permissions/battery_optimization_helper.dart';
 import 'core/permissions/permission_service.dart';
 import 'core/router.dart';
 import 'core/sms/background_sms_handler.dart';
@@ -240,6 +241,44 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     } catch (e) {
       debugPrint('[MoneyTracking] Permissions ERROR: $e');
     }
+    await _primeBatteryOptimizationForExistingInstalls();
+  }
+
+  /// Pour un compte déjà onboardé AVANT l'introduction de cette demande
+  /// (mise à jour d'une install existante) : les nouvelles installs la
+  /// voient déjà en toute fin d'onboarding
+  /// (OnboardingScreen._completeOnboarding). Ici, one-shot (même clé de
+  /// préférence que côté onboarding n'est pas partagée exprès : l'un ou
+  /// l'autre chemin s'exécute pour un compte donné, jamais les deux), et
+  /// seulement une fois l'onboarding déjà terminé — sinon l'écran
+  /// d'onboarding est encore affiché et gère lui-même cette demande.
+  Future<void> _primeBatteryOptimizationForExistingInstalls() async {
+    try {
+      final onboarded =
+          await ref.read(onboardingStatusServiceProvider).isComplete();
+      if (!onboarded) return;
+      if (await BatteryOptimizationHelper.hasExemption()) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('battery_priming_shown') ?? false) return;
+      await prefs.setBool('battery_priming_shown', true);
+
+      final ctx = await _waitForNavigatorContext();
+      if (ctx == null || !ctx.mounted) return;
+      await BatteryOptimizationHelper.requestExemption(ctx);
+    } catch (e) {
+      debugPrint('[MoneyTracking] Priming batterie ERROR: $e');
+    }
+  }
+
+  Future<BuildContext?> _waitForNavigatorContext() async {
+    final completer = Completer<BuildContext?>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      completer.complete(
+        ref.read(routerProvider).routerDelegate.navigatorKey.currentContext,
+      );
+    });
+    return completer.future;
   }
 
   /// Explique l'usage des SMS avant le dialog système. Renvoie `true` si

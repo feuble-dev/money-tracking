@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../historique/historique_service.dart';
 import '../../licence/licence_service.dart';
+import '../../permissions/battery_optimization_helper.dart';
 import '../../theme/app_colors.dart';
 import '../affiliation_service.dart';
 import '../catalog_sync_service.dart';
@@ -9,7 +13,8 @@ import '../models/catalog_models.dart';
 import '../onboarding_state.dart';
 
 /// Premier lancement : type de compte -> téléphone/pays -> agence (avec
-/// essai gratuit) -> sélection des opérateurs du catalogue à importer.
+/// essai gratuit) -> sélection des opérateurs du catalogue à importer ->
+/// proposition d'importer l'historique SMS déjà présent sur le téléphone.
 /// Inséré avant /setup-pin dans le router (le catalogue doit exister avant
 /// que l'agent puisse créer sa première transaction).
 class OnboardingScreen extends ConsumerStatefulWidget {
@@ -41,6 +46,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   String? _localAgenceId;
   bool _loading = false;
   String? _error;
+
+  // Étape finale : proposer d'importer l'historique SMS déjà présent sur le
+  // téléphone — sur les 12 derniers mois, toujours gratuit (D5), pour les
+  // deux profils, sans passer par le flux payant de Settings.
+  bool _smsImporting = false;
+  ResultatImport? _smsImportResult;
 
   // Étape 0 (D13) : "avez-vous déjà un compte ?" — 'non' = nouveau compte
   // (flux existant, inchangé), 'oui' = connexion instantanée par mot de
@@ -367,14 +378,69 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       if (selected.isNotEmpty) {
         await _catalogService.importOperators(selected, _localAgenceId!);
       }
-      await ref.read(onboardingStatusServiceProvider).markComplete();
-      ref.invalidate(isOnboardingCompleteProvider);
-      if (mounted) context.go('/setup-pin');
+      // Le catalogue existe désormais → proposer l'import de l'historique
+      // SMS avant de terminer, plutôt que de marquer l'onboarding complet
+      // tout de suite (l'agent pourrait sinon ne jamais retomber sur cette
+      // proposition, enterrée dans Paramètres).
+      if (mounted) setState(() => _step = 6);
     } catch (e) {
       setState(() => _error = "Erreur lors de l'import : $e");
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Termine réellement l'onboarding — appelé depuis l'étape d'import SMS,
+  /// que l'agent ait importé ou choisi "Plus tard". Dernière chose montrée
+  /// avant le PIN : la demande d'exemption batterie (dès la première
+  /// connexion, plutôt qu'enterrée dans Paramètres — sans elle, la
+  /// détection SMS app fermée peut s'arrêter sur beaucoup de téléphones).
+  /// Marque aussi `battery_priming_shown` pour que main.dart (qui gère ce
+  /// même priming pour les comptes déjà onboardés avant cette version) ne
+  /// le redemande pas une seconde fois dans la foulée à ce nouvel agent.
+  Future<void> _completeOnboarding() async {
+    if (mounted) await BatteryOptimizationHelper.requestExemption(context);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('battery_priming_shown', true);
+    await ref.read(onboardingStatusServiceProvider).markComplete();
+    ref.invalidate(isOnboardingCompleteProvider);
+    if (mounted) context.go('/setup-pin');
+  }
+
+  /// Importe les 12 derniers mois de SMS depuis la boîte de réception —
+  /// toujours gratuit (D5 : gratuit ≤ 1 an), pour les deux profils, donc
+  /// jamais besoin de passer par le flux payant de demande d'achat ici.
+  Future<void> _importHistoriqueSms() async {
+    var status = await Permission.sms.status;
+    if (!status.isGranted) {
+      status = await Permission.sms.request();
+      if (!status.isGranted) {
+        setState(() => _error =
+            'Permission SMS refusée — vous pourrez importer plus tard '
+            'depuis Paramètres.');
+        return;
+      }
+    }
+
+    setState(() {
+      _smsImporting = true;
+      _error = null;
+    });
+
+    final result = await HistoriqueImportService.importerSMS(
+      dateDebut: DateTime.now().subtract(const Duration(days: 365)),
+      dateFin: DateTime.now(),
+      onProgress: (_, _) {},
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _smsImporting = false;
+      _smsImportResult = result;
+    });
+    // Petite pause pour que le résultat soit visible avant de continuer.
+    await Future.delayed(const Duration(seconds: 2));
+    await _completeOnboarding();
   }
 
   @override
@@ -406,6 +472,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   _buildAgenceStep(),
                   _buildOperatorsStep(),
                   _buildWaitingApprovalStep(),
+                  _buildImportStep(),
                 ],
               ),
             ),
@@ -419,8 +486,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   /// libellé de l'étape 3 reste générique ("Configuration"), jamais
   /// "Agence", mais les deux profils traversent les mêmes étapes.
   List<String> get _stepLabels => _accountType == 'particulier'
-      ? const ['Compte', 'Téléphone', 'Configuration', 'Opérateurs']
-      : const ['Compte', 'Téléphone', 'Agence', 'Opérateurs'];
+      ? const ['Compte', 'Téléphone', 'Configuration', 'Opérateurs', 'Import']
+      : const ['Compte', 'Téléphone', 'Agence', 'Opérateurs', 'Import'];
 
   // La barre de progression ne représente que le flux "nouveau compte"
   // (steps 1-4 réels) — l'étape 0 ("avez-vous déjà un compte ?") est un
@@ -803,6 +870,60 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 );
               }).toList(),
             ),
+    );
+  }
+
+  /// Dernière étape : proposer d'importer l'historique SMS déjà présent
+  /// dans la boîte de réception (12 derniers mois, toujours gratuit, D5) —
+  /// pour démarrer avec un historique complet plutôt qu'une base vide.
+  /// Accessible aussi plus tard depuis Paramètres si "Plus tard" est choisi.
+  Widget _buildImportStep() {
+    if (_smsImporting) {
+      return const _StepScaffold(
+        title: 'Import en cours...',
+        subtitle: 'Analyse de vos SMS — ça ne prend que quelques secondes.',
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 32),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+    if (_smsImportResult != null) {
+      final r = _smsImportResult!;
+      return _StepScaffold(
+        title: r.succes ? 'Import terminé !' : 'Import impossible',
+        subtitle: r.succes
+            ? '${r.crees} transaction${r.crees > 1 ? 's' : ''} retrouvée${r.crees > 1 ? 's' : ''} dans vos SMS.'
+            : r.message,
+        child: Icon(
+          r.succes ? Icons.check_circle : Icons.info_outline,
+          size: 56,
+          color: r.succes ? AppColors.depositColor : Colors.orange,
+        ),
+      );
+    }
+    return _StepScaffold(
+      title: 'Importer vos SMS existants ?',
+      subtitle: 'MoneyTracking peut retrouver vos transactions des 12 '
+          'derniers mois directement dans vos SMS déjà reçus — gratuit, '
+          'en quelques secondes. Vous pourrez importer plus loin dans le '
+          'temps plus tard, depuis Paramètres.',
+      onNext: _importHistoriqueSms,
+      nextLabel: 'Importer mes 12 derniers mois',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.sms_outlined, size: 56, color: AppColors.primaryColor),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: _completeOnboarding,
+              child: const Text('Plus tard'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

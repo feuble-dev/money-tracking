@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../historique/historique_storage.dart';
+import '../onboarding/onboarding_state.dart';
 import 'licence_storage.dart';
 
 enum ActionType {
@@ -45,6 +46,13 @@ class LicenceGuard {
     BuildContext context,
     ActionType action,
   ) async {
+    // Un compte Particulier n'est jamais un flux payant : ni licence ni
+    // achat d'historique SMS — seul un compte Agence est facturé (D8/D-
+    // particulier-gratuit). On ne restreint donc rien pour ce profil, quel
+    // que soit l'état de son essai/licence sous le capot.
+    final accountType = await OnboardingStatusService().getAccountType();
+    if (accountType == 'particulier') return true;
+
     // Action libre → toujours OK
     if (_actionsLibres.contains(action)) return true;
 

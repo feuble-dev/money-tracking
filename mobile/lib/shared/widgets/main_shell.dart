@@ -34,57 +34,59 @@ class MainShell extends ConsumerWidget {
       drawer: const AppDrawer(),
       body: Column(
         children: [
-          // Bannière licence expiration
-          FutureBuilder<int>(
-            future: LicenceStorage.getJoursRestants(),
-            builder: (context, snapshot) {
-              final jours = snapshot.data ?? 999;
-              if (jours > 7) return const SizedBox.shrink();
+          // Bannière licence expiration — un compte Particulier n'a aucun
+          // flux payant, la notion même de licence lui est invisible.
+          if (accountType != 'particulier')
+            FutureBuilder<int>(
+              future: LicenceStorage.getJoursRestants(),
+              builder: (context, snapshot) {
+                final jours = snapshot.data ?? 999;
+                if (jours > 7) return const SizedBox.shrink();
 
-              return Container(
-                width: double.infinity,
-                color: jours > 0
-                    ? Colors.orange.shade700
-                    : Colors.red.shade700,
-                padding: const EdgeInsets.symmetric(
-                  vertical: 8,
-                  horizontal: 16,
-                ),
-                child: SafeArea(
-                  bottom: false,
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning,
-                          color: Colors.white, size: 16),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          jours > 0
-                              ? 'Licence expire dans $jours jours'
-                              : 'Licence expirée',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => context.push('/licence/statut'),
-                        child: const Text(
-                          'Renouveler',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ],
+                return Container(
+                  width: double.infinity,
+                  color: jours > 0
+                      ? Colors.orange.shade700
+                      : Colors.red.shade700,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 16,
                   ),
-                ),
-              );
-            },
-          ),
+                  child: SafeArea(
+                    bottom: false,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning,
+                            color: Colors.white, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            jours > 0
+                                ? 'Licence expire dans $jours jours'
+                                : 'Licence expirée',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => context.push('/licence/statut'),
+                          child: const Text(
+                            'Renouveler',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           // Contenu principal
           Expanded(child: navigationShell),
         ],
