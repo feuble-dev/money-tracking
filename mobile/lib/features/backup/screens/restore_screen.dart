@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import '../../../core/database/database_helper.dart';
+import '../../../core/sync/sync_service.dart';
 import '../../../core/theme/app_colors.dart';
 
 /// Écran de restauration de la base de données
@@ -68,14 +69,38 @@ class _RestoreScreenState extends ConsumerState<RestoreScreen> {
     setState(() => _isLoading = true);
 
     try {
+      final source = File(filePath);
+      // Refuser tout fichier qui n'est pas une base SQLite : l'écraser sur
+      // la base actuelle la rendrait illisible.
+      if (!await _isSqliteFile(source)) {
+        throw Exception('ce fichier n\'est pas une sauvegarde MoneyTracking valide');
+      }
+
       // Fermer la DB actuelle
       await DatabaseHelper.instance.close();
 
-      // Copier le fichier de sauvegarde
       final dbPath = await getDatabasesPath();
       final destPath = p.join(dbPath, 'moneytracking.db');
-      final source = File(filePath);
+
+      // Filet de sécurité : la base actuelle est conservée à côté.
+      final current = File(destPath);
+      if (await current.exists()) {
+        await current.copy('$destPath.avant_restauration');
+      }
+
+      // Les fichiers WAL/SHM de l'ANCIENNE base seraient sinon rejoués sur
+      // la base restaurée à la réouverture (données mélangées, voire base
+      // corrompue).
+      for (final suffix in const ['-wal', '-shm', '-journal']) {
+        final f = File('$destPath$suffix');
+        if (await f.exists()) await f.delete();
+      }
+
       await source.copy(destPath);
+
+      // Les curseurs de synchro patron se basent sur l'ordre d'insertion,
+      // propre à chaque fichier de base : on repousse tout (idempotent).
+      await SyncService.resetCursors();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -95,6 +120,17 @@ class _RestoreScreenState extends ConsumerState<RestoreScreen> {
       }
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  static Future<bool> _isSqliteFile(File f) async {
+    try {
+      final raf = await f.open();
+      final header = await raf.read(16);
+      await raf.close();
+      return String.fromCharCodes(header) == 'SQLite format 3\u0000';
+    } catch (_) {
+      return false;
     }
   }
 

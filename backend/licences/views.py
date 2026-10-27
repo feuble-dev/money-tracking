@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.throttling import ScopedRateThrottle
 from datetime import date
 from django.utils import timezone
 from django.contrib.auth.hashers import make_password, check_password
@@ -186,6 +187,9 @@ class LoginView(APIView):
     l'affiliation) — après ça, le flux licence normal fonctionne pour ce
     device sans rien savoir de la façon dont il a été autorisé.
     """
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
         password = request.data.get('password', '').strip()

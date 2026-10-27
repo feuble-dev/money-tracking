@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.permissions import IsAdminUser
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
@@ -16,6 +17,9 @@ from .serializers import (
 
 class AdminLoginView(APIView):
     """POST /api/admin/login/ — Authentification admin"""
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
     def post(self, request):
         username = request.data.get('username', '').strip()
         password = request.data.get('password', '').strip()

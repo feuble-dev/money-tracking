@@ -198,3 +198,21 @@ class ImportHistoriqueTests(TestCase):
     def test_cout_inchange(self):
         self.assertEqual(
             HistoriqueService.calculer_cout(date.today() - timedelta(days=300)), 0)
+
+
+class LimitationLoginTests(TestCase):
+    def test_force_brute_bloquee(self):
+        from django.core.cache import cache
+        cache.clear()
+        api = APIClient()
+        Client.objects.create(telephone=PATRON_TEL,
+                              password_hash=make_password('bon-mdp'))
+        codes = [
+            api.post('/api/licence/login/', {
+                'telephone': PATRON_TEL, 'password': f'essai{i}',
+                'device_id': 'd',
+            }, format='json').status_code
+            for i in range(12)
+        ]
+        self.assertEqual(codes[:10], [401] * 10)
+        self.assertEqual(codes[-1], 429)

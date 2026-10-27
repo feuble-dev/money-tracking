@@ -99,6 +99,11 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
+    # Anti force brute sur les mots de passe (login compte D13 + login
+    # admin) — appliqué via `throttle_scope = 'login'` sur ces vues.
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '10/min',
+    },
 }
 
 # Clé secrète pour signer les licences

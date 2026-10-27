@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
+import '../../../core/database/database_helper.dart';
 import '../../../core/theme/app_colors.dart';
 
 /// Écran de sauvegarde de la base de données
@@ -62,6 +63,13 @@ class _BackupScreenState extends ConsumerState<BackupScreen> {
       final backupPath = await _backupDir;
       final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
       final destPath = '$backupPath/moneytracking_backup_$timestamp.mmtbak';
+
+      // La base est en mode WAL : les écritures récentes vivent dans
+      // `moneytracking.db-wal` tant qu'elles ne sont pas reportées dans le
+      // fichier principal. Copier le seul `.db` donnait une sauvegarde à
+      // laquelle manquaient les dernières transactions. On force le report.
+      final db = await DatabaseHelper.instance.database;
+      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
 
       await source.copy(destPath);
 

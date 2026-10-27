@@ -870,7 +870,9 @@ class DatabaseHelper {
 
   Future<void> close() async {
     final db = await database;
-    db.close();
+    // Attendre la vraie fermeture : la restauration écrase le fichier juste
+    // après, il ne doit plus être ouvert.
+    await db.close();
     _database = null;
   }
 }

@@ -15,11 +15,30 @@ const _syncBaseUrl = ApiConfig.sync;
 /// Ne concerne que les comptes Agence — jamais les comptes Particulier
 /// (pas de notion d'agence à faire remonter).
 ///
-/// Watermark simple (created_at > dernier push réussi) : les données de ce
-/// domaine sont quasi append-only (une transaction confirmée n'est plus
-/// modifiée), donc pas besoin d'un vrai suivi de delta par ligne.
+/// Curseur par table sur l'ORDRE D'INSERTION (`rowid` SQLite), pas sur
+/// `created_at` : le rattrapage SMS au démarrage (D15) et l'import
+/// d'historique insèrent des transactions DATÉES DANS LE PASSÉ, qu'un
+/// curseur `created_at > dernier push` ne voyait jamais — le patron ne les
+/// recevait pas. Les tables n'ont pas d'INTEGER PRIMARY KEY et l'app ne fait
+/// jamais de VACUUM, donc le rowid croît avec chaque insertion ; après une
+/// restauration de sauvegarde, [resetCursors] repart de zéro (upsert
+/// idempotent côté serveur, aucun doublon).
+///
+/// Limite connue : une modification après coup (ex. transaction annulée)
+/// n'est pas re-poussée — il faudrait une colonne `updated_at` suivie.
 class SyncService {
-  static const _prefsKeyLastPush = 'sync_last_push_at';
+  static const _cursorTx = 'sync_cursor_transactions';
+  static const _cursorClients = 'sync_cursor_clients';
+  static const _cursorCaisseOps = 'sync_cursor_caisse_ops';
+
+  /// À appeler après une restauration de base : les rowid ne correspondent
+  /// plus, on repousse tout (idempotent).
+  static Future<void> resetCursors() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_cursorTx);
+    await prefs.remove(_cursorClients);
+    await prefs.remove(_cursorCaisseOps);
+  }
 
   static Future<void> pushIfNeeded() async {
     try {
@@ -38,45 +57,46 @@ class SyncService {
 
       final deviceId = await LicenceService.getDeviceId();
       final prefs = await SharedPreferences.getInstance();
-      final since =
-          prefs.getString(_prefsKeyLastPush) ?? '2000-01-01T00:00:00.000';
+      final txCursor = prefs.getInt(_cursorTx) ?? 0;
+      final clientsCursor = prefs.getInt(_cursorClients) ?? 0;
+      final caisseCursor = prefs.getInt(_cursorCaisseOps) ?? 0;
 
       final transactions = await db.rawQuery(
         '''
-        SELECT t.id, o.name as operator_name, tt.label as type_label,
+        SELECT t.rowid AS _rid, t.id, o.name as operator_name, tt.label as type_label,
                t.transaction_type as type_code, t.direction, t.amount, t.commission,
                t.client_phone, t.client_name, t.status, t.source, t.created_at
         FROM transactions t
         LEFT JOIN operators o ON o.id = t.operator_id
         LEFT JOIN transaction_types tt ON tt.id = t.transaction_type_id
-        WHERE t.agence_id = ? AND t.created_at > ?
-        ORDER BY t.created_at ASC
+        WHERE t.agence_id = ? AND t.rowid > ?
+        ORDER BY t.rowid ASC
         LIMIT 500
       ''',
-        [agenceId, since],
+        [agenceId, txCursor],
       );
 
       final clients = await db.rawQuery(
         '''
-        SELECT id, first_name, last_name, phone_number, created_at
+        SELECT rowid AS _rid, id, first_name, last_name, phone_number, created_at
         FROM clients
-        WHERE agence_id = ? AND created_at > ?
-        ORDER BY created_at ASC
+        WHERE agence_id = ? AND rowid > ?
+        ORDER BY rowid ASC
         LIMIT 500
       ''',
-        [agenceId, since],
+        [agenceId, clientsCursor],
       );
 
       final caisseOps = await db.rawQuery(
         '''
-        SELECT co.id, o.name as operator_name, co.type, co.montant, co.note, co.created_at
+        SELECT co.rowid AS _rid, co.id, o.name as operator_name, co.type, co.montant, co.note, co.created_at
         FROM caisse_operations co
         LEFT JOIN operators o ON o.id = co.operator_id
-        WHERE co.agence_id = ? AND co.created_at > ?
-        ORDER BY co.created_at ASC
+        WHERE co.agence_id = ? AND co.rowid > ?
+        ORDER BY co.rowid ASC
         LIMIT 500
       ''',
-        [agenceId, since],
+        [agenceId, caisseCursor],
       );
 
       if (transactions.isEmpty && clients.isEmpty && caisseOps.isEmpty) return;
@@ -135,19 +155,16 @@ class SyncService {
           .timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
-        // Nouveau curseur = le plus ancien "dernier élément envoyé" parmi
-        // les 3 tables (pas "maintenant") — une table plafonnée à 500
-        // lignes peut avoir un reliquat plus ancien que "maintenant" que ce
-        // push n'a pas envoyé ; le prochain push doit encore le voir.
-        final candidates = <String>[
-          if (transactions.isNotEmpty)
-            transactions.last['created_at'] as String,
-          if (clients.isNotEmpty) clients.last['created_at'] as String,
-          if (caisseOps.isNotEmpty) caisseOps.last['created_at'] as String,
-        ];
-        if (candidates.isNotEmpty) {
-          candidates.sort();
-          await prefs.setString(_prefsKeyLastPush, candidates.first);
+        // Chaque table avance indépendamment jusqu'à sa dernière ligne
+        // envoyée ; une table plafonnée à 500 reprendra au prochain push.
+        if (transactions.isNotEmpty) {
+          await prefs.setInt(_cursorTx, transactions.last['_rid'] as int);
+        }
+        if (clients.isNotEmpty) {
+          await prefs.setInt(_cursorClients, clients.last['_rid'] as int);
+        }
+        if (caisseOps.isNotEmpty) {
+          await prefs.setInt(_cursorCaisseOps, caisseOps.last['_rid'] as int);
         }
       }
     } catch (_) {
