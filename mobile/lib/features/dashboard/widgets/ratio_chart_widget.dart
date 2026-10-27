@@ -2,6 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 
 /// Graphique ratio dépôts / retraits (donut + légende)
 class RatioChartWidget extends StatelessWidget {
@@ -26,56 +27,64 @@ class RatioChartWidget extends StatelessWidget {
     final currencyFormat = NumberFormat.currency(
         locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
 
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            height: 110,
-            child: PieChart(
-              PieChartData(
-                sectionsSpace: 3,
-                centerSpaceRadius: 22,
-                sections: [
-                  PieChartSectionData(
-                    color: AppColors.depositColor,
-                    value: deposits,
-                    title: '${depPercent.toStringAsFixed(0)}%',
-                    titleStyle: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11,
-                    ),
-                    radius: 32,
-                    titlePositionPercentageOffset: 0.55,
+    // Donut à gauche, légende à droite : tient dans les 180 px du parent
+    // sans défilement interne (l'ancienne pile verticale débordait et
+    // obligeait à scroller À L'INTÉRIEUR de la carte).
+    return Row(
+      children: [
+        SizedBox(
+          width: 120,
+          child: PieChart(
+            PieChartData(
+              sectionsSpace: 3,
+              centerSpaceRadius: 22,
+              sections: [
+                PieChartSectionData(
+                  color: AppColors.depositColor,
+                  value: deposits,
+                  title: '${depPercent.toStringAsFixed(0)}%',
+                  titleStyle: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11,
                   ),
-                  PieChartSectionData(
-                    color: AppColors.withdrawColor,
-                    value: withdrawals,
-                    title: '${witPercent.toStringAsFixed(0)}%',
-                    titleStyle: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11,
-                    ),
-                    radius: 32,
-                    titlePositionPercentageOffset: 0.55,
+                  radius: 32,
+                  titlePositionPercentageOffset: 0.55,
+                ),
+                PieChartSectionData(
+                  color: AppColors.withdrawColor,
+                  value: withdrawals,
+                  title: '${witPercent.toStringAsFixed(0)}%',
+                  titleStyle: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11,
                   ),
-                ],
-              ),
+                  radius: 32,
+                  titlePositionPercentageOffset: 0.55,
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          _legendRow('Entrées', AppColors.depositColor,
-              currencyFormat.format(deposits), '${depPercent.toStringAsFixed(1)}%'),
-          const SizedBox(height: 4),
-          _legendRow('Sorties', AppColors.withdrawColor,
-              currencyFormat.format(withdrawals), '${witPercent.toStringAsFixed(1)}%'),
-          const SizedBox(height: 6),
-          const Divider(height: 1),
-          const SizedBox(height: 4),
-          Text(
-            'Volume: ${currencyFormat.format(total)}',
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _legendRow('Entrées', AppColors.depositColor,
+                  currencyFormat.format(deposits), '${depPercent.toStringAsFixed(1)}%'),
+              const SizedBox(height: 10),
+              _legendRow('Sorties', AppColors.withdrawColor,
+                  currencyFormat.format(withdrawals), '${witPercent.toStringAsFixed(1)}%'),
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              const SizedBox(height: 6),
+              AmountText(
+                'Volume : ${currencyFormat.format(total)}',
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -98,13 +107,14 @@ class RatioChartWidget extends StatelessWidget {
               Text(label,
                   style: TextStyle(
                       fontSize: 13, fontWeight: FontWeight.w600, color: color)),
-              Text(amount, style: const TextStyle(fontSize: 11)),
+              AmountText(amount, style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
+        const SizedBox(width: 4),
         Text(percent,
             style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.bold, color: color)),
+                fontSize: 14, fontWeight: FontWeight.bold, color: color)),
       ],
     );
   }

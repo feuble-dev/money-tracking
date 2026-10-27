@@ -6,6 +6,7 @@ import '../../../core/database/database_helper.dart';
 import '../../../core/sms/sms_listener.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets/main_shell.dart';
+import '../../../shared/widgets/amount_text.dart';
 
 /// Provider pour les stats de commissions
 final commissionsStatsProvider =
@@ -63,29 +64,18 @@ final commissionsStatsProvider =
     ORDER BY total_commission DESC
   ''');
 
-  // Solde par opérateur (depuis le dernier SMS traité)
-  final soldes = <String, String>{};
-  for (final op in perOperator) {
-    final opId = op['id'] as String;
-    final lastSms = await db.rawQuery('''
-      SELECT sm.body FROM sms_messages sm
-      JOIN transactions t ON t.sms_id = sm.id
-      WHERE t.operator_id = ? AND t.status = 'completed'
-      ORDER BY sm.received_at DESC LIMIT 1
-    ''', [opId]);
-
-    if (lastSms.isNotEmpty) {
-      final body = lastSms.first['body'] as String;
-      // Extraire le solde du SMS
-      final soldeMatch = RegExp(
-        r'solde(?:\s+de\s+votre\s+compte)?\s+est\s+de\s+(\d[\d,]*(?:\.\d{1,2})?)',
-        caseSensitive: false,
-      ).firstMatch(body);
-      if (soldeMatch != null) {
-        soldes[opId] = soldeMatch.group(1)!;
-      }
-    }
-  }
+  // Solde par opérateur : celui de la caisse, qui est déjà le solde annoncé
+  // par le dernier SMS (CaisseRepository, garde-fou `solde_ref_at`). Avant,
+  // cet écran ré-extrayait le solde du dernier SMS avec sa propre regex —
+  // qui lisait « 1 521,00 » (format Moov) comme 152 100 et faisait une
+  // requête par opérateur.
+  final soldeRows = await db.rawQuery(
+      'SELECT operator_id, SUM(solde_actuel) AS solde FROM caisse '
+      'WHERE operator_id IS NOT NULL GROUP BY operator_id');
+  final soldes = <String, double>{
+    for (final r in soldeRows)
+      r['operator_id'] as String: (r['solde'] as num?)?.toDouble() ?? 0,
+  };
 
   return {
     'global': global.first,
@@ -164,7 +154,7 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
           final weekComm = stats['week'] as double;
           final monthComm = stats['month'] as double;
           final perOperator = stats['per_operator'] as List<Map<String, dynamic>>;
-          final soldes = stats['soldes'] as Map<String, String>;
+          final soldes = stats['soldes'] as Map<String, double>;
 
           return RefreshIndicator(
             onRefresh: () async => ref.invalidate(commissionsStatsProvider),
@@ -186,7 +176,7 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
                       const Text('Commissions totales',
                           style: TextStyle(color: Colors.white70, fontSize: 13)),
                       const SizedBox(height: 4),
-                      Text(currFmt.format(totalComm),
+                      AmountText(currFmt.format(totalComm),
                           style: const TextStyle(color: Colors.white,
                               fontSize: 28, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 12),
@@ -261,11 +251,7 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
                   final opCommDep = (op['comm_depot'] as num).toDouble();
                   final opCommRet = (op['comm_retrait'] as num).toDouble();
                   final txCount = (op['tx_count'] as num).toInt();
-                  final soldeRaw = soldes[opId];
-                  double? solde;
-                  if (soldeRaw != null) {
-                    solde = double.tryParse(soldeRaw.replaceAll(',', ''));
-                  }
+                  final solde = soldes[opId];
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -276,30 +262,43 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
                         children: [
                           Row(
                             children: [
-                              Text(name,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600, fontSize: 16)),
-                              const Spacer(),
-                              Text(currFmt.format(opComm),
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                      color: Theme.of(context).colorScheme.primary)),
+                              Expanded(
+                                child: Text(name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w600, fontSize: 16)),
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: AmountText(currFmt.format(opComm),
+                                    alignment: AlignmentDirectional.centerEnd,
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                        color: Theme.of(context).colorScheme.primary)),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              Text('$txCount transactions',
+                              Text('$txCount tx',
                                   style: Theme.of(context).textTheme.bodySmall),
-                              const Spacer(),
-                              Text('Dép: ${currFmt.format(opCommDep)}',
-                                  style: const TextStyle(
-                                      fontSize: 11, color: AppColors.depositColor)),
                               const SizedBox(width: 10),
-                              Text('Ret: ${currFmt.format(opCommRet)}',
-                                  style: const TextStyle(
-                                      fontSize: 11, color: AppColors.withdrawColor)),
+                              Expanded(
+                                child: AmountText('Entrées : ${currFmt.format(opCommDep)}',
+                                    alignment: AlignmentDirectional.centerEnd,
+                                    style: const TextStyle(
+                                        fontSize: 11, color: AppColors.depositColor)),
+                              ),
+                              const SizedBox(width: 10),
+                              Flexible(
+                                child: AmountText('Sorties : ${currFmt.format(opCommRet)}',
+                                    alignment: AlignmentDirectional.centerEnd,
+                                    style: const TextStyle(
+                                        fontSize: 11, color: AppColors.withdrawColor)),
+                              ),
                             ],
                           ),
                           if (solde != null) ...[
@@ -309,13 +308,16 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
                                 const Icon(Icons.account_balance_wallet,
                                     size: 16, color: AppColors.primaryColor),
                                 const SizedBox(width: 6),
-                                const Text('Solde opérateur:',
+                                const Text('Solde opérateur :',
                                     style: TextStyle(fontSize: 12)),
-                                const Spacer(),
-                                Text(currFmt.format(solde),
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: AmountText(currFmt.format(solde),
+                                      alignment: AlignmentDirectional.centerEnd,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14)),
+                                ),
                               ],
                             ),
                           ],
@@ -345,7 +347,7 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
           children: [
             Text(label, style: TextStyle(color: color, fontSize: 11)),
             const SizedBox(height: 2),
-            Text(value,
+            AmountText(value,
                 style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w600,
@@ -365,9 +367,13 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
       ),
       child: Column(
         children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 4),
-          Text(value,
+          AmountText(value,
+              alignment: Alignment.center,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
         ],
       ),

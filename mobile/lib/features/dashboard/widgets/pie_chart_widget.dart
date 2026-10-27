@@ -1,6 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../../shared/widgets/amount_text.dart';
 
 /// Graphique camembert — Répartition par opérateur
 class PieChartWidget extends StatelessWidget {
@@ -64,46 +65,51 @@ class PieChartWidget extends StatelessWidget {
         // Légende
         Expanded(
           flex: 2,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: List.generate(data.length, (index) {
-              final d = data[index];
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _colors[index % _colors.length],
-                        borderRadius: BorderRadius.circular(3),
+          // Défilable : au-delà de ~5 opérateurs la légende dépassait les
+          // 220 px de la carte (« BOTTOM OVERFLOWED »).
+          child: Center(
+            child: ListView(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              children: List.generate(data.length, (index) {
+                final d = data[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: _colors[index % _colors.length],
+                          borderRadius: BorderRadius.circular(3),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            d['name'] as String,
-                            style: const TextStyle(
-                                fontSize: 11, fontWeight: FontWeight.w500),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          Text(
-                            currencyFormat.format(d['total']),
-                            style: TextStyle(
-                                fontSize: 10, color: Colors.grey[600]),
-                          ),
-                        ],
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              d['name'] as String,
+                              style: const TextStyle(
+                                  fontSize: 11, fontWeight: FontWeight.w500),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            AmountText(
+                              currencyFormat.format(d['total']),
+                              style: TextStyle(
+                                  fontSize: 10, color: Colors.grey[600]),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            }),
+                    ],
+                  ),
+                );
+              }),
+            ),
           ),
         ),
       ],

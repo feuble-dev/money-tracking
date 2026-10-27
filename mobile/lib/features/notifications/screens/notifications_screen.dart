@@ -8,6 +8,7 @@ import '../../../core/database/database_helper.dart';
 import '../../../core/licence/licence_storage.dart';
 import '../../../core/notifications/notification_service.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../../transactions/providers/transaction_provider.dart';
 
 // ── URL backend (même que licence_service) ──
@@ -333,6 +334,8 @@ class _TransactionsTab extends ConsumerWidget {
                           children: [
                             Text(
                               '$typeLabel - $operatorName',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontWeight: FontWeight.w600,
                                 color: color,
@@ -351,41 +354,47 @@ class _TransactionsTab extends ConsumerWidget {
                           ],
                         ),
                       ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            currencyFormat.format(amount),
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: color,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isPending
-                                  ? Colors.orange.withAlpha(20)
-                                  : AppColors.depositColor.withAlpha(20),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              isPending ? 'En attente' : 'Confirmé',
+                      const SizedBox(width: 8),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                            maxWidth: MediaQuery.sizeOf(context).width * 0.38),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            AmountText(
+                              currencyFormat.format(amount),
+                              alignment: AlignmentDirectional.centerEnd,
                               style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: isPending
-                                    ? Colors.orange
-                                    : AppColors.depositColor,
+                                fontWeight: FontWeight.bold,
+                                color: color,
+                                fontSize: 14,
                               ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isPending
+                                    ? Colors.orange.withAlpha(20)
+                                    : AppColors.depositColor.withAlpha(20),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                isPending ? 'En attente' : 'Confirmé',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: isPending
+                                      ? Colors.orange
+                                      : AppColors.depositColor,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),

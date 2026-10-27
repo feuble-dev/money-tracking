@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/categories/category_providers.dart';
 import '../../../../core/format/formats.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../shared/widgets/amount_text.dart';
 import '../../../caisse/providers/caisse_provider.dart';
 import '../../../categories/providers/recurring_provider.dart';
 import '../../providers/particulier_dashboard_provider.dart';
@@ -199,24 +200,24 @@ class _OverviewCard extends ConsumerWidget {
               ),
             ],
           ),
+          AmountText(
+            m(net.abs()),
+            style: TextStyle(
+                color: net >= 0 ? Colors.greenAccent : Colors.orangeAccent,
+                fontSize: 26,
+                fontWeight: FontWeight.bold),
+          ),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                m(net.abs()),
-                style: TextStyle(
-                    color: net >= 0 ? Colors.greenAccent : Colors.orangeAccent,
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(net >= 0 ? 'épargné' : 'de plus dépensé',
+              Expanded(
+                child: Text(net >= 0 ? 'épargné ce mois' : 'dépensé de plus que reçu',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.white60, fontSize: 12)),
               ),
-              const Spacer(),
-              TrendIndicator(percentage: stats.outTrend, label: ''),
+              // Dépenses en hausse = mauvaise nouvelle : couleurs inversées.
+              TrendIndicator(
+                  percentage: stats.outTrend, label: 'dépenses', invertColors: true),
             ],
           ),
           const SizedBox(height: 14),
@@ -251,10 +252,15 @@ class _OverviewCard extends ConsumerWidget {
           Row(children: [
             Icon(icon, size: 14, color: color),
             const SizedBox(width: 6),
-            Text(label, style: TextStyle(fontSize: 11, color: color)),
+            Flexible(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: color)),
+            ),
           ]),
           const SizedBox(height: 4),
-          Text(value,
+          AmountText(value,
               style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -301,14 +307,20 @@ class _WalletsCard extends ConsumerWidget {
             children: [
               Row(
                 children: [
-                  Text('Mes portefeuilles Mobile Money',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  Text(m(total),
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Expanded(
+                    child: Text('Mes portefeuilles Mobile Money',
+                        maxLines: 2,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: AmountText(m(total),
+                        alignment: AlignmentDirectional.centerEnd,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -324,11 +336,17 @@ class _WalletsCard extends ConsumerWidget {
                         const SizedBox(width: 10),
                         Expanded(
                             child: Text(c.operatorName ?? 'Opérateur',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w500))),
-                        Text(m(c.soldeActuel),
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: AmountText(m(c.soldeActuel),
+                              alignment: AlignmentDirectional.centerEnd,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600)),
+                        ),
                       ],
                     ),
                   )),
@@ -460,7 +478,7 @@ class _CategoryBreakdown extends ConsumerWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(currency.format(total),
+                      AmountText(currency.format(total),
                           style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold)),
                       Text('${stats.txCountOut} dépense'
@@ -496,9 +514,12 @@ class _CategoryBreakdown extends ConsumerWidget {
                             style: TextStyle(
                                 fontSize: 11, color: Colors.grey[600])),
                         const SizedBox(width: 8),
-                        Text(currency.format(r.amount),
-                            style: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.w600)),
+                        Flexible(
+                          child: AmountText(currency.format(r.amount),
+                              alignment: AlignmentDirectional.centerEnd,
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w600)),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -568,10 +589,14 @@ class _TopBeneficiaries extends StatelessWidget {
                     ],
                   ),
                 ),
-                Text(currency.format(b.amount),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.withdrawColor)),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: AmountText(currency.format(b.amount),
+                      alignment: AlignmentDirectional.centerEnd,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.withdrawColor)),
+                ),
               ],
             ),
           );
@@ -628,15 +653,21 @@ class _RecurringCard extends ConsumerWidget {
                       Text(
                         '${_cadence(s.avgIntervalDays)} · prochain vers le ${df.format(s.nextExpected)}'
                         '${cat != null ? ' · ${cat.label}' : ''}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                       ),
                     ],
                   ),
                 ),
-                Text('~${currency.format(s.typicalAmount)}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.withdrawColor)),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: AmountText('~${currency.format(s.typicalAmount)}',
+                      alignment: AlignmentDirectional.centerEnd,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.withdrawColor)),
+                ),
               ],
             ),
           );
@@ -673,11 +704,17 @@ class _OperatorSplit extends StatelessWidget {
                   children: [
                     Expanded(
                         child: Text(o['name'] as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                                 fontSize: 13, fontWeight: FontWeight.w500))),
-                    Text(currency.format(out),
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: AmountText(currency.format(out),
+                          alignment: AlignmentDirectional.centerEnd,
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 4),

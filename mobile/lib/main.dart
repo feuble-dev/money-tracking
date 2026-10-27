@@ -342,6 +342,17 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       darkTheme: AppTheme.darkTheme,
       themeMode: themeMode,
       routerConfig: router,
+      // La police système agrandie (fréquent sur les téléphones d'entrée de
+      // gamme) faisait déborder les cartes de montants. On la respecte
+      // jusqu'à ×1,3 — au-delà, les écrans chiffrés deviennent illisibles.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+              textScaler: mq.textScaler.clamp(maxScaleFactor: 1.3)),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       locale: const Locale('fr', 'FR'),
       supportedLocales: const [Locale('fr', 'FR')],
       localizationsDelegates: const [

@@ -9,6 +9,10 @@ export '../models/transaction_filter.dart';
 
 const _uuid = Uuid();
 
+/// Nombre max de transactions chargées dans la liste (au-delà, l'écran
+/// l'indique au lieu d'afficher un total trompeur).
+const kTransactionsPageLimit = 500;
+
 /// Provider pour le filtre actif
 final transactionFilterProvider =
     StateProvider<TransactionFilter>((ref) => const TransactionFilter());
@@ -63,7 +67,13 @@ class TransactionsNotifier
     loadTransactions();
   }
 
+  /// Numéro de la dernière requête lancée : une réponse plus ancienne qui
+  /// arrive après (frappe rapide dans la recherche) est ignorée au lieu
+  /// d'écraser des résultats plus récents.
+  int _loadSeq = 0;
+
   Future<void> loadTransactions() async {
+    final seq = ++_loadSeq;
     try {
       final filter = _ref.read(transactionFilterProvider);
       final db = await DatabaseHelper.instance.database;
@@ -105,9 +115,17 @@ class TransactionsNotifier
         whereArgs.add(filter.dateTo!.toIso8601String());
       }
       if (filter.searchQuery != null && filter.searchQuery!.isNotEmpty) {
-        where.write(' AND (t.client_phone LIKE ? OR t.client_name LIKE ?)');
-        whereArgs.add('%${filter.searchQuery}%');
-        whereArgs.add('%${filter.searchQuery}%');
+        // Recherche aussi par référence opérateur (ID de transaction du SMS).
+        // « % » et « _ » saisis sont cherchés tels quels (échappés avec « ! »).
+        final q = filter.searchQuery!
+            .trim()
+            .replaceAll('!', '!!')
+            .replaceAll('%', '!%')
+            .replaceAll('_', '!_');
+        where.write(" AND (t.client_phone LIKE ? ESCAPE '!' "
+            "OR t.client_name LIKE ? ESCAPE '!' "
+            "OR t.operator_transaction_id LIKE ? ESCAPE '!')");
+        whereArgs.addAll(['%$q%', '%$q%', '%$q%']);
       }
 
       final results = await db.rawQuery('''
@@ -117,12 +135,14 @@ class TransactionsNotifier
         LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
         WHERE $where
         ORDER BY t.created_at DESC
-        LIMIT 500
+        LIMIT $kTransactionsPageLimit
       ''', whereArgs);
 
+      if (seq != _loadSeq || !mounted) return;
       state = AsyncValue.data(
           results.map((e) => TransactionModel.fromMap(e)).toList());
     } catch (e, st) {
+      if (seq != _loadSeq || !mounted) return;
       state = AsyncValue.error(e, st);
     }
   }

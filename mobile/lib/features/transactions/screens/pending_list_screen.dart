@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../providers/transaction_provider.dart';
 
 /// Écran liste des transactions en attente de confirmation
@@ -108,6 +109,8 @@ class PendingListScreen extends ConsumerWidget {
                             children: [
                               Text(
                                 '${tx.displayLabel} - En attente',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.accentColor,
@@ -125,12 +128,18 @@ class PendingListScreen extends ConsumerWidget {
                           ),
                         ),
                         // Montant
-                        Text(
-                          currencyFormat.format(tx.amount),
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: color,
-                            fontSize: 15,
+                        const SizedBox(width: 8),
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                              maxWidth: MediaQuery.sizeOf(context).width * 0.4),
+                          child: AmountText(
+                            currencyFormat.format(tx.amount),
+                            alignment: AlignmentDirectional.centerEnd,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: color,
+                              fontSize: 15,
+                            ),
                           ),
                         ),
                       ],

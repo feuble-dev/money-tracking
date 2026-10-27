@@ -167,7 +167,7 @@ class _ClientsListScreenState extends ConsumerState<ClientsListScreen> {
                           leading: CircleAvatar(
                             backgroundColor: AppColors.primaryColor.withAlpha(30),
                             child: Text(
-                              '${client.firstName[0]}${client.lastName[0]}'.toUpperCase(),
+                              client.initials,
                               style: const TextStyle(
                                 color: AppColors.primaryColor,
                                 fontWeight: FontWeight.bold,

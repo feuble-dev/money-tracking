@@ -11,6 +11,7 @@ import '../../../core/licence/licence_guard.dart';
 import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/sms/commission_calculator.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../../clients/models/client_model.dart';
 import '../../clients/providers/client_provider.dart';
 import '../../dashboard/providers/dashboard_provider.dart';
@@ -515,8 +516,9 @@ class _PendingTransactionScreenState
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
+                  AmountText(
                     _currencyFormat.format(amount),
+                    alignment: Alignment.center,
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: _isCancelled ? Colors.grey[700] : color,

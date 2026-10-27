@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/sms/commission_calculator.dart';
+import '../../../core/format/amount_input_formatter.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/ussd/ussd_launcher.dart';
 import '../widgets/contact_picker_button.dart';
@@ -479,6 +480,7 @@ class _NewTransactionScreenState extends ConsumerState<NewTransactionScreen> {
                 prefixIcon: Icon(Icons.attach_money, color: headerColor),
               ),
               keyboardType: TextInputType.number,
+              inputFormatters: const [AmountInputFormatter()],
               validator: (v) {
                 if (v == null || v.trim().isEmpty) return 'Montant requis';
                 final a = double.tryParse(v.replaceAll(RegExp(r'[^\d]'), ''));

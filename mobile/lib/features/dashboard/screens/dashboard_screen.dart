@@ -6,6 +6,7 @@ import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/sms/sms_listener.dart';
 import '../../notifications/screens/notifications_screen.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../../../shared/widgets/main_shell.dart';
 import '../../caisse/providers/caisse_provider.dart';
 import '../../operators/providers/operator_provider.dart';
@@ -351,7 +352,7 @@ class _DashboardTab extends ConsumerWidget {
               ),
             ],
           ),
-          Text(
+          AmountText(
             mask(currencyFormat.format(solde)),
             style: const TextStyle(
                 color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold),
@@ -391,11 +392,16 @@ class _DashboardTab extends ConsumerWidget {
             children: [
               Icon(icon, size: 14, color: color),
               const SizedBox(width: 6),
-              Text(label, style: TextStyle(fontSize: 11, color: color)),
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: color)),
+              ),
             ],
           ),
           const SizedBox(height: 4),
-          Text(value,
+          AmountText(value,
               style: const TextStyle(
                   fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
         ],
@@ -461,7 +467,7 @@ class _DashboardTab extends ConsumerWidget {
                   size: 16, color: AppColors.depositColor),
               const SizedBox(width: 6),
               Expanded(
-                child: Text(
+                child: AmountText(
                   'Entrées: ${currencyFormat.format(stats.totalDeposits)}',
                   style: const TextStyle(
                       fontWeight: FontWeight.w600,
@@ -479,7 +485,7 @@ class _DashboardTab extends ConsumerWidget {
                   size: 16, color: AppColors.withdrawColor),
               const SizedBox(width: 6),
               Expanded(
-                child: Text(
+                child: AmountText(
                   'Sorties: ${currencyFormat.format(stats.totalWithdrawals)}',
                   style: const TextStyle(
                       fontWeight: FontWeight.w600,
@@ -546,28 +552,35 @@ class _DashboardTab extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(d['name'] as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w600)),
-                        Text(
+                        AmountText(
                           '$txCount tx - ${currencyFormat.format(total)}',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                     ),
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('+${currencyFormat.format(deposits)}',
-                          style: const TextStyle(
-                              fontSize: 11,
-                              color: AppColors.depositColor,
-                              fontWeight: FontWeight.w500)),
-                      Text('-${currencyFormat.format(withdrawals)}',
-                          style: const TextStyle(
-                              fontSize: 11,
-                              color: AppColors.withdrawColor,
-                              fontWeight: FontWeight.w500)),
-                    ],
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        AmountText('+${currencyFormat.format(deposits)}',
+                            alignment: AlignmentDirectional.centerEnd,
+                            style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.depositColor,
+                                fontWeight: FontWeight.w500)),
+                        AmountText('-${currencyFormat.format(withdrawals)}',
+                            alignment: AlignmentDirectional.centerEnd,
+                            style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.withdrawColor,
+                                fontWeight: FontWeight.w500)),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -616,8 +629,13 @@ class _DashboardTab extends ConsumerWidget {
           Expanded(
             child: Text(label, style: Theme.of(context).textTheme.bodySmall),
           ),
-          Text(value, style: const TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 8),
+          Flexible(
+            child: AmountText(value,
+                alignment: AlignmentDirectional.centerEnd,
+                style: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600)),
+          ),
         ],
       ),
     );
@@ -637,11 +655,16 @@ class _DashboardTab extends ConsumerWidget {
             children: [
               Icon(icon, size: 16, color: color),
               const SizedBox(width: 6),
-              Text(label, style: TextStyle(fontSize: 12, color: color)),
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: color)),
+              ),
             ],
           ),
           const SizedBox(height: 6),
-          Text(value,
+          AmountText(value,
               style: TextStyle(
                   fontSize: 15, fontWeight: FontWeight.bold, color: color)),
         ],
