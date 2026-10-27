@@ -9,10 +9,9 @@ import '../sms/commission_calculator.dart';
 import '../sms/sms_field_extractor.dart';
 import '../sms/sms_matching_engine.dart';
 import 'historique_storage.dart';
+import '../config/api_config.dart';
 
-// Même URL que licence_service
-const String _baseUrl = 'https://api.money-tracking.site/api/licence';
-// const String _baseUrl = 'http://localhost:8000/api/licence';
+const String _baseUrl = ApiConfig.licence;
 
 class HistoriqueImportService {
   static const _smsChannel = MethodChannel(
@@ -59,7 +58,8 @@ class HistoriqueImportService {
       }
 
       if (data['statut'] == 'deja_active' || data['statut'] == 'active') {
-        await HistoriqueStorage.sauvegarderToken(data['token']);
+        await HistoriqueStorage.sauvegarderToken(data['token'],
+            couvertDepuis: data['date_debut_couverte'] as String?);
         return ResultatAchat.active(
           montant: (data['montant'] as num?)?.toInt() ?? 0,
         );
@@ -90,7 +90,8 @@ class HistoriqueImportService {
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           if (data['statut'] == 'active') {
-            await HistoriqueStorage.sauvegarderToken(data['token']);
+            await HistoriqueStorage.sauvegarderToken(data['token'],
+                couvertDepuis: data['date_debut_couverte'] as String?);
             yield StatutAchat.active;
             return;
           }
@@ -112,6 +113,10 @@ class HistoriqueImportService {
     final token = await HistoriqueStorage.getToken();
     if (token == null) {
       return ResultatImport.erreur('Achat non activé');
+    }
+    if (!await HistoriqueStorage.couvre(dateDebut)) {
+      return ResultatImport.erreur(
+          'Cette période n\'est pas couverte par votre achat.');
     }
 
     // 1. Lire TOUS les SMS via MethodChannel natif

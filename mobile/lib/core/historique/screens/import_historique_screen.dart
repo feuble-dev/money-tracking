@@ -47,8 +47,11 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
     _checkStatus();
   }
 
+  /// `_dejaActif` = l'achat existant couvre la date de début CHOISIE (un
+  /// achat ne couvre que la période payée) — recalculé à chaque changement
+  /// de date.
   Future<void> _checkStatus() async {
-    final active = await HistoriqueStorage.estActive();
+    final active = await HistoriqueStorage.couvre(_dateDebut);
     if (mounted) setState(() => _dejaActif = active);
   }
 
@@ -125,6 +128,7 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
           _dateFin = date;
         }
       });
+      if (isStart) _checkStatus();
     }
   }
 
@@ -133,6 +137,7 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
       _dateDebut = DateTime.now().subtract(Duration(days: days));
       _dateFin = DateTime.now();
     });
+    _checkStatus();
   }
 
   Future<void> _startImport() async {

@@ -2,11 +2,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../licence/licence_service.dart';
 import '../licence/licence_storage.dart';
+import '../config/api_config.dart';
 
-const _syncBaseUrl = 'https://api.money-tracking.site/api/sync';
-// const _syncBaseUrl = 'http://localhost:8000/api/sync';
-const _licenceBaseUrl = 'https://api.money-tracking.site/api/licence';
-// const _licenceBaseUrl = 'http://localhost:8000/api/licence';
+const _syncBaseUrl = ApiConfig.sync;
+const _licenceBaseUrl = ApiConfig.licence;
 
 /// Rattachement d'un agent à un "patron" multi-agence (D-affiliation) —
 /// saisie du numéro du patron (mécanisme confirmé), en attente

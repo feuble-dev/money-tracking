@@ -7,6 +7,7 @@ from django.contrib.auth.hashers import make_password, check_password
 from .models import Client, Agence, Licence, DemandeActivation, Notification, AchatHistorique
 from .services import LicenceService, HistoriqueService
 from .serializers import NotificationSerializer
+from .auth import ERREUR_APPAREIL, appareil_proprietaire, client_proprietaire
 
 
 class EssaiGratuitView(APIView):
@@ -34,8 +35,26 @@ class EssaiGratuitView(APIView):
         if account_type not in dict(Client.ACCOUNT_TYPE_CHOICES):
             account_type = 'agence'
 
-        client_existant = Client.objects.filter(telephone=telephone).exists()
-        if not client_existant and not password:
+        client_existant = Client.objects.filter(telephone=telephone).first()
+        if client_existant is not None:
+            # Avant : n'importe qui connaissant le numéro pouvait créer une
+            # agence (et une licence pour SON appareil) sur le compte d'un
+            # autre, sans mot de passe. On exige soit un appareil déjà
+            # autorisé par le propriétaire, soit le bon mot de passe.
+            mot_de_passe_ok = bool(
+                password and client_existant.password_hash
+                and check_password(password, client_existant.password_hash)
+            )
+            if not (mot_de_passe_ok
+                    or appareil_proprietaire(client_existant, device_id)):
+                return Response(
+                    {'erreur': (
+                        'Ce numéro a déjà un compte MoneyTracking. '
+                        'Choisissez « J\'ai déjà un compte » pour vous connecter.'
+                    )},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        if client_existant is None and not password:
             return Response(
                 {'erreur': 'password requis pour créer un compte'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -90,6 +109,9 @@ class AgenceCreerView(APIView):
                 {'erreur': 'Compte introuvable — utilisez /essai/ pour créer un compte'},
                 status=status.HTTP_404_NOT_FOUND
             )
+        if not appareil_proprietaire(client, device_id):
+            return Response({'erreur': ERREUR_APPAREIL},
+                            status=status.HTTP_403_FORBIDDEN)
 
         resultat = LicenceService.creer_agence_avec_essai(client, nom, device_id)
         agence = resultat['agence']
@@ -109,22 +131,23 @@ class AgenceCreerView(APIView):
 
 class AgencesListView(APIView):
     """
-    GET /api/licence/agences/?telephone=70123456
+    GET /api/licence/agences/?telephone=70123456&device_id=...
     Liste les agences d'un compte avec le statut de licence de chacune
     (utilisé pour le sélecteur multi-agence mobile et la resynchronisation
-    après réinstallation).
+    après réinstallation). Réservé aux appareils du propriétaire : la
+    réponse contient les codes de licence.
     """
     def get(self, request):
         telephone = request.query_params.get('telephone', '').strip()
+        device_id = request.query_params.get('device_id', '').strip()
         if not telephone:
             return Response(
                 {'erreur': 'telephone requis'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        try:
-            client = Client.objects.get(telephone=telephone)
-        except Client.DoesNotExist:
+        client = client_proprietaire(telephone, device_id)
+        if client is None:
             return Response({'account_type': None, 'agences': []})
 
         today = date.today()
@@ -249,6 +272,11 @@ class DemanderActivationView(APIView):
                 {'erreur': 'Agence introuvable pour ce compte'},
                 status=status.HTTP_404_NOT_FOUND
             )
+        # Le payeur peut être le patron ou l'agent affilié qui opère
+        # l'agence : il suffit que CET appareil y ait déjà une licence.
+        if not Licence.objects.filter(agence=agence, device_id=device_id).exists():
+            return Response({'erreur': ERREUR_APPAREIL},
+                            status=status.HTTP_403_FORBIDDEN)
 
         demande_existante = DemandeActivation.objects.filter(
             agence=agence,
@@ -357,9 +385,13 @@ class VerifierCleView(APIView):
     """
     POST /api/licence/verifier-cle/
     Body: { code, device_id }
+
+    La clé doit correspondre à une licence réellement émise pour cet
+    appareil. Avant, seul le FORMAT était contrôlé (la signature n'était
+    jamais recalculée) : « MT-00000000-0000000020991231 » était acceptée.
     """
     def post(self, request):
-        code = request.data.get('code', '').strip()
+        code = request.data.get('code', '').strip().upper()
         device_id = request.data.get('device_id', '').strip()
 
         if not code or not device_id:
@@ -368,8 +400,36 @@ class VerifierCleView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        resultat = LicenceService.verifier_code(code, device_id)
-        return Response(resultat)
+        format_ok = LicenceService.verifier_code(code, device_id)
+        if not format_ok.get('valide'):
+            return Response(format_ok)
+
+        licence = Licence.objects.filter(code=code, device_id=device_id).first()
+        if licence is None:
+            return Response({
+                'valide': False,
+                'message': "Clé inconnue pour cet appareil",
+            })
+        if licence.statut not in ('active', 'essai'):
+            return Response({
+                'valide': False,
+                'message': f"Licence {licence.get_statut_display().lower()}",
+            })
+        jours_restants = (licence.date_fin - date.today()).days
+        if jours_restants < 0:
+            return Response({
+                'valide': False,
+                'date_fin': str(licence.date_fin),
+                'message': f'Licence expirée le {licence.date_fin}',
+            })
+        return Response({
+            'valide': True,
+            'statut': licence.statut,
+            'agence_id': licence.agence_id,
+            'date_fin': str(licence.date_fin),
+            'jours_restants': jours_restants,
+            'message': f'Licence valide — expire dans {jours_restants} jours',
+        })
 
 
 class NotificationsView(APIView):
@@ -429,14 +489,17 @@ class DemanderHistoriqueView(APIView):
 
         client, _ = Client.objects.get_or_create(telephone=telephone)
 
-        achat_existant = AchatHistorique.objects.filter(
-            device_id=device_id, statut='active'
-        ).first()
-        if achat_existant:
+        # Un achat ne couvre que la période demandée : avant, n'importe quel
+        # achat actif (même l'import GRATUIT ≤ 1 an) débloquait ensuite
+        # l'import de n'importe quelle période — 5 ans compris — sans payer.
+        couverture = HistoriqueService.couverture(device_id)
+        if couverture and (couverture[0] is None or couverture[0] <= date_debut):
+            date_couverte, achat_couvrant = couverture
             return Response({
                 'statut': 'deja_active',
-                'token': achat_existant.token,
-                'message': 'Import historique déjà activé sur cet appareil',
+                'token': achat_couvrant.token,
+                'date_debut_couverte': str(date_couverte) if date_couverte else None,
+                'message': 'Cette période est déjà couverte par votre achat',
             })
 
         demande_existante = AchatHistorique.objects.filter(
@@ -445,10 +508,15 @@ class DemanderHistoriqueView(APIView):
         if demande_existante:
             return Response({
                 'statut': 'en_attente',
+                'montant': demande_existante.montant_paye,
                 'message': 'Demande déjà en attente de validation',
             })
 
+        # On ne refacture pas les années déjà payées : seul l'écart entre la
+        # nouvelle période et celle déjà couverte est dû.
         montant = HistoriqueService.calculer_cout(date_debut)
+        if couverture:
+            montant = max(0, montant - HistoriqueService.calculer_cout_couverture(couverture[0]))
 
         achat = AchatHistorique.objects.create(
             client=client,
@@ -465,6 +533,7 @@ class DemanderHistoriqueView(APIView):
             return Response({
                 'statut': 'active',
                 'token': achat.token,
+                'date_debut_couverte': str(date_debut),
                 'montant': 0,
                 'message': 'Import historique activé gratuitement (moins d\'un an)',
             }, status=status.HTTP_201_CREATED)
@@ -486,12 +555,16 @@ class RecupererTokenHistoriqueView(APIView):
             client__telephone=telephone,
             device_id=device_id,
             statut='active'
-        ).first()
+        ).order_by('-activated_at').first()
 
         if achat:
+            couverture = HistoriqueService.couverture(device_id)
             return Response({
                 'statut': 'active',
                 'token': achat.token,
+                'date_debut_couverte': (
+                    str(couverture[0]) if couverture and couverture[0] else None
+                ),
                 'message': 'Import historique activé !',
             })
         return Response({

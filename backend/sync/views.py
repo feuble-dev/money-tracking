@@ -2,6 +2,7 @@ from datetime import datetime
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from licences.auth import ERREUR_APPAREIL, client_proprietaire
 from licences.models import Client, Agence, Licence
 from .models import AffiliationRequest, SyncedTransaction, SyncedClient, SyncedCaisseOperation
 from .services import AffiliationService
@@ -99,18 +100,19 @@ class AffiliationStatutView(APIView):
 
 class DemandesEnAttenteView(APIView):
     """
-    GET /api/sync/demandes-en-attente/?telephone=patron_telephone
+    GET /api/sync/demandes-en-attente/?telephone=patron_telephone&device_id=...
     Le patron consulte les demandes d'affiliation reçues, pour approuver
-    depuis son propre téléphone.
+    depuis son propre téléphone (appareil du propriétaire exigé —
+    licences.auth).
     """
     def get(self, request):
         telephone = request.query_params.get('telephone', '').strip()
+        device_id = request.query_params.get('device_id', '').strip()
         if not telephone:
             return Response({'erreur': 'telephone requis'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            patron = Client.objects.get(telephone=telephone)
-        except Client.DoesNotExist:
+        patron = client_proprietaire(telephone, device_id)
+        if patron is None:
             return Response({'demandes': []})
 
         demandes = AffiliationRequest.objects.filter(
@@ -131,11 +133,18 @@ class DemandesEnAttenteView(APIView):
 class ApprouverAffiliationView(APIView):
     """
     POST /api/sync/affiliation/<id>/approuver/
-    Body: { telephone (patron), agence_id }
+    Body: { telephone (patron), device_id (du patron), agence_id }
     """
     def post(self, request, pk):
         telephone = request.data.get('telephone', '').strip()
+        device_id = request.data.get('device_id', '').strip()
         agence_id = request.data.get('agence_id')
+
+        # Sans ce contrôle, un tiers pouvait demander l'affiliation au
+        # numéro d'un patron puis l'approuver lui-même avec ce numéro, et
+        # obtenir une licence sur son agence.
+        if client_proprietaire(telephone, device_id) is None:
+            return Response({'erreur': ERREUR_APPAREIL}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             demande = AffiliationRequest.objects.get(id=pk, patron__telephone=telephone)
@@ -158,9 +167,12 @@ class ApprouverAffiliationView(APIView):
 
 
 class RejeterAffiliationView(APIView):
-    """POST /api/sync/affiliation/<id>/rejeter/  Body: { telephone (patron) }"""
+    """POST /api/sync/affiliation/<id>/rejeter/  Body: { telephone, device_id (patron) }"""
     def post(self, request, pk):
         telephone = request.data.get('telephone', '').strip()
+        device_id = request.data.get('device_id', '').strip()
+        if client_proprietaire(telephone, device_id) is None:
+            return Response({'erreur': ERREUR_APPAREIL}, status=status.HTTP_403_FORBIDDEN)
         try:
             demande = AffiliationRequest.objects.get(id=pk, patron__telephone=telephone)
         except AffiliationRequest.DoesNotExist:
@@ -174,18 +186,18 @@ class RejeterAffiliationView(APIView):
 
 class MesAgencesView(APIView):
     """
-    GET /api/sync/mes-agences/?telephone=patron_telephone
+    GET /api/sync/mes-agences/?telephone=patron_telephone&device_id=...
     Vue "patron" : toutes ses agences (qu'il les opère lui-même ou via un
     agent affilié) avec un résumé de synchronisation.
     """
     def get(self, request):
         telephone = request.query_params.get('telephone', '').strip()
+        device_id = request.query_params.get('device_id', '').strip()
         if not telephone:
             return Response({'erreur': 'telephone requis'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            patron = Client.objects.get(telephone=telephone)
-        except Client.DoesNotExist:
+        patron = client_proprietaire(telephone, device_id)
+        if patron is None:
             return Response({'agences': []})
 
         agences_data = []
@@ -202,14 +214,19 @@ class MesAgencesView(APIView):
 
 class AgenceSyncDetailView(APIView):
     """
-    GET /api/sync/agence-detail/<id>/?telephone=patron_telephone
+    GET /api/sync/agence-detail/<id>/?telephone=patron_telephone&device_id=...
     Détail complet en lecture seule (droits confirmés) d'une agence pour
     son patron — transactions/clients/opérations caisse synchronisés.
+    Avant, le seul numéro du patron suffisait pour lire tout ce détail.
     """
     def get(self, request, pk):
         telephone = request.query_params.get('telephone', '').strip()
+        device_id = request.query_params.get('device_id', '').strip()
+        patron = client_proprietaire(telephone, device_id)
         try:
-            agence = Agence.objects.get(id=pk, client__telephone=telephone)
+            if patron is None:
+                raise Agence.DoesNotExist
+            agence = Agence.objects.get(id=pk, client=patron)
         except Agence.DoesNotExist:
             return Response({'erreur': 'Agence introuvable pour ce compte'}, status=status.HTTP_404_NOT_FOUND)
 

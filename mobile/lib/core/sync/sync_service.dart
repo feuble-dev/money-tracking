@@ -4,9 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../database/database_helper.dart';
 import '../licence/licence_service.dart';
 import '../onboarding/onboarding_state.dart';
+import '../config/api_config.dart';
 
-const _syncBaseUrl = 'https://api.money-tracking.site/api/sync';
-// const _syncBaseUrl = 'http://localhost:8000/api/sync';
+const _syncBaseUrl = ApiConfig.sync;
 
 /// Pousse en continu (D-sync, droits patron confirmés "lecture seule") les
 /// transactions/clients/opérations caisse de l'agence locale vers le

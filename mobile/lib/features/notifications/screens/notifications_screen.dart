@@ -10,10 +10,10 @@ import '../../../core/notifications/notification_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets/amount_text.dart';
 import '../../transactions/providers/transaction_provider.dart';
+import '../../../core/config/api_config.dart';
 
 // ── URL backend (même que licence_service) ──
-const String _baseUrl = 'https://api.money-tracking.site/api/licence';
-// const String _baseUrl = 'http://localhost:8000/api/licence';
+const String _baseUrl = ApiConfig.licence;
 
 /// Provider: transactions SMS récentes (utilise la vue optimisée)
 final recentActivityProvider = FutureProvider<List<Map<String, dynamic>>>((

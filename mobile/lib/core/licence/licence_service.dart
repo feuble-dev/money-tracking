@@ -4,10 +4,10 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'licence_storage.dart';
 import 'licence_validator.dart';
+import '../config/api_config.dart';
 
 // Changer par l'URL réelle du backend en production
-const String _baseUrl = 'https://api.money-tracking.site/api/licence';
-// const String _baseUrl = 'http://localhost:8000/api/licence';
+const String _baseUrl = ApiConfig.licence;
 
 class LicenceService {
   // ── Device ID unique Android ──────────────────────────────
@@ -127,15 +127,52 @@ class LicenceService {
     String telephone,
   ) async {
     final deviceId = await getDeviceId();
+    final code = cle.trim().toUpperCase();
+
+    // En ligne : le serveur vérifie que la clé a réellement été émise pour
+    // CET appareil (avant, seul le format était contrôlé, donc n'importe
+    // quelle clé bien formée activait l'app). Hors ligne : repli sur le
+    // contrôle local historique, faute de mieux — voir le rapport d'audit
+    // (signature asymétrique à prévoir).
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/verifier-cle/'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'code': code, 'device_id': deviceId}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['valide'] != true) {
+          return ResultatActivation.erreur(
+              data['message'] as String? ?? 'Clé invalide');
+        }
+        final jours = (data['jours_restants'] as num?)?.toInt() ?? 0;
+        await LicenceStorage.sauvegarder({
+          'statut': data['statut'] ?? 'active',
+          'code': code,
+          'date_fin': data['date_fin'],
+          'jours_restants': jours,
+          'source': 'cle_manuelle',
+        });
+        await LicenceStorage.saveTelephone(telephone);
+        return ResultatActivation.succes(
+            'Licence activée - expire dans $jours jours');
+      }
+    } catch (_) {
+      // Pas de réseau : contrôle local ci-dessous.
+    }
+
     final resultat = LicenceValidator.valider(
-      cle: cle.trim().toUpperCase(),
+      cle: code,
       deviceId: deviceId,
     );
 
     if (resultat.valide) {
       await LicenceStorage.sauvegarder({
         'statut': 'active',
-        'code': cle.trim().toUpperCase(),
+        'code': code,
         'date_fin': resultat.dateFin!.toIso8601String(),
         'jours_restants': resultat.joursRestants,
         'source': 'cle_manuelle',

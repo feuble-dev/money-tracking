@@ -211,6 +211,28 @@ class HistoriqueService:
         return annees_payantes * 200
 
     @staticmethod
+    def couverture(device_id: str):
+        """(date la plus ancienne couverte, achat) parmi les achats actifs de
+        l'appareil, ou None. Date `None` = achat antérieur à la tarification
+        par période (sans date enregistrée) : il couvre tout l'historique,
+        comme à l'époque."""
+        from .models import AchatHistorique
+        meilleure = None
+        for achat in AchatHistorique.objects.filter(
+            device_id=device_id, statut='active'
+        ):
+            d = achat.date_debut_demandee
+            if d is None:
+                return (None, achat)
+            if meilleure is None or d < meilleure[0]:
+                meilleure = (d, achat)
+        return meilleure
+
+    @staticmethod
+    def calculer_cout_couverture(date_couverte) -> int:
+        return 0 if date_couverte is None else HistoriqueService.calculer_cout(date_couverte)
+
+    @staticmethod
     def generer_token(device_id: str, telephone: str) -> str:
         hash_device = hashlib.sha256(
             f"{device_id}{telephone}".encode()
