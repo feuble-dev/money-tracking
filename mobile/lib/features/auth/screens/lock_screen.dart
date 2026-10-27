@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
@@ -17,11 +18,38 @@ class _LockScreenState extends ConsumerState<LockScreen> {
   String _pin = '';
   bool _hasError = false;
 
+  /// Secondes restantes de blocage après trop d'erreurs (0 = libre).
+  int _lockSeconds = 0;
+  Timer? _lockTimer;
+
   @override
   void initState() {
     super.initState();
     // Attendre que le widget soit complètement monté
-    WidgetsBinding.instance.addPostFrameCallback((_) => _tryBiometric());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshLock();
+      _tryBiometric();
+    });
+  }
+
+  @override
+  void dispose() {
+    _lockTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Relit le blocage persisté et lance le compte à rebours affiché.
+  Future<void> _refreshLock() async {
+    final left = await ref.read(pinServiceProvider).lockRemaining();
+    if (!mounted) return;
+    _lockTimer?.cancel();
+    setState(() => _lockSeconds = left.inSeconds + (left.inMilliseconds % 1000 > 0 ? 1 : 0));
+    if (_lockSeconds <= 0) return;
+    _lockTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return t.cancel();
+      setState(() => _lockSeconds--);
+      if (_lockSeconds <= 0) t.cancel();
+    });
   }
 
   /// Tente l'authentification biométrique au démarrage
@@ -44,6 +72,7 @@ class _LockScreenState extends ConsumerState<LockScreen> {
   }
 
   void _onDigitPressed(int digit) {
+    if (_lockSeconds > 0) return;
     setState(() {
       _hasError = false;
       if (_pin.length < 4) {
@@ -74,6 +103,7 @@ class _LockScreenState extends ConsumerState<LockScreen> {
         _hasError = true;
         _pin = '';
       });
+      await _refreshLock();
     }
   }
 
@@ -113,7 +143,14 @@ class _LockScreenState extends ConsumerState<LockScreen> {
                     ),
                     const SizedBox(height: 20),
                     PinDots(filledCount: _pin.length, hasError: _hasError),
-                    if (_hasError) ...[
+                    if (_lockSeconds > 0) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Trop d\'essais. Réessayez dans $_lockSeconds s',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.red, fontSize: 14),
+                      ),
+                    ] else if (_hasError) ...[
                       const SizedBox(height: 8),
                       const Text(
                         'Code PIN incorrect',
