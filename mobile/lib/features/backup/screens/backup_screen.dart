@@ -1,198 +1,143 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
-import '../../../core/database/database_helper.dart';
-import '../../../core/theme/app_colors.dart';
 
-/// Écran de sauvegarde de la base de données
-class BackupScreen extends ConsumerStatefulWidget {
+import '../../../core/format/formats.dart';
+import '../data/backup_crypto.dart';
+import '../data/backup_service.dart';
+import '../widgets/backup_password_dialog.dart';
+
+/// Sauvegarde chiffrée de la base (voir BackupService / BackupCrypto).
+class BackupScreen extends StatefulWidget {
   const BackupScreen({super.key});
 
   @override
-  ConsumerState<BackupScreen> createState() => _BackupScreenState();
+  State<BackupScreen> createState() => _BackupScreenState();
 }
 
-class _BackupScreenState extends ConsumerState<BackupScreen> {
-  bool _isLoading = false;
-  List<FileSystemEntity> _backups = [];
+class _BackupScreenState extends State<BackupScreen> {
+  bool _busy = false;
+  List<BackupFile> _backups = const [];
+  final Map<String, BackupKind> _kinds = {};
 
   @override
   void initState() {
     super.initState();
-    _loadBackups();
+    _reload();
   }
 
-  Future<String> get _backupDir async {
-    final dir = await getApplicationDocumentsDirectory();
-    final backupPath = '${dir.path}/backups';
-    await Directory(backupPath).create(recursive: true);
-    return backupPath;
-  }
-
-  Future<void> _loadBackups() async {
-    try {
-      final dir = Directory(await _backupDir);
-      final files = dir
-          .listSync()
-          .where((f) => f.path.endsWith('.mmtbak'))
-          .toList()
-        ..sort((a, b) => b.path.compareTo(a.path));
-      setState(() => _backups = files);
-    } catch (_) {
-      setState(() => _backups = []);
+  Future<void> _reload() async {
+    final list = await BackupService.list();
+    for (final b in list) {
+      _kinds[b.file.path] ??= await BackupService.kindOf(b.file);
     }
+    if (mounted) setState(() => _backups = list);
   }
 
-  Future<void> _createBackup() async {
-    setState(() => _isLoading = true);
-
+  Future<void> _create() async {
+    final password = await showBackupPasswordDialog(context, confirm: true);
+    if (password == null || !mounted) return;
+    setState(() => _busy = true);
     try {
-      final dbPath = await getDatabasesPath();
-      final sourcePath = p.join(dbPath, 'moneytracking.db');
-      final source = File(sourcePath);
-
-      if (!await source.exists()) {
-        throw Exception('Base de données introuvable');
-      }
-
-      final backupPath = await _backupDir;
-      final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-      final destPath = '$backupPath/moneytracking_backup_$timestamp.mmtbak';
-
-      // La base est en mode WAL : les écritures récentes vivent dans
-      // `moneytracking.db-wal` tant qu'elles ne sont pas reportées dans le
-      // fichier principal. Copier le seul `.db` donnait une sauvegarde à
-      // laquelle manquaient les dernières transactions. On force le report.
-      final db = await DatabaseHelper.instance.database;
-      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
-
-      await source.copy(destPath);
-
-      // Nettoyer les anciennes sauvegardes (garder les 7 dernières)
-      await _cleanOldBackups();
-      await _loadBackups();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sauvegarde créée avec succès'),
-            backgroundColor: AppColors.withdrawColor,
-          ),
-        );
-      }
+      await BackupService.create(password);
+      await _reload();
+      _snack('Sauvegarde chiffrée créée');
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur: $e')),
-        );
-      }
+      _snack('Échec de la sauvegarde : $e', error: true);
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _shareBackup(String path) async {
-    await Share.shareXFiles(
-      [XFile(path)],
-      subject: 'Sauvegarde MoneyTracking',
-    );
-  }
-
-  Future<void> _cleanOldBackups() async {
-    final dir = Directory(await _backupDir);
-    final files = dir
-        .listSync()
-        .where((f) => f.path.endsWith('.mmtbak'))
-        .toList()
-      ..sort((a, b) => b.path.compareTo(a.path));
-
-    if (files.length > 7) {
-      for (int i = 7; i < files.length; i++) {
-        await files[i].delete();
-      }
-    }
+  void _snack(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Sauvegarde')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+      body: RefreshIndicator(
+        onRefresh: _reload,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withAlpha(110),
+                borderRadius: BorderRadius.circular(20),
+              ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.backup,
-                      size: 48, color: Theme.of(context).colorScheme.primary),
+                  Icon(Icons.lock_outline, color: scheme.primary, size: 32),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Sauvegarder votre base de données',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
+                  Text('Sauvegarde chiffrée',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
                   Text(
-                    'Crée une copie de toutes vos données. Les 7 dernières sauvegardes sont conservées.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                    textAlign: TextAlign.center,
+                    'Une copie complète de vos données, protégée par un mot de '
+                    'passe. Vous pouvez la partager (WhatsApp, Drive…) sans '
+                    'risque : sans le mot de passe, elle est illisible. '
+                    'Les ${BackupService.keepLast} dernières sont conservées.',
+                    style: theme.textTheme.bodySmall,
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isLoading ? null : _createBackup,
-                      icon: _isLoading
+                    child: FilledButton.icon(
+                      onPressed: _busy ? null : _create,
+                      icon: _busy
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.save),
-                      label: Text(_isLoading
-                          ? 'Sauvegarde...'
-                          : 'Créer une sauvegarde'),
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.save_outlined),
+                      label: Text(_busy ? 'Chiffrement…' : 'Créer une sauvegarde'),
                     ),
                   ),
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: 24),
-
-          if (_backups.isNotEmpty) ...[
-            Text('Sauvegardes existantes',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    )),
+            const SizedBox(height: 24),
+            if (_backups.isNotEmpty)
+              Text('Sauvegardes sur ce téléphone',
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
-            ..._backups.map((file) {
-              final name = p.basename(file.path);
-              final stat = file.statSync();
-              final sizeKb = (stat.size / 1024).toStringAsFixed(0);
-              return Card(
+            for (final b in _backups)
+              Card(
                 child: ListTile(
-                  leading: const Icon(Icons.description),
-                  title: Text(name, style: const TextStyle(fontSize: 13)),
+                  leading: Icon(
+                    _kinds[b.file.path] == BackupKind.encrypted
+                        ? Icons.lock
+                        : Icons.lock_open,
+                    color: _kinds[b.file.path] == BackupKind.encrypted
+                        ? scheme.primary
+                        : Colors.orange,
+                  ),
+                  title: Text(AppFormats.dateTime.format(b.modified)),
                   subtitle: Text(
-                    '${DateFormat('dd/MM/yyyy HH:mm').format(stat.modified)} - $sizeKb Ko',
-                    style: const TextStyle(fontSize: 11),
+                    '${(b.sizeBytes / 1024).toStringAsFixed(0)} Ko · '
+                    '${_kinds[b.file.path] == BackupKind.encrypted ? 'chiffrée' : 'ancienne, non chiffrée'}',
                   ),
                   trailing: IconButton(
-                    icon: const Icon(Icons.share, size: 20),
-                    onPressed: () => _shareBackup(file.path),
+                    tooltip: 'Partager',
+                    icon: const Icon(Icons.share_outlined),
+                    onPressed: () => Share.shareXFiles([XFile(b.file.path)],
+                        subject: 'Sauvegarde MoneyTracking'),
                   ),
                 ),
-              );
-            }),
+              ),
           ],
-        ],
+        ),
       ),
     );
   }

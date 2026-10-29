@@ -1,192 +1,138 @@
 import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
-import '../../../core/database/database_helper.dart';
-import '../../../core/sync/sync_service.dart';
-import '../../../core/theme/app_colors.dart';
 
-/// Écran de restauration de la base de données
-class RestoreScreen extends ConsumerStatefulWidget {
+import '../data/backup_crypto.dart';
+import '../data/backup_service.dart';
+import '../widgets/backup_password_dialog.dart';
+
+/// Restauration d'une sauvegarde (chiffrée, ou ancienne en clair).
+class RestoreScreen extends StatefulWidget {
   const RestoreScreen({super.key});
 
   @override
-  ConsumerState<RestoreScreen> createState() => _RestoreScreenState();
+  State<RestoreScreen> createState() => _RestoreScreenState();
 }
 
-class _RestoreScreenState extends ConsumerState<RestoreScreen> {
-  bool _isLoading = false;
+class _RestoreScreenState extends State<RestoreScreen> {
+  bool _busy = false;
 
   Future<void> _pickAndRestore() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-    );
+    final picked = await FilePicker.platform.pickFiles(type: FileType.any);
+    final path = picked?.files.single.path;
+    if (path == null || !mounted) return;
+    final file = File(path);
 
-    if (result == null || result.files.single.path == null) return;
-
-    final filePath = result.files.single.path!;
-    if (!filePath.endsWith('.mmtbak') && !filePath.endsWith('.db')) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Fichier invalide. Sélectionnez un fichier .mmtbak'),
-          ),
-        );
-      }
-      return;
+    final kind = await BackupService.kindOf(file);
+    if (kind == BackupKind.unknown) {
+      return _snack("Ce fichier n'est pas une sauvegarde MoneyTracking",
+          error: true);
     }
-
     if (!mounted) return;
-
-    // Confirmation
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Restaurer la base de données ?'),
+        title: const Text('Remplacer les données actuelles ?'),
         content: const Text(
-          'Toutes les données actuelles seront remplacées par celles de la sauvegarde. '
-          'Cette action est irréversible.',
+          'Toutes les données de ce téléphone seront remplacées par celles '
+          'de la sauvegarde. Une copie de sécurité de la base actuelle est '
+          'conservée.',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Annuler'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accentColor),
-            child: const Text('Restaurer'),
-          ),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Continuer')),
         ],
       ),
     );
+    if (confirmed != true || !mounted) return;
 
-    if (confirmed != true) return;
-
-    setState(() => _isLoading = true);
-
-    try {
-      final source = File(filePath);
-      // Refuser tout fichier qui n'est pas une base SQLite : l'écraser sur
-      // la base actuelle la rendrait illisible.
-      if (!await _isSqliteFile(source)) {
-        throw Exception('ce fichier n\'est pas une sauvegarde MoneyTracking valide');
+    String? error;
+    while (mounted) {
+      String? password;
+      if (kind == BackupKind.encrypted) {
+        if (!mounted) return;
+        password = await showBackupPasswordDialog(context,
+            confirm: false, error: error);
+        if (password == null) return;
       }
-
-      // Fermer la DB actuelle
-      await DatabaseHelper.instance.close();
-
-      final dbPath = await getDatabasesPath();
-      final destPath = p.join(dbPath, 'moneytracking.db');
-
-      // Filet de sécurité : la base actuelle est conservée à côté.
-      final current = File(destPath);
-      if (await current.exists()) {
-        await current.copy('$destPath.avant_restauration');
+      setState(() => _busy = true);
+      try {
+        await BackupService.restore(file, password: password);
+        _snack('Restauration réussie. Redémarrez l\'application.');
+        return;
+      } on BackupWrongPassword {
+        error = 'Mot de passe incorrect';
+      } catch (e) {
+        _snack('Échec de la restauration : $e', error: true);
+        return;
+      } finally {
+        if (mounted) setState(() => _busy = false);
       }
-
-      // Les fichiers WAL/SHM de l'ANCIENNE base seraient sinon rejoués sur
-      // la base restaurée à la réouverture (données mélangées, voire base
-      // corrompue).
-      for (final suffix in const ['-wal', '-shm', '-journal']) {
-        final f = File('$destPath$suffix');
-        if (await f.exists()) await f.delete();
-      }
-
-      await source.copy(destPath);
-
-      // Les curseurs de synchro patron se basent sur l'ordre d'insertion,
-      // propre à chaque fichier de base : on repousse tout (idempotent).
-      await SyncService.resetCursors();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text('Restauration réussie. Redémarrez l\'application.'),
-            backgroundColor: AppColors.withdrawColor,
-            duration: Duration(seconds: 5),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur: $e')),
-        );
-      }
-    } finally {
-      setState(() => _isLoading = false);
     }
   }
 
-  static Future<bool> _isSqliteFile(File f) async {
-    try {
-      final raf = await f.open();
-      final header = await raf.read(16);
-      await raf.close();
-      return String.fromCharCodes(header) == 'SQLite format 3\u0000';
-    } catch (_) {
-      return false;
-    }
+  void _snack(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      duration: const Duration(seconds: 5),
+      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Restauration')),
-      body: Padding(
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    const Icon(Icons.restore, size: 48, color: AppColors.accentColor),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Restaurer depuis une sauvegarde',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Sélectionnez un fichier .mmtbak pour restaurer vos données. '
-                      'Les données actuelles seront écrasées.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _isLoading ? null : _pickAndRestore,
-                        icon: _isLoading
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2))
-                            : const Icon(Icons.folder_open),
-                        label: Text(_isLoading
-                            ? 'Restauration...'
-                            : 'Sélectionner un fichier'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.accentColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: scheme.tertiaryContainer.withAlpha(110),
+              borderRadius: BorderRadius.circular(20),
             ),
-          ],
-        ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.settings_backup_restore,
+                    color: scheme.tertiary, size: 32),
+                const SizedBox(height: 12),
+                Text('Restaurer une sauvegarde',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 6),
+                Text(
+                  'Choisissez un fichier .mmtbak. Une sauvegarde chiffrée '
+                  'demande le mot de passe choisi lors de sa création.',
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: _busy ? null : _pickAndRestore,
+                    icon: _busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.folder_open),
+                    label: Text(_busy ? 'Restauration…' : 'Choisir un fichier'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
