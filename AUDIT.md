@@ -2,9 +2,9 @@
 
 Périmètre : app mobile Flutter (`mobile/`, ~23 000 lignes), backend Django (`backend/`), site et admin Next.js (`web/`).
 
-État des outils après l'audit :
-- **Mobile.** `flutter analyze` est propre : il reste seulement 3 avis de dépréciation `cacheExtent`, liés au SDK récent et sans effet sur ta version. `flutter test` : 55 tests passent (43 avant).
-- **Backend.** `manage.py check` est propre. 17 tests passent (il n'y en avait aucun).
+État des outils (mis à jour après la deuxième série de corrections) :
+- **Mobile.** `flutter analyze` est propre : il reste seulement 3 avis de dépréciation `cacheExtent`, liés au SDK récent et sans effet sur ta version. `flutter test` : 81 tests passent (43 au départ).
+- **Backend.** `manage.py check` est propre. 35 tests passent (il n'y en avait aucun).
 - **Web.** `tsc --noEmit` et `next build` sont propres.
 
 ---
@@ -90,11 +90,37 @@ Vérifie aussi que nginx transmet `X-Forwarded-For`. Sans lui, la limite de 10 e
 
 ---
 
+## 1 bis. Suite à tes réponses — fait
+
+| Point | Décision | Ce qui a été fait |
+|---|---|---|
+| P1 | Oui | Jeton secret par appareil (`X-Device-Token`) exigé partout, identifiant d'installation aléatoire pour les nouvelles installations, révocation depuis l'admin (D21) |
+| P2 | Oui | Clés hors ligne `MT2-` signées Ed25519 : l'app ne contient que la clé publique (D22) |
+| P3 | Corrige | SMS mis en attente pendant une licence inactive, rejoués au renouvellement avec leur vraie date ; la notification ne pointe plus vers un écran introuvable (D24) |
+| P4 | Pas encore | Keystore de release : à faire avant publication (voir P6 ci-dessous) |
+| P5 | Chiffre | Sauvegardes AES-256-GCM protégées par mot de passe (D25) ; sauvegarde Android automatique désactivée |
+
+Et en plus, à ta demande :
+- **Particulier gratuit**, import des anciens SMS compris (D23).
+- **« Mon argent »** : espèces, banque, épargne et dépenses hors Mobile Money, sans double comptage des retraits vers ses propres espèces (D26).
+- **Site vitrine** refait (deux publics, démonstration animée du téléphone, animations désactivées si l'utilisateur réduit les animations).
+- **Admin** refait : tableau de bord analytique (revenus, inscriptions, volume, licences, expirations), recherche Ctrl+K, fiche client avec révocation d'appareil, suspension de licence, validation des demandes avec clé à copier. Les fausses données de démonstration et le faux login `admin/admin123` ont été supprimés.
+- **Agences** : notification quand le float passe sous le seuil, bilan de la veille chaque matin.
+
+### ⚠️ Déploiement de cette série
+1. Backend : `pip install -r requirements.txt` (ajoute `cryptography`), puis `python manage.py migrate` (migrations 0007 et 0008).
+2. **Backend et nouvelle APK ensemble** : les anciennes apps reçoivent des 401 sur les endpoints client.
+3. Ne change plus `LICENCE_SECRET` : il dérive la clé de signature, donc toutes les clés MT2 déjà envoyées deviendraient invalides.
+
+---
+
 ## 2. À décider ensemble (pas corrigé, choix produit ou migration nécessaire)
+
+> P1, P2, P3 et P5 sont **faits** (voir 1 bis). Restent P4, P6, P7 et P8.
 
 Classé par priorité.
 
-### 🔴 P1 — L'« identifiant d'appareil » n'est pas unique
+### ✅ P1 — L'« identifiant d'appareil » n'est pas unique (fait)
 
 **Constat.** `LicenceService.getDeviceId()` renvoie `androidInfo.id`. Dans `device_info_plus`, c'est **`Build.ID`**, le numéro de version du firmware (ex. `TP1A.220624.014`). **Tous les téléphones du même modèle avec la même mise à jour ont le même « device_id ».**
 
@@ -110,7 +136,7 @@ Classé par priorité.
 
 > Question pour toi : OK pour imposer une mise à jour de l'app, et pour que la réinstallation sur un même téléphone demande le mot de passe du compte ?
 
-### 🔴 P2 — Clés de licence hors ligne non signées
+### ✅ P2 — Clés de licence hors ligne non signées (fait)
 
 **Constat.** L'app hors ligne n'accepte que le **format** de la clé, plus une date d'expiration lue *dans* la clé. N'importe qui peut taper `MT-AAAAAAAA-AAAAAAAA20991231` en mode avion et obtenir une licence jusqu'en 2099. Le correctif 1.3 ferme ce trou seulement quand l'app est en ligne.
 
@@ -118,7 +144,7 @@ Classé par priorité.
 
 **Alternative plus simple.** Exiger le réseau pour activer une clé. L'agent a de toute façon Internet quand il reçoit sa clé par WhatsApp.
 
-### 🟠 P3 — SMS reçus pendant une licence expirée : perdus définitivement
+### ✅ P3 — SMS reçus pendant une licence expirée : perdus définitivement (fait)
 
 **Constat** (`sms_processing_pipeline.dart` §7). Le SMS est enregistré, mais aucune transaction n'est créée. Ensuite :
 - quand la licence est renouvelée, **rien ne rejoue ces SMS** ;
@@ -137,14 +163,14 @@ Deux SMS légitimes **identiques au caractère près** produisent un seul enregi
 
 **Proposition.** Inclure la minute de réception dans l'empreinte, ou n'appliquer l'unicité que sur une fenêtre de quelques minutes.
 
-### 🟠 P5 — Sauvegardes non chiffrées, sauvegarde Android automatique
+### ✅ P5 — Sauvegardes non chiffrées, sauvegarde Android automatique (fait)
 
 - **Fichiers `.mmtbak`.** Ce sont des **copies brutes de la base SQLite** : toutes les transactions et tous les clients, en clair. Ils sont partagés via WhatsApp ou Drive. Le `CLAUDE.md` parle de « sauvegarde chiffrée » et le paquet `encrypt` est dans `pubspec.yaml`, mais il n'est pas utilisé.
 - **Sauvegarde Android automatique.** `android:allowBackup` n'est pas désactivé : Android sauvegarde aussi la base dans Google Drive. Après une restauration sur un nouveau téléphone, `flutter_secure_storage` (le PIN et la licence) **ne peut plus déchiffrer ses données** (problème connu), ce qui peut faire planter l'app au démarrage.
 
 **Proposition.** Chiffrer en AES-GCM avec un mot de passe choisi à la sauvegarde. Et exclure `FlutterSecureStorage` de l'auto-backup (règles `dataExtractionRules`), ou désactiver l'auto-backup.
 
-### 🟠 P6 — APK de release signée avec la clé debug
+### 🟠 P6 — APK de release signée avec la clé debug (reporté à ta demande)
 
 **Constat.** `android/app/build.gradle.kts` contient `signingConfig = signingConfigs.getByName("debug")`. Ce n'est **pas publiable** sur le Play Store. Et le jour où tu changes de clé, les utilisateurs devront désinstaller l'app, ce qui **efface leurs données**.
 
