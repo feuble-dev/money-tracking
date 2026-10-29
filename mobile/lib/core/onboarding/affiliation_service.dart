@@ -1,72 +1,53 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import '../config/api_config.dart';
 import '../licence/licence_service.dart';
 import '../licence/licence_storage.dart';
-import '../config/api_config.dart';
+import '../network/api_client.dart';
 
 const _syncBaseUrl = ApiConfig.sync;
 const _licenceBaseUrl = ApiConfig.licence;
 
 /// Rattachement d'un agent à un "patron" multi-agence (D-affiliation) —
 /// saisie du numéro du patron (mécanisme confirmé), en attente
-/// d'approbation avant de pouvoir opérer une agence. Concerne uniquement
-/// les comptes Agence.
+/// d'approbation avant de pouvoir opérer une agence. La première demande
+/// d'un nouvel appareil lui fait aussi émettre son jeton d'appareil
+/// (mémorisé automatiquement par [ApiClient]).
 class AffiliationService {
   static Future<AffiliationResultat> demander({
     required String demandeurTelephone,
     required String patronTelephone,
   }) async {
-    final deviceId = await LicenceService.getDeviceId();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_syncBaseUrl/demander-affiliation/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'demandeur_telephone': demandeurTelephone,
-              'demandeur_device_id': deviceId,
-              'patron_telephone': patronTelephone,
-            }),
-          )
-          .timeout(const Duration(seconds: 15));
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 201 || response.statusCode == 200) {
+      final res = await ApiClient.post('$_syncBaseUrl/demander-affiliation/', {
+        'demandeur_telephone': demandeurTelephone,
+        'demandeur_device_id': await LicenceService.getDeviceId(),
+        'patron_telephone': patronTelephone,
+      });
+      if (res.ok) {
         return AffiliationResultat.succes(
-          data['message'] as String? ?? 'Demande envoyée',
-        );
+            res.data['message'] as String? ?? 'Demande envoyée');
       }
-      return AffiliationResultat.erreur(
-        data['erreur'] as String? ?? 'Erreur inconnue',
-      );
+      return AffiliationResultat.erreur(res.error());
     } catch (_) {
-      return AffiliationResultat.erreur(
-        'Impossible de se connecter au serveur',
-      );
+      return AffiliationResultat.erreur('Impossible de se connecter au serveur');
     }
   }
 
-  /// Poll jusqu'à approbation/rejet (même principe que
-  /// LicenceService.attendreValidation) — 24h max, toutes les 10s.
+  /// Poll jusqu'à approbation/rejet — 24h max, toutes les 10s.
   static Stream<AffiliationStatutPoll> attendreApprobation() async* {
     final deviceId = await LicenceService.getDeviceId();
     for (int i = 0; i < 8640; i++) {
       // 8640 * 10s = 24h max
       try {
-        final response = await http
-            .get(
-              Uri.parse(
-                '$_syncBaseUrl/affiliation-statut/?device_id=$deviceId',
-              ),
-            )
-            .timeout(const Duration(seconds: 10));
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final statut = data['statut'] as String?;
+        final res = await ApiClient.get('$_syncBaseUrl/affiliation-statut/',
+            query: {'device_id': deviceId},
+            timeout: const Duration(seconds: 10));
+        if (res.ok) {
+          final statut = res.data['statut'] as String?;
           if (statut == 'approuve') {
             yield AffiliationStatutPoll.approuve(
-              agenceId: data['agence_id'] as int,
-              agenceNom: data['agence_nom'] as String,
-              licenceCode: data['licence_code'] as String?,
+              agenceId: res.data['agence_id'] as int,
+              agenceNom: res.data['agence_nom'] as String,
+              licenceCode: res.data['licence_code'] as String?,
             );
             return;
           }
@@ -83,29 +64,21 @@ class AffiliationService {
   }
 
   /// Récupère la licence émise pour ce device sur l'agence assignée
-  /// (réutilise le flux licence normal — voir RecupererLicenceView côté
-  /// backend, agence-scopé, pas téléphone-scopé, pour ce cas précis).
+  /// (RecupererLicenceView côté backend, agence-scopé).
   static Future<bool> recupererLicencePourAgence({
     required String telephone,
     required int agenceId,
   }) async {
-    final deviceId = await LicenceService.getDeviceId();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_licenceBaseUrl/recuperer/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'telephone': telephone,
-              'device_id': deviceId,
-              'agence_id': agenceId,
-            }),
-          )
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return false;
-      final data = jsonDecode(response.body);
-      if (data['statut'] != 'active' && data['statut'] != 'essai') return false;
-      await LicenceStorage.sauvegarder(data);
+      final res = await ApiClient.post('$_licenceBaseUrl/recuperer/', {
+        'telephone': telephone,
+        'device_id': await LicenceService.getDeviceId(),
+        'agence_id': agenceId,
+      });
+      if (!res.ok) return false;
+      final statut = res.data['statut'];
+      if (statut != 'active' && statut != 'essai') return false;
+      await LicenceStorage.sauvegarder(res.data);
       await LicenceStorage.saveTelephone(telephone);
       return true;
     } catch (_) {

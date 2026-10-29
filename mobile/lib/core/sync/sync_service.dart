@@ -1,10 +1,9 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database/database_helper.dart';
 import '../licence/licence_service.dart';
 import '../onboarding/onboarding_state.dart';
 import '../config/api_config.dart';
+import '../network/api_client.dart';
 
 const _syncBaseUrl = ApiConfig.sync;
 
@@ -101,60 +100,54 @@ class SyncService {
 
       if (transactions.isEmpty && clients.isEmpty && caisseOps.isEmpty) return;
 
-      final response = await http
-          .post(
-            Uri.parse('$_syncBaseUrl/push/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'agence_id': backendAgenceId,
-              'device_id': deviceId,
-              'transactions': transactions
-                  .map(
-                    (t) => {
-                      'local_id': t['id'],
-                      'operator_name': t['operator_name'] ?? '',
-                      'transaction_type_code': t['type_code'] ?? '',
-                      'transaction_type_label':
-                          t['type_label'] ?? t['type_code'] ?? '',
-                      'direction': t['direction'] ?? '',
-                      'amount': t['amount'],
-                      'commission': t['commission'],
-                      'client_phone': t['client_phone'] ?? '',
-                      'client_name': t['client_name'] ?? '',
-                      'status': t['status'] ?? '',
-                      'source': t['source'] ?? '',
-                      'created_at': t['created_at'],
-                    },
-                  )
-                  .toList(),
-              'clients': clients
-                  .map(
-                    (c) => {
-                      'local_id': c['id'],
-                      'first_name': c['first_name'] ?? '',
-                      'last_name': c['last_name'] ?? '',
-                      'phone_number': c['phone_number'] ?? '',
-                      'created_at': c['created_at'],
-                    },
-                  )
-                  .toList(),
-              'caisse_operations': caisseOps
-                  .map(
-                    (o) => {
-                      'local_id': o['id'],
-                      'operator_name': o['operator_name'] ?? '',
-                      'type': o['type'] ?? '',
-                      'montant': o['montant'],
-                      'note': o['note'] ?? '',
-                      'created_at': o['created_at'],
-                    },
-                  )
-                  .toList(),
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
+      final response = await ApiClient.post('$_syncBaseUrl/push/', {
+        'agence_id': backendAgenceId,
+        'device_id': deviceId,
+        'transactions': transactions
+            .map(
+              (t) => {
+                'local_id': t['id'],
+                'operator_name': t['operator_name'] ?? '',
+                'transaction_type_code': t['type_code'] ?? '',
+                'transaction_type_label':
+                    t['type_label'] ?? t['type_code'] ?? '',
+                'direction': t['direction'] ?? '',
+                'amount': t['amount'],
+                'commission': t['commission'],
+                'client_phone': t['client_phone'] ?? '',
+                'client_name': t['client_name'] ?? '',
+                'status': t['status'] ?? '',
+                'source': t['source'] ?? '',
+                'created_at': t['created_at'],
+              },
+            )
+            .toList(),
+        'clients': clients
+            .map(
+              (c) => {
+                'local_id': c['id'],
+                'first_name': c['first_name'] ?? '',
+                'last_name': c['last_name'] ?? '',
+                'phone_number': c['phone_number'] ?? '',
+                'created_at': c['created_at'],
+              },
+            )
+            .toList(),
+        'caisse_operations': caisseOps
+            .map(
+              (o) => {
+                'local_id': o['id'],
+                'operator_name': o['operator_name'] ?? '',
+                'type': o['type'] ?? '',
+                'montant': o['montant'],
+                'note': o['note'] ?? '',
+                'created_at': o['created_at'],
+              },
+            )
+            .toList(),
+      }, timeout: const Duration(seconds: 20));
 
-      if (response.statusCode == 200) {
+      if (response.ok) {
         // Chaque table avance indépendamment jusqu'à sa dernière ligne
         // envoyée ; une table plafonnée à 500 reprendra au prochain push.
         if (transactions.isNotEmpty) {

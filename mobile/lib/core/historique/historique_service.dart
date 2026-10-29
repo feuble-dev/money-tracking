@@ -1,10 +1,9 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import '../database/caisse_repository.dart';
 import '../database/database_helper.dart';
 import '../licence/licence_service.dart';
+import '../network/api_client.dart';
 import '../sms/commission_calculator.dart';
 import '../sms/sms_field_extractor.dart';
 import '../sms/sms_matching_engine.dart';
@@ -35,41 +34,29 @@ class HistoriqueImportService {
     String telephone,
     DateTime dateDebut,
   ) async {
-    final deviceId = await LicenceService.getDeviceId();
     final dateDebutStr =
         '${dateDebut.year.toString().padLeft(4, '0')}-${dateDebut.month.toString().padLeft(2, '0')}-${dateDebut.day.toString().padLeft(2, '0')}';
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/historique/demander/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'telephone': telephone,
-              'device_id': deviceId,
-              'date_debut': dateDebutStr,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
+      final res = await ApiClient.post('$_baseUrl/historique/demander/', {
+        'telephone': telephone,
+        'device_id': await LicenceService.getDeviceId(),
+        'date_debut': dateDebutStr,
+      }, timeout: const Duration(seconds: 10));
 
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode >= 400) {
-        return ResultatAchat.erreur(data['erreur'] ?? 'Erreur inconnue');
-      }
-
+      if (!res.ok) return ResultatAchat.erreur(res.error());
+      final data = res.data;
       if (data['statut'] == 'deja_active' || data['statut'] == 'active') {
-        await HistoriqueStorage.sauvegarderToken(data['token'],
+        await HistoriqueStorage.sauvegarderToken(data['token'] as String,
             couvertDepuis: data['date_debut_couverte'] as String?);
         return ResultatAchat.active(
           montant: (data['montant'] as num?)?.toInt() ?? 0,
         );
       }
-
       return ResultatAchat.enAttente(
         montant: (data['montant'] as num?)?.toInt() ?? 0,
-        message: data['message'] ?? 'Demande envoyée',
+        message: data['message'] as String? ?? 'Demande envoyée',
       );
-    } catch (e) {
+    } catch (_) {
       return ResultatAchat.erreur('Impossible de se connecter');
     }
   }
@@ -82,19 +69,13 @@ class HistoriqueImportService {
     for (int i = 0; i < 2880; i++) {
       await Future.delayed(const Duration(seconds: 30));
       try {
-        final response = await http.post(
-          Uri.parse('$_baseUrl/historique/recuperer/'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'telephone': telephone, 'device_id': deviceId}),
-        );
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          if (data['statut'] == 'active') {
-            await HistoriqueStorage.sauvegarderToken(data['token'],
-                couvertDepuis: data['date_debut_couverte'] as String?);
-            yield StatutAchat.active;
-            return;
-          }
+        final res = await ApiClient.post('$_baseUrl/historique/recuperer/',
+            {'telephone': telephone, 'device_id': deviceId});
+        if (res.ok && res.data['statut'] == 'active') {
+          await HistoriqueStorage.sauvegarderToken(res.data['token'] as String,
+              couvertDepuis: res.data['date_debut_couverte'] as String?);
+          yield StatutAchat.active;
+          return;
         }
       } catch (_) {}
       yield StatutAchat.enAttente;

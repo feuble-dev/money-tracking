@@ -236,8 +236,10 @@ class AdminGenererLicenceView(APIView):
             montant_paye=montant,
             statut='active',
         )
+        from .signature import cle_pour_licence
         return Response({
             'code': licence.code,
+            'cle_hors_ligne': cle_pour_licence(licence),
             'date_fin': str(licence.date_fin),
             'message': 'Licence générée avec succès',
         }, status=status.HTTP_201_CREATED)

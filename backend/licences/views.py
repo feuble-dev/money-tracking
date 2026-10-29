@@ -8,7 +8,11 @@ from django.contrib.auth.hashers import make_password, check_password
 from .models import Client, Agence, Licence, DemandeActivation, Notification, AchatHistorique
 from .services import LicenceService, HistoriqueService
 from .serializers import NotificationSerializer
-from .auth import ERREUR_APPAREIL, appareil_proprietaire, client_proprietaire
+from . import signature
+from .auth import (
+    ERREUR_APPAREIL, appareil_authentifie, appareil_connu,
+    appareil_proprietaire, client_proprietaire, emettre_jeton, exige_jeton,
+)
 
 
 class EssaiGratuitView(APIView):
@@ -46,8 +50,9 @@ class EssaiGratuitView(APIView):
                 password and client_existant.password_hash
                 and check_password(password, client_existant.password_hash)
             )
-            if not (mot_de_passe_ok
-                    or appareil_proprietaire(client_existant, device_id)):
+            appareil_ok = (appareil_authentifie(request, device_id)
+                           and appareil_proprietaire(client_existant, device_id))
+            if not (mot_de_passe_ok or appareil_ok):
                 return Response(
                     {'erreur': (
                         'Ce numéro a déjà un compte MoneyTracking. '
@@ -74,16 +79,26 @@ class EssaiGratuitView(APIView):
         licence = resultat['licence']
         jours_restants = (licence.date_fin - date.today()).days
 
-        return Response({
+        reponse = {
             'agence_id': agence.id,
             'agence_nom': agence.nom,
             'account_type': client.account_type,
-            'statut': 'essai',
+            'statut': licence.statut,
             'code': licence.code,
+            'cle_hors_ligne': signature.cle_pour_licence(licence),
             'date_fin': str(licence.date_fin),
             'jours_restants': jours_restants,
-            'message': f'Essai gratuit activé pour {licence.duree_mois} mois',
-        }, status=status.HTTP_201_CREATED)
+            'message': (
+                'Compte créé — MoneyTracking est gratuit pour les particuliers'
+                if client.account_type == 'particulier'
+                else f'Essai gratuit activé pour {licence.duree_mois} mois'
+            ),
+        }
+        # Un appareil déjà authentifié garde son jeton ; sinon on en émet un.
+        if not appareil_authentifie(request, device_id):
+            reponse['device_token'] = emettre_jeton(
+                device_id, 'creation' if cree else 'connexion', client)
+        return Response(reponse, status=status.HTTP_201_CREATED)
 
 
 class AgenceCreerView(APIView):
@@ -92,6 +107,7 @@ class AgenceCreerView(APIView):
     Body: { telephone, device_id, nom }
     Ajoute une nouvelle agence à un compte existant, avec son propre essai gratuit (D10).
     """
+    @exige_jeton
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
         device_id = request.data.get('device_id', '').strip()
@@ -122,8 +138,9 @@ class AgenceCreerView(APIView):
         return Response({
             'agence_id': agence.id,
             'agence_nom': agence.nom,
-            'statut': 'essai',
+            'statut': licence.statut,
             'code': licence.code,
+            'cle_hors_ligne': signature.cle_pour_licence(licence),
             'date_fin': str(licence.date_fin),
             'jours_restants': jours_restants,
             'message': f'Agence créée avec un essai gratuit de {licence.duree_mois} mois',
@@ -138,6 +155,7 @@ class AgencesListView(APIView):
     après réinstallation). Réservé aux appareils du propriétaire : la
     réponse contient les codes de licence.
     """
+    @exige_jeton
     def get(self, request):
         telephone = request.query_params.get('telephone', '').strip()
         device_id = request.query_params.get('device_id', '').strip()
@@ -242,14 +260,18 @@ class LoginView(APIView):
                 'nom': agence.nom,
                 'statut': licence.statut,
                 'code': licence.code,
+                'cle_hors_ligne': signature.cle_pour_licence(licence),
                 'date_fin': str(licence.date_fin),
                 'jours_restants': (licence.date_fin - today).days,
             })
 
-        return Response({
+        reponse = {
             'account_type': client.account_type,
             'agences': agences_data,
-        })
+        }
+        if not appareil_authentifie(request, device_id):
+            reponse['device_token'] = emettre_jeton(device_id, 'connexion', client)
+        return Response(reponse)
 
 
 class DemanderActivationView(APIView):
@@ -257,6 +279,7 @@ class DemanderActivationView(APIView):
     POST /api/licence/demander/
     Body: { telephone, device_id, agence_id, duree_mois }
     """
+    @exige_jeton
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
         device_id = request.data.get('device_id', '').strip()
@@ -327,6 +350,7 @@ class RecupererLicenceView(APIView):
     que LicenceService.cloner_licence_pour_device émet une Licence dédiée au
     device de l'agent affilié plutôt que de réutiliser celle du patron.
     """
+    @exige_jeton
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
         device_id = request.data.get('device_id', '').strip()
@@ -374,6 +398,7 @@ class RecupererLicenceView(APIView):
         return Response({
             'statut': licence.statut,
             'code': licence.code,
+            'cle_hors_ligne': signature.cle_pour_licence(licence),
             'date_debut': str(licence.date_debut),
             'date_fin': str(licence.date_fin),
             'jours_restants': jours_restants,
@@ -394,6 +419,7 @@ class VerifierCleView(APIView):
     appareil. Avant, seul le FORMAT était contrôlé (la signature n'était
     jamais recalculée) : « MT-00000000-0000000020991231 » était acceptée.
     """
+    @exige_jeton
     def post(self, request):
         code = request.data.get('code', '').strip().upper()
         device_id = request.data.get('device_id', '').strip()
@@ -404,11 +430,20 @@ class VerifierCleView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        format_ok = LicenceService.verifier_code(code, device_id)
-        if not format_ok.get('valide'):
-            return Response(format_ok)
-
-        licence = Licence.objects.filter(code=code, device_id=device_id).first()
+        if code.startswith(signature.PREFIXE.upper()):
+            # Clé signée : on la re-lit avec sa casse d'origine (base64url).
+            infos = signature.verifier(request.data.get('code', '').strip(), device_id)
+            if infos is None:
+                return Response({'valide': False, 'message': 'Clé invalide pour cet appareil'})
+            licence = Licence.objects.filter(
+                agence_id=infos['agence_id'], device_id=device_id,
+                date_fin=infos['date_fin'],
+            ).first()
+        else:
+            format_ok = LicenceService.verifier_code(code, device_id)
+            if not format_ok.get('valide'):
+                return Response(format_ok)
+            licence = Licence.objects.filter(code=code, device_id=device_id).first()
         if licence is None:
             return Response({
                 'valide': False,
@@ -472,6 +507,7 @@ class DemanderHistoriqueView(APIView):
     Body: { telephone, device_id, date_debut }  (date_debut format YYYY-MM-DD,
     la date la plus ancienne à importer — détermine le coût)
     """
+    @exige_jeton
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
         device_id = request.data.get('device_id', '').strip()
@@ -519,6 +555,8 @@ class DemanderHistoriqueView(APIView):
         # On ne refacture pas les années déjà payées : seul l'écart entre la
         # nouvelle période et celle déjà couverte est dû.
         montant = HistoriqueService.calculer_cout(date_debut)
+        if client.account_type == 'particulier':
+            montant = 0  # MoneyTracking est gratuit pour les particuliers
         if couverture:
             montant = max(0, montant - HistoriqueService.calculer_cout_couverture(couverture[0]))
 
@@ -551,6 +589,7 @@ class DemanderHistoriqueView(APIView):
 
 class RecupererTokenHistoriqueView(APIView):
     """POST /api/licence/historique/recuperer/"""
+    @exige_jeton
     def post(self, request):
         telephone = request.data.get('telephone', '').strip()
         device_id = request.data.get('device_id', '').strip()
@@ -579,8 +618,54 @@ class RecupererTokenHistoriqueView(APIView):
 
 class VerifierTokenHistoriqueView(APIView):
     """POST /api/licence/historique/verifier/"""
+    @exige_jeton
     def post(self, request):
         token = request.data.get('token', '').strip()
         device_id = request.data.get('device_id', '').strip()
         valide = HistoriqueService.verifier_token(token, device_id)
         return Response({'valide': valide})
+
+
+class AppareilEnregistrerView(APIView):
+    """
+    POST /api/licence/appareil/enregistrer/
+    Body: { device_id }
+
+    Migration des installations antérieures au jeton d'appareil : un
+    appareil qui a déjà une licence ou une demande d'affiliation, mais aucun
+    jeton, en reçoit un — UNE seule fois (le premier qui le réclame). Ensuite,
+    un nouveau jeton pour ce device_id ne s'obtient qu'en se connectant avec
+    le mot de passe du compte (/login/).
+    """
+    def post(self, request):
+        device_id = request.data.get('device_id', '').strip()
+        if not device_id:
+            return Response({'erreur': 'device_id requis'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if appareil_authentifie(request, device_id):
+            return Response({'message': 'Appareil déjà authentifié'})
+        if appareil_connu(device_id):
+            return Response(
+                {'erreur': ERREUR_APPAREIL, 'code': 'connexion_requise'},
+                status=status.HTTP_403_FORBIDDEN)
+        from sync.models import AffiliationRequest
+        installe = (
+            Licence.objects.filter(device_id=device_id).exists()
+            or AffiliationRequest.objects.filter(demandeur_device_id=device_id).exists()
+        )
+        if not installe:
+            return Response({'erreur': 'Appareil inconnu'},
+                            status=status.HTTP_404_NOT_FOUND)
+        licence = Licence.objects.filter(device_id=device_id).select_related(
+            'agence__client').first()
+        client = licence.agence.client if licence else None
+        return Response({
+            'device_token': emettre_jeton(device_id, 'migration', client),
+        }, status=status.HTTP_201_CREATED)
+
+
+class ClePubliqueView(APIView):
+    """GET /api/licence/cle-publique/ — clé Ed25519 qui permet à l'app de
+    vérifier HORS LIGNE les clés `MT2-…` (voir licences/signature.py)."""
+    def get(self, request):
+        return Response({'algorithme': 'ed25519', 'cle': signature.cle_publique_b64()})

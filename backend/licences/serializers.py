@@ -39,11 +39,22 @@ class LicenceSerializer(serializers.ModelSerializer):
     agence_nom = serializers.CharField(
         source='agence.nom', read_only=True
     )
+    account_type = serializers.CharField(
+        source='agence.client.account_type', read_only=True
+    )
+    # Clé hors ligne signée (Ed25519) à transmettre à l'agent — voir
+    # licences/signature.py.
+    cle_hors_ligne = serializers.SerializerMethodField()
+
+    def get_cle_hors_ligne(self, obj):
+        from .signature import cle_pour_licence
+        return cle_pour_licence(obj)
 
     class Meta:
         model = Licence
         fields = [
-            'id', 'code', 'agence', 'agence_nom', 'telephone_client', 'device_id',
+            'id', 'code', 'cle_hors_ligne', 'agence', 'agence_nom',
+            'telephone_client', 'account_type', 'device_id',
             'date_debut', 'date_fin', 'duree_mois',
             'montant_paye', 'statut', 'created_at',
         ]
