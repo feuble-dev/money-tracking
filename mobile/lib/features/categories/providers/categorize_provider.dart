@@ -30,10 +30,11 @@ final monthlySpendByCategoryProvider =
   final db = await DatabaseHelper.instance.database;
   final now = DateTime.now();
   final start = DateTime(now.year, now.month, 1).toIso8601String();
+  // Mobile Money + dépenses saisies à la main (v_personal_flows).
   final rows = await db.rawQuery('''
     SELECT COALESCE(category, '') AS cat, COALESCE(SUM(amount), 0) AS total
-    FROM transactions
-    WHERE status = 'completed' AND direction = 'out' AND created_at >= ?
+    FROM v_personal_flows
+    WHERE direction = 'out' AND occurred_at >= ?
     GROUP BY cat
   ''', [start]);
   return {

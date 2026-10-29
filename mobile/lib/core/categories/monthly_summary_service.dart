@@ -33,9 +33,8 @@ class MonthlySummaryService {
       final rows = await db.rawQuery('''
         SELECT COALESCE(NULLIF(category, ''), '') AS cat,
                COALESCE(SUM(amount), 0) AS total, COUNT(*) AS c
-        FROM transactions
-        WHERE status = 'completed' AND direction = 'out'
-          AND created_at >= ? AND created_at < ?
+        FROM v_personal_flows
+        WHERE direction = 'out' AND occurred_at >= ? AND occurred_at < ?
         GROUP BY cat
       ''', [prevMonthStart.toIso8601String(), prevMonthEnd.toIso8601String()]);
 
@@ -52,9 +51,8 @@ class MonthlySummaryService {
       final prevPrevStart =
           DateTime(prevMonthStart.year, prevMonthStart.month - 1, 1);
       final prevRow = await db.rawQuery('''
-        SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
-        WHERE status = 'completed' AND direction = 'out'
-          AND created_at >= ? AND created_at < ?
+        SELECT COALESCE(SUM(amount), 0) AS total FROM v_personal_flows
+        WHERE direction = 'out' AND occurred_at >= ? AND occurred_at < ?
       ''', [prevPrevStart.toIso8601String(), prevMonthStart.toIso8601String()]);
       final prevTotal = (prevRow.first['total'] as num).toDouble();
 

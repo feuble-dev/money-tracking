@@ -33,7 +33,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 15,
+      version: 16,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -298,6 +298,91 @@ class DatabaseHelper {
     await _seedDefaultTransactionTypes(db);
     await _seedExpenseCategories(db);
     await _createCategoryIndexes(db);
+    await _createWalletTables(db);
+  }
+
+  /// « Tout mon argent » (DB v16, compte Particulier) : comptes tenus à la
+  /// main (espèces, banque, épargne…) et leurs opérations, en plus des
+  /// portefeuilles Mobile Money suivis par SMS. Purement local.
+  ///
+  /// - `wallet_entries.account` / `counter_account` : `wallet:<id>` ou
+  ///   `momo:<operatorId>`. Un virement va de `account` vers
+  ///   `counter_account`.
+  /// - Le solde d'un compte manuel est TOUJOURS calculé (solde initial +
+  ///   opérations), jamais stocké : aucune dérive possible.
+  /// - `v_personal_flows` réunit les vrais revenus/dépenses des deux
+  ///   sources (transactions Mobile Money terminées + opérations manuelles)
+  ///   en excluant les mouvements internes — c'est la seule source des
+  ///   statistiques Particulier (tableau de bord, budget, bilan mensuel).
+  Future<void> _createWalletTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS wallets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        icon TEXT NOT NULL,
+        color TEXT NOT NULL,
+        initial_balance REAL NOT NULL DEFAULT 0,
+        sort_order INTEGER DEFAULT 0,
+        is_archived INTEGER DEFAULT 0,
+        created_at TEXT
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS wallet_entries (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK(kind IN ('income','expense','transfer')),
+        account TEXT NOT NULL,
+        counter_account TEXT,
+        amount REAL NOT NULL CHECK(amount > 0),
+        category TEXT,
+        label TEXT,
+        note TEXT,
+        occurred_at TEXT NOT NULL,
+        linked_transaction_id TEXT,
+        created_at TEXT,
+        updated_at TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_wallet_entries_date ON wallet_entries(occurred_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_wallet_entries_account ON wallet_entries(account)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_wallet_entries_counter ON wallet_entries(counter_account)');
+    await db.execute('DROP VIEW IF EXISTS v_personal_flows');
+    await db.execute('''
+      CREATE VIEW v_personal_flows AS
+        SELECT t.id AS id, 'momo' AS source, t.operator_id AS operator_id,
+               'momo:' || t.operator_id AS account, t.direction AS direction,
+               t.amount AS amount, NULLIF(t.category, '') AS category,
+               COALESCE(NULLIF(t.client_name, ''), t.client_phone) AS label,
+               t.client_phone AS phone, t.note AS note, t.created_at AS occurred_at
+        FROM transactions t
+        WHERE t.status = 'completed'
+          AND COALESCE(t.category, '') != '$kCategoryInternal'
+        UNION ALL
+        SELECT e.id, 'manual', NULL, e.account,
+               CASE e.kind WHEN 'income' THEN 'in' ELSE 'out' END,
+               e.amount, e.category, e.label, NULL, e.note, e.occurred_at
+        FROM wallet_entries e
+        WHERE e.kind IN ('income', 'expense')
+          AND COALESCE(e.category, '') != '$kCategoryInternal'
+    ''');
+    // Un compte « Espèces » existe d'office : c'est le premier réflexe.
+    final existing = await db.query('wallets', limit: 1);
+    if (existing.isEmpty) {
+      await db.insert('wallets', {
+        'id': _uuid.v4(),
+        'name': 'Espèces',
+        'kind': 'cash',
+        'icon': '💵',
+        'color': '#2F9E44',
+        'initial_balance': 0,
+        'sort_order': 0,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
   }
 
   /// Motif d'une transaction (D-catégories, DB v15) — 100 % local, jamais
@@ -631,6 +716,13 @@ class DatabaseHelper {
       await _createCategoryTables(db);
       await _seedExpenseCategories(db);
       await _createCategoryIndexes(db);
+    }
+    if (oldVersion < 16) {
+      // « Tout mon argent » : comptes manuels + opérations + vue des flux
+      // réels. Additif ; la nouvelle catégorie « Entre mes comptes » est
+      // ajoutée au catalogue (INSERT OR IGNORE).
+      await _seedExpenseCategories(db);
+      await _createWalletTables(db);
     }
   }
 

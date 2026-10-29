@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/categories/expense_category.dart';
 import '../../../core/database/database_helper.dart';
 import 'dashboard_provider.dart' show dashboardFilterProvider;
 
@@ -70,7 +71,12 @@ final particulierDashboardProvider =
   final prevStart = start.subtract(periodDuration).toIso8601String();
   final prevEnd = start.toIso8601String();
 
-  final opClause = operatorId != null ? 'AND t.operator_id = ?' : '';
+  // Source unique : `v_personal_flows` = revenus/dépenses Mobile Money
+  // (SMS) + opérations saisies à la main (espèces, banque…), hors
+  // mouvements entre ses propres comptes. Un onglet opérateur ne montre
+  // que les flux de cet opérateur (les saisies manuelles n'en ont pas).
+  final opClause = operatorId != null ? 'AND f.operator_id = ?' : '';
+  final opClauseT = operatorId != null ? 'AND t.operator_id = ?' : '';
   List<Object?> args([List<Object?> extra = const []]) =>
       [...extra, ?operatorId];
 
@@ -78,57 +84,53 @@ final particulierDashboardProvider =
     // [0] Totaux entrées / sorties + nb dépenses
     db.rawQuery('''
       SELECT
-        COALESCE(SUM(CASE WHEN direction='in' THEN amount ELSE 0 END), 0) AS tin,
-        COALESCE(SUM(CASE WHEN direction='out' THEN amount ELSE 0 END), 0) AS tout,
-        COALESCE(SUM(CASE WHEN direction='out' THEN 1 ELSE 0 END), 0) AS cout
-      FROM transactions t
-      WHERE t.status='completed' AND t.created_at BETWEEN ? AND ? $opClause
+        COALESCE(SUM(CASE WHEN f.direction='in' THEN f.amount ELSE 0 END), 0) AS tin,
+        COALESCE(SUM(CASE WHEN f.direction='out' THEN f.amount ELSE 0 END), 0) AS tout,
+        COALESCE(SUM(CASE WHEN f.direction='out' THEN 1 ELSE 0 END), 0) AS cout
+      FROM v_personal_flows f
+      WHERE f.occurred_at BETWEEN ? AND ? $opClause
     ''', args([startIso, endIso])),
     // [1] Dépenses par motif
     db.rawQuery('''
-      SELECT COALESCE(NULLIF(t.category, ''), '$kUncategorizedBucket') AS cat,
-             COALESCE(SUM(t.amount), 0) AS total, COUNT(*) AS c
-      FROM transactions t
-      WHERE t.status='completed' AND t.direction='out'
-        AND t.created_at BETWEEN ? AND ? $opClause
+      SELECT COALESCE(f.category, '$kUncategorizedBucket') AS cat,
+             COALESCE(SUM(f.amount), 0) AS total, COUNT(*) AS c
+      FROM v_personal_flows f
+      WHERE f.direction='out' AND f.occurred_at BETWEEN ? AND ? $opClause
       GROUP BY cat ORDER BY total DESC
     ''', args([startIso, endIso])),
-    // [2] Répartition par opérateur
+    // [2] Répartition par opérateur (Mobile Money uniquement)
     db.rawQuery('''
       SELECT o.id, o.name,
         COALESCE(SUM(CASE WHEN t.direction='out' THEN t.amount ELSE 0 END), 0) AS tout,
         COALESCE(SUM(CASE WHEN t.direction='in' THEN t.amount ELSE 0 END), 0) AS tin,
         COUNT(*) AS c
       FROM transactions t JOIN operators o ON o.id = t.operator_id
-      WHERE t.status='completed' AND t.created_at BETWEEN ? AND ? $opClause
+      WHERE t.status='completed' AND COALESCE(t.category, '') != '$kCategoryInternal'
+        AND t.created_at BETWEEN ? AND ? $opClauseT
       GROUP BY o.id ORDER BY tout DESC
     ''', args([startIso, endIso])),
-    // [3] Top bénéficiaires (dépenses)
+    // [3] Top bénéficiaires (dépenses) — numéro (SMS) ou libellé saisi
     db.rawQuery('''
-      SELECT COALESCE(NULLIF(t.client_name, ''), t.client_phone) AS label,
-             t.client_phone AS phone,
-             COALESCE(SUM(t.amount), 0) AS total, COUNT(*) AS c
-      FROM transactions t
-      WHERE t.status='completed' AND t.direction='out'
-        AND t.created_at BETWEEN ? AND ? $opClause
-        AND (t.client_phone != '' OR t.client_name IS NOT NULL)
-      GROUP BY label ORDER BY total DESC LIMIT 6
+      SELECT COALESCE(NULLIF(f.label, ''), f.phone) AS label,
+             f.phone AS phone,
+             COALESCE(SUM(f.amount), 0) AS total, COUNT(*) AS c
+      FROM v_personal_flows f
+      WHERE f.direction='out' AND f.occurred_at BETWEEN ? AND ? $opClause
+        AND COALESCE(NULLIF(f.label, ''), f.phone, '') != ''
+      GROUP BY 1 ORDER BY total DESC LIMIT 6
     ''', args([startIso, endIso])),
     // [4] Dépenses quotidiennes
     db.rawQuery('''
-      SELECT DATE(t.created_at) AS day,
-             COALESCE(SUM(t.amount), 0) AS tout
-      FROM transactions t
-      WHERE t.status='completed' AND t.direction='out'
-        AND t.created_at BETWEEN ? AND ? $opClause
+      SELECT DATE(f.occurred_at) AS day, COALESCE(SUM(f.amount), 0) AS tout
+      FROM v_personal_flows f
+      WHERE f.direction='out' AND f.occurred_at BETWEEN ? AND ? $opClause
       GROUP BY day ORDER BY day ASC
     ''', args([startIso, endIso])),
     // [5] Dépenses période précédente (tendance)
     db.rawQuery('''
-      SELECT COALESCE(SUM(t.amount), 0) AS tout
-      FROM transactions t
-      WHERE t.status='completed' AND t.direction='out'
-        AND t.created_at >= ? AND t.created_at < ? $opClause
+      SELECT COALESCE(SUM(f.amount), 0) AS tout
+      FROM v_personal_flows f
+      WHERE f.direction='out' AND f.occurred_at >= ? AND f.occurred_at < ? $opClause
     ''', args([prevStart, prevEnd])),
   ]);
 

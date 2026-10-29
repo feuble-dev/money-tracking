@@ -33,7 +33,10 @@ import '../features/transactions/screens/pending_list_screen.dart';
 import '../features/transactions/screens/pending_transaction_screen.dart';
 import '../features/transactions/screens/cancelled_transactions_screen.dart';
 import '../features/transactions/screens/transactions_list_screen.dart';
+import '../features/money/screens/account_screen.dart';
+import '../features/money/screens/money_screen.dart';
 import '../shared/widgets/main_shell.dart';
+import 'money/account_ref.dart';
 import 'historique/screens/import_historique_screen.dart';
 import 'licence/screens/activation_screen.dart';
 import 'licence/screens/licence_status_screen.dart';
@@ -144,7 +147,33 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
+          // Compte Particulier : « Mon argent » et Budget sont de vrais
+          // onglets (MainShell choisit les onglets selon le type de compte).
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/money',
+                builder: (context, state) => const MoneyScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/budget',
+                builder: (context, state) => const BudgetScreen(),
+              ),
+            ],
+          ),
         ],
+      ),
+      GoRoute(
+        path: '/money/account/:ref',
+        builder: (context, state) => AccountScreen(
+          account: AccountRef.tryParse(
+                  Uri.decodeComponent(state.pathParameters['ref']!)) ??
+              const AccountRef.wallet('?'),
+        ),
       ),
 
       // Paramètres
@@ -244,12 +273,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) =>
             CategorizeScreen(startId: state.pathParameters['id']),
       ),
-      // Budget mensuel par motif (3ᵉ onglet du compte Particulier) + gestion
-      // des motifs et des règles d'auto-catégorisation.
-      GoRoute(
-        path: '/budget',
-        builder: (context, state) => const BudgetScreen(),
-      ),
+      // Gestion des motifs et des règles d'auto-catégorisation (le Budget
+      // est un onglet du shell).
       GoRoute(
         path: '/categories/manage',
         builder: (context, state) => const ManageCategoriesScreen(),

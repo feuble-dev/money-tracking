@@ -97,6 +97,12 @@ const kCategoryOther = 'autre';
 const kCategoryCreditTel = 'credit_tel';
 const kCategoryFrais = 'frais';
 
+/// Mouvement entre deux comptes de la même personne (ex. retrait Mobile
+/// Money vers ses espèces, dépôt d'espèces sur son compte Orange Money) :
+/// ni une dépense ni un revenu — exclu de toutes les statistiques
+/// (vue `v_personal_flows`), sinon l'argent serait compté deux fois.
+const kCategoryInternal = 'interne';
+
 /// Catalogue par défaut, orienté Burkina Faso. Seedé en base à la création
 /// et à la migration v15 (INSERT OR IGNORE par `code` — réordonner/masquer
 /// côté utilisateur n'est jamais écrasé).
@@ -127,6 +133,9 @@ const List<ExpenseCategory> kDefaultExpenseCategories = [
   ExpenseCategory(code: 'argent_recu', label: "Argent reçu d'un proche", icon: '🤝', colorHex: '#37B24D', direction: 'in', sortOrder: 220),
   ExpenseCategory(code: 'vente', label: 'Vente / Revenu business', icon: '🏷️', colorHex: '#5C940D', direction: 'in', sortOrder: 230),
   ExpenseCategory(code: 'remboursement', label: 'Remboursement reçu', icon: '↩️', colorHex: '#1971C2', direction: 'in', sortOrder: 240),
+
+  // ---- Entre mes comptes (exclu des stats) ----
+  ExpenseCategory(code: kCategoryInternal, label: 'Entre mes comptes', icon: '🔄', colorHex: '#868E96', direction: 'both', sortOrder: 800),
 
   // ---- Fourre-tout ----
   ExpenseCategory(code: kCategoryOther, label: 'Autre', icon: '❓', colorHex: '#64748B', direction: 'both', sortOrder: 900),

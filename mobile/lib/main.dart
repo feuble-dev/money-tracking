@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:another_telephony/telephony.dart';
 import 'package:flutter/material.dart';
+import 'features/money/providers/money_providers.dart';
 import 'core/sms/sms_processing_pipeline.dart';
 import 'core/licence/licence_service.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -178,7 +179,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       } else if (payload.startsWith('tx:')) {
         router.push('/transactions/pending/${payload.substring(3)}');
       } else if (payload == 'summary') {
-        router.push('/budget');
+        router.go('/budget');
       } else if (payload == 'licence') {
         router.push('/licence/statut');
       } else if (payload == 'transactions') {
@@ -210,6 +211,8 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     ref.invalidate(dashboardStatsProvider(null));
     ref.invalidate(particulierDashboardProvider);
     ref.invalidate(uncategorizedCountProvider);
+    ref.invalidate(movementsProvider);
+    ref.invalidate(walletsProvider);
   }
 
   /// Met à jour en arrière-plan les patterns SMS des opérateurs déjà
@@ -328,6 +331,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       ref.invalidate(commissionsStatsProvider);
       ref.invalidate(uncategorizedCountProvider);
       ref.invalidate(recurringPaymentsProvider);
+      ref.invalidate(movementsProvider);
       ref.read(caissesProvider.notifier).load();
     };
     await smsService.startListening();

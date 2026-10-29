@@ -223,12 +223,21 @@ class AppDrawer extends ConsumerWidget {
                       ),
                     ),
                     ListTile(
+                      leading: const Icon(Icons.account_balance_wallet_outlined),
+                      title: const Text('Mon argent'),
+                      dense: true,
+                      onTap: () {
+                        Navigator.pop(context);
+                        context.go('/money');
+                      },
+                    ),
+                    ListTile(
                       leading: const Icon(Icons.savings_outlined),
                       title: const Text('Budget & motifs'),
                       dense: true,
                       onTap: () {
                         Navigator.pop(context);
-                        context.push('/budget');
+                        context.go('/budget');
                       },
                     ),
                     ListTile(

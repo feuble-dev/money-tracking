@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import '../categories/category_repository.dart';
+import '../categories/expense_category.dart';
+import '../money/money_repository.dart';
 import '../database/caisse_repository.dart';
 import '../database/database_helper.dart';
 import '../database/transaction_repository.dart';
@@ -281,7 +283,19 @@ Future<SmsOutcome> _processStoredSms(
   String? autoCategory;
   final accountType = await OnboardingStatusService().getAccountType();
   final isParticulier = accountType == 'particulier';
-  if (isParticulier) {
+  final txId = _uuid.v4();
+  if (isParticulier &&
+      await MoneyRepository.claimTransferForSms(
+        transactionId: txId,
+        operatorId: operatorId,
+        direction: smsMatch.direction,
+        amount: amount,
+        at: now,
+      )) {
+    // Ce SMS est l'autre moitié d'un virement déjà saisi (ex. retrait vers
+    // les espèces) : ni dépense ni revenu.
+    autoCategory = kCategoryInternal;
+  } else if (isParticulier) {
     autoCategory = await CategoryRepository.autoCategoryFor(
       transactionTypeCode: transactionType,
       clientPhone: clientPhone,
@@ -303,7 +317,6 @@ Future<SmsOutcome> _processStoredSms(
   }
 
   // Créer la transaction (licence active)
-  final txId = _uuid.v4();
   final txData = {
     'id': txId,
     'operator_id': operatorId,

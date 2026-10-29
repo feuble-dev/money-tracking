@@ -6,9 +6,11 @@ import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/sms/sms_listener.dart';
 import '../../notifications/screens/notifications_screen.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/providers/privacy_provider.dart';
 import '../../../shared/widgets/amount_text.dart';
 import '../../../shared/widgets/main_shell.dart';
 import '../../caisse/providers/caisse_provider.dart';
+import '../../money/widgets/entry_sheet.dart';
 import '../../operators/providers/operator_provider.dart';
 import '../models/dashboard_filter.dart';
 import '../providers/dashboard_provider.dart';
@@ -19,11 +21,6 @@ import '../widgets/line_chart_widget.dart';
 import '../widgets/pie_chart_widget.dart';
 import '../widgets/ratio_chart_widget.dart';
 import '../widgets/trend_indicator.dart';
-
-/// Visibilité du solde sur la carte du dashboard (masquer/démasquer) —
-/// une seule préférence partagée par tous les onglets (Global + par
-/// opérateur), pas un état par onglet.
-final balanceVisibleProvider = StateProvider<bool>((ref) => true);
 
 /// Écran principal du Dashboard — onglets Global + par opérateur
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -146,6 +143,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
           ),
+          // Particulier : saisir en un geste une dépense/un revenu hors
+          // Mobile Money (espèces, banque…).
+          floatingActionButton: isParticulier
+              ? FloatingActionButton.extended(
+                  heroTag: 'dash_add',
+                  onPressed: () => showEntrySheet(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Ajouter'),
+                )
+              : null,
           body: TabBarView(
             controller: _tabController,
             children: [
@@ -346,7 +353,7 @@ class _DashboardTab extends ConsumerWidget {
               IconButton(
                 icon: Icon(hidden ? Icons.visibility_off : Icons.visibility,
                     color: Colors.white70, size: 20),
-                onPressed: () => ref.read(balanceVisibleProvider.notifier).state = !ref.read(balanceVisibleProvider),
+                onPressed: () => ref.read(balanceVisibleProvider.notifier).toggle(),
                 tooltip: hidden ? 'Afficher le solde' : 'Masquer le solde',
                 visualDensity: VisualDensity.compact,
               ),
