@@ -3,19 +3,27 @@ from .models import Client, Agence, PricingTier, Licence, DemandeActivation, Not
 
 
 class ClientSerializer(serializers.ModelSerializer):
+    # Jamais `__all__` : le modèle porte `password_hash`, qui n'a rien à
+    # faire dans une réponse d'API, même admin.
+    agences_count = serializers.IntegerField(read_only=True, default=0)
+
     class Meta:
         model = Client
-        fields = '__all__'
+        fields = ['id', 'telephone', 'nom', 'prenom', 'account_type',
+                  'created_at', 'agences_count']
 
 
 class AgenceSerializer(serializers.ModelSerializer):
     telephone_client = serializers.CharField(
         source='client.telephone', read_only=True
     )
+    account_type = serializers.CharField(
+        source='client.account_type', read_only=True
+    )
 
     class Meta:
         model = Agence
-        fields = ['id', 'nom', 'telephone_client', 'is_active', 'created_at']
+        fields = ['id', 'nom', 'telephone_client', 'account_type', 'is_active', 'created_at']
 
 
 class PricingTierSerializer(serializers.ModelSerializer):
@@ -64,6 +72,13 @@ class DemandeActivationSerializer(serializers.ModelSerializer):
     agence_nom = serializers.CharField(
         source='agence.nom', read_only=True, default=None
     )
+    # Montant que l'agent doit avoir envoyé : l'admin le compare au
+    # paiement Mobile Money reçu avant de valider.
+    montant = serializers.SerializerMethodField()
+
+    def get_montant(self, obj):
+        from .services import LicenceService
+        return LicenceService.montant_pour_duree(obj.duree_mois)
 
     class Meta:
         model = DemandeActivation

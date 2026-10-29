@@ -59,10 +59,10 @@ export default function Hero() {
             ))}
           </div>
 
-          <h1 key={`t-${mode}`} className="row-enter mt-7 font-display text-[2.6rem] font-bold leading-[1.05] tracking-tight text-ink sm:text-6xl">
+          <h1 key={`t-${mode}`} className="fade-up mt-7 font-display text-[2.6rem] font-bold leading-[1.05] tracking-tight text-ink sm:text-6xl">
             {c.title}
           </h1>
-          <p key={`p-${mode}`} className="row-enter mt-6 max-w-xl text-lg leading-relaxed text-muted [animation-delay:80ms]">
+          <p key={`p-${mode}`} className="fade-up mt-6 max-w-xl text-lg leading-relaxed text-muted [animation-delay:80ms]">
             {c.text}
           </p>
 

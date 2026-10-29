@@ -9,6 +9,7 @@ from datetime import date
 from django.db.models import Sum
 from .models import Client, Agence, PricingTier, Licence, DemandeActivation, Notification, AchatHistorique
 from .services import LicenceService, HistoriqueService
+from .signature import cle_pour_licence
 from .serializers import (
     LicenceSerializer, DemandeActivationSerializer, ClientSerializer,
     NotificationSerializer, AgenceSerializer, PricingTierSerializer,
@@ -236,7 +237,6 @@ class AdminGenererLicenceView(APIView):
             montant_paye=montant,
             statut='active',
         )
-        from .signature import cle_pour_licence
         return Response({
             'code': licence.code,
             'cle_hors_ligne': cle_pour_licence(licence),
@@ -310,6 +310,7 @@ class AdminValiderDemandeView(APIView):
 
         return Response({
             'code': licence.code,
+            'cle_hors_ligne': cle_pour_licence(licence),
             'date_fin': str(licence.date_fin),
             'message': 'Licence générée et demande validée',
         })
@@ -342,7 +343,8 @@ class AdminClientsListView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        clients = Client.objects.all()
+        from django.db.models import Count
+        clients = Client.objects.annotate(agences_count=Count('agences')).order_by('-created_at')
         serializer = ClientSerializer(clients, many=True)
         return Response(serializer.data)
 

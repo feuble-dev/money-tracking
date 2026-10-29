@@ -33,6 +33,21 @@ const paths = {
   chevron: 'M9 6l6 6-6 6',
   history: 'M3 12a9 9 0 1 0 3-6.7L3 8 M3 3v5h5 M12 7v5l3 2',
   bell: 'M18 9a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8 M10.5 21a2 2 0 0 0 3 0',
+  // Admin
+  dashboard: 'M4 4h7v9H4z M13 4h7v5h-7z M13 11h7v9h-7z M4 15h7v5H4z',
+  key: 'M15 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M12 12v9 M12 17h3 M12 20h2',
+  inbox: 'M4 13V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7 M4 13v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5 M4 13h4l1.5 2.5h5L16 13h4',
+  box: 'M20 7.5 12 3.5 4 7.5 M20 7.5v9l-8 4 M20 7.5l-8 4 M4 7.5v9l8 4 M4 7.5l8 4 M12 11.5v9',
+  logout: 'M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3 M10 16l-4-4 4-4 M6 12h10',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z M20 20l-4-4',
+  external: 'M14 4h6v6 M20 4l-9 9 M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4',
+  copy: 'M9 9h10v11H9z M5 15V4h10',
+  pause: 'M9 5v14 M15 5v14',
+  play: 'M7 4.5v15l12-7.5-12-7.5Z',
+  trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13',
+  send: 'M20 4 3 11l7 2.5L12.5 21 20 4Z M10 13.5 20 4',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z M12 7v5l3 2',
+  alert: 'M12 4 2.5 20h19L12 4Z M12 10v4 M12 17h.01',
 } as const;
 
 export type IconName = keyof typeof paths;

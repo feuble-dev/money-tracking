@@ -1,210 +1,114 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { Suspense, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Badge from '@/components/ui/Badge';
+import DataTable, { type Column } from '@/components/admin/ui/DataTable';
+import PageHeader from '@/components/admin/ui/PageHeader';
+import Segmented from '@/components/admin/ui/Segmented';
 import { getClients } from '@/lib/api';
+import { useAsync } from '@/lib/useAsync';
+import type { ClientRow } from '@/lib/admin-types';
+import { ago, dateFr } from '@/lib/format';
 
-interface Client {
-  id: number;
-  telephone: string;
-  nom: string;
-  device_id: string;
-  licence_status: string;
-  derniere_activite: string;
-  date_inscription: string;
-}
-
-const demoClients: Client[] = [
-  {
-    id: 1,
-    telephone: '+226 70 12 34 56',
-    nom: 'Ouédraogo Ibrahim',
-    device_id: 'android-abc123',
-    licence_status: 'active',
-    derniere_activite: '2026-03-29',
-    date_inscription: '2025-11-15',
-  },
-  {
-    id: 2,
-    telephone: '+226 76 98 76 54',
-    nom: 'Traoré Aminata',
-    device_id: 'android-def456',
-    licence_status: 'active',
-    derniere_activite: '2026-03-28',
-    date_inscription: '2026-01-05',
-  },
-  {
-    id: 3,
-    telephone: '+226 71 11 22 33',
-    nom: 'Compaoré Moussa',
-    device_id: 'android-ghi789',
-    licence_status: 'expirée',
-    derniere_activite: '2026-03-15',
-    date_inscription: '2026-02-10',
-  },
-  {
-    id: 4,
-    telephone: '+226 65 44 55 66',
-    nom: 'Kaboré Fatimata',
-    device_id: 'android-jkl012',
-    licence_status: 'active',
-    derniere_activite: '2026-03-30',
-    date_inscription: '2026-01-20',
-  },
-  {
-    id: 5,
-    telephone: '+226 78 77 88 99',
-    nom: 'Sawadogo Boureima',
-    device_id: 'android-mno345',
-    licence_status: 'active',
-    derniere_activite: '2026-03-27',
-    date_inscription: '2026-03-01',
-  },
-  {
-    id: 6,
-    telephone: '+226 70 55 66 77',
-    nom: 'Zongo Adama',
-    device_id: 'android-pqr678',
-    licence_status: 'essai',
-    derniere_activite: '2026-03-30',
-    date_inscription: '2026-03-25',
-  },
-];
+type Filtre = 'tous' | 'particulier' | 'agence';
 
 export default function ClientsPage() {
-  const [clients, setClients] = useState<Client[]>([]);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
+  return (
+    <Suspense>
+      <Clients />
+    </Suspense>
+  );
+}
 
-  const loadClients = useCallback(async () => {
-    try {
-      const data = await getClients(search || undefined);
-      setClients(data.results || data);
-    } catch {
-      setClients(demoClients);
-    } finally {
-      setLoading(false);
-    }
-  }, [search]);
+function initials(c: Pick<ClientRow, 'nom' | 'prenom' | 'telephone'>) {
+  const s = `${c.prenom?.[0] ?? ''}${c.nom?.[0] ?? ''}`.toUpperCase();
+  return s || c.telephone.slice(-2);
+}
 
-  useEffect(() => {
-    loadClients();
-  }, [loadClients]);
+function Clients() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const { data, loading, error } = useAsync(getClients);
+  const [filtre, setFiltre] = useState<Filtre>('tous');
 
-  const filteredClients = clients.filter((c) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      c.telephone.toLowerCase().includes(q) ||
-      c.nom.toLowerCase().includes(q) ||
-      c.device_id.toLowerCase().includes(q)
-    );
-  });
+  const all = data ?? [];
+  const rows = useMemo(() => (filtre === 'tous' ? all : all.filter((c) => c.account_type === filtre)), [all, filtre]);
+  const nb = (t: Filtre) => (t === 'tous' ? all.length : all.filter((c) => c.account_type === t).length);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'active':
-        return <Badge variant="success">Active</Badge>;
-      case 'expirée':
-        return <Badge variant="danger">Expirée</Badge>;
-      case 'essai':
-        return <Badge variant="warning">Essai</Badge>;
-      default:
-        return <Badge variant="neutral">{status}</Badge>;
-    }
-  };
+  const columns: Column<ClientRow>[] = [
+    {
+      key: 'compte',
+      header: 'Compte',
+      sortValue: (c) => c.telephone,
+      render: (c) => (
+        <div className="flex items-center gap-3">
+          <span
+            className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+              c.account_type === 'agence' ? 'bg-accent-50 text-accent' : 'bg-primary-50 text-primary'
+            }`}
+          >
+            {initials(c)}
+          </span>
+          <div className="min-w-0">
+            <p className="font-medium tabular-nums text-ink">{c.telephone}</p>
+            <p className="truncate text-xs text-muted">{`${c.prenom} ${c.nom}`.trim() || 'Sans nom'}</p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'type',
+      header: 'Type',
+      sortValue: (c) => c.account_type,
+      render: (c) =>
+        c.account_type === 'agence' ? <Badge variant="success">Agence</Badge> : <Badge variant="info">Particulier</Badge>,
+    },
+    {
+      key: 'agences',
+      header: 'Agences',
+      hideOnMobile: true,
+      sortValue: (c) => c.agences_count,
+      render: (c) => (c.account_type === 'agence' ? <span className="tabular-nums">{c.agences_count}</span> : <span className="text-muted">—</span>),
+    },
+    {
+      key: 'inscrit',
+      header: 'Inscrit',
+      sortValue: (c) => c.created_at,
+      render: (c) => (
+        <span title={dateFr(c.created_at, true)} className="text-muted">
+          {ago(c.created_at)}
+        </span>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-dark">Clients</h2>
-        <p className="text-sm text-gray-500 mt-1">
-          {filteredClients.length} client(s) enregistré(s)
-        </p>
-      </div>
-
-      {/* Search */}
-      <div className="relative max-w-md">
-        <svg
-          className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Rechercher par nom, téléphone ou device..."
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm bg-white"
-        />
-      </div>
-
-      {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Client
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Téléphone
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Device ID
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Licence
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Dernière activité
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Inscription
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredClients.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-center py-12 text-gray-400 text-sm">
-                      Aucun client trouvé
-                    </td>
-                  </tr>
-                ) : (
-                  filteredClients.map((client) => (
-                    <tr key={client.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">
-                            {client.nom.charAt(0)}
-                          </div>
-                          <span className="text-sm font-medium text-dark">{client.nom}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{client.telephone}</td>
-                      <td className="px-6 py-4 text-sm font-mono text-gray-500">{client.device_id}</td>
-                      <td className="px-6 py-4">{getStatusBadge(client.licence_status)}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{client.derniere_activite}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{client.date_inscription}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <PageHeader title="Clients" description="Tous les comptes créés depuis l’application. Cliquez sur un compte pour sa fiche complète." />
+      <Segmented
+        value={filtre}
+        onChange={setFiltre}
+        options={[
+          { value: 'tous', label: `Tous · ${nb('tous')}` },
+          { value: 'particulier', label: `Particuliers · ${nb('particulier')}` },
+          { value: 'agence', label: `Agences · ${nb('agence')}` },
+        ]}
+      />
+      <DataTable
+        rows={rows}
+        columns={columns}
+        rowKey={(c) => c.id}
+        loading={loading}
+        error={error}
+        searchText={(c) => `${c.telephone} ${c.nom} ${c.prenom}`}
+        searchPlaceholder="Numéro ou nom…"
+        initialQuery={params.get('q') ?? ''}
+        initialSort={{ key: 'inscrit', dir: 'desc' }}
+        emptyTitle="Aucun compte"
+        emptyText="Les comptes apparaissent dès la première inscription dans l’application."
+        onRowClick={(c) => router.push(`/clients/${c.id}`)}
+      />
     </div>
   );
 }
