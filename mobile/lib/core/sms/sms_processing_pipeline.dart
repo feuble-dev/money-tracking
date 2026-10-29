@@ -358,7 +358,7 @@ Future<SmsOutcome> _processStoredSms(
   // l'opération dans la plupart des cas (`soldeApres`) — c'est la valeur
   // qu'on applique directement, pas un delta cumulé qui dériverait au
   // moindre SMS manqué.
-  await CaisseRepository.updateSoldeAfterTransaction(
+  final floatAlert = await CaisseRepository.updateSoldeAfterTransaction(
     operatorId: operatorId,
     amount: amount,
     direction: smsMatch.direction,
@@ -402,6 +402,15 @@ Future<SmsOutcome> _processStoredSms(
       operatorName: contexte,
       offerCategorize: offerCategorize,
     ));
+    // Agence : float sous le seuil fixé → prévenir tout de suite, avant que
+    // l'agent ne doive refuser un retrait faute de liquidité électronique.
+    if (floatAlert != null && !isParticulier) {
+      await _notify(() => NotificationService().showFloatAlertNotification(
+        operatorName: operatorName,
+        solde: floatAlert.solde,
+        seuil: floatAlert.seuil,
+      ));
+    }
   }
 
   onTransactionDetected?.call({...txData, 'operator_name': operatorName});

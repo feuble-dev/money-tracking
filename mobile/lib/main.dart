@@ -184,6 +184,8 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
         router.push('/licence/statut');
       } else if (payload == 'transactions') {
         router.go('/transactions');
+      } else if (payload == 'caisse') {
+        router.push('/settings/caisse');
       } else {
         router.push('/notifications');
       }

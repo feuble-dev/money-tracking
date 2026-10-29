@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../database/transaction_repository.dart';
+import '../format/formats.dart';
 
 /// Action sur les notifications — une transaction détectée par SMS est
 /// créée directement 'completed' (plus d'étape de confirmation), seule
@@ -170,6 +171,32 @@ class NotificationService {
         ),
       ),
       payload: 'licence',
+    );
+  }
+
+  /// Float d'un opérateur passé sous le seuil d'alerte (compte Agence).
+  /// Une notification par opérateur, remplacée à chaque nouveau passage.
+  Future<void> showFloatAlertNotification({
+    required String operatorName,
+    required double solde,
+    required double seuil,
+  }) async {
+    await _plugin.show(
+      930000 + operatorName.hashCode.abs() % 1000,
+      'Float $operatorName bas',
+      'Solde ${AppFormats.fcfa(solde)}, sous votre seuil de ${AppFormats.fcfa(seuil)}. '
+          'Pensez à recharger.',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'mobitracking_float',
+          'Alertes de float',
+          channelDescription: 'Solde électronique sous le seuil d\'alerte',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+      ),
+      payload: 'caisse',
     );
   }
 
