@@ -150,6 +150,52 @@ class NotificationService {
     );
   }
 
+  /// SMS d'opérateur reçu pendant une licence inactive : il est mis en
+  /// attente (pas perdu) et sera transformé en transaction au
+  /// renouvellement. Une seule notification, mise à jour à chaque SMS.
+  Future<void> showLicenceRequiredNotification() async {
+    await _plugin.show(
+      920002,
+      'Transaction en attente',
+      'Renouvelez votre licence : les transactions reçues entre-temps seront '
+          'ajoutées automatiquement.',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'mobitracking_sms',
+          'Transactions SMS',
+          channelDescription: 'Notifications de transactions détectées par SMS',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+      ),
+      payload: 'licence',
+    );
+  }
+
+  /// Après rejeu des SMS mis en attente.
+  Future<void> showReplaySummaryNotification(int count) async {
+    await _plugin.cancel(920002);
+    await _plugin.show(
+      920003,
+      'Transactions récupérées',
+      count > 1
+          ? '$count transactions reçues pendant l\'interruption ont été ajoutées.'
+          : '1 transaction reçue pendant l\'interruption a été ajoutée.',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'mobitracking_sms',
+          'Transactions SMS',
+          channelDescription: 'Notifications de transactions détectées par SMS',
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+          icon: '@mipmap/ic_launcher',
+        ),
+      ),
+      payload: 'transactions',
+    );
+  }
+
   /// Récapitulatif mensuel (compte Particulier) — affiché une fois par mois
   /// au démarrage, résume les dépenses du mois écoulé. Tap → écran Budget.
   Future<void> showMonthlySummary({

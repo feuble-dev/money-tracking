@@ -5,6 +5,7 @@ import '../network/api_client.dart';
 import '../security/device_identity.dart';
 import 'licence_storage.dart';
 import 'offline_key.dart';
+import '../sms/sms_processing_pipeline.dart' show replayPendingSms;
 
 const String _baseUrl = ApiConfig.licence;
 const _erreurReseau = 'Impossible de se connecter au serveur';
@@ -96,6 +97,7 @@ class LicenceService {
           (res.data['statut'] == 'active' || res.data['statut'] == 'essai')) {
         await LicenceStorage.sauvegarder(res.data);
         await LicenceStorage.saveTelephone(telephone);
+        _apresActivation();
         return true;
       }
     } catch (_) {}
@@ -150,6 +152,7 @@ class LicenceService {
           'source': 'cle_manuelle',
         });
         await LicenceStorage.saveTelephone(telephone);
+        _apresActivation();
         return ResultatActivation.succes(
             'Licence activée - expire dans $jours jours');
       }
@@ -179,6 +182,7 @@ class LicenceService {
       'source': 'cle_hors_ligne',
     });
     await LicenceStorage.saveTelephone(telephone);
+    _apresActivation();
     return ResultatActivation.succes('Licence activée - expire dans $jours jours');
   }
 
@@ -267,6 +271,12 @@ class LicenceService {
     } catch (_) {
       return ResultatLogin.erreur(_erreurReseau);
     }
+  }
+
+  /// Licence (re)devenue active : les SMS reçus entre-temps deviennent des
+  /// transactions.
+  static void _apresActivation() {
+    replayPendingSms().catchError((_) => 0);
   }
 
   static Future<bool> _estConnecte() async {

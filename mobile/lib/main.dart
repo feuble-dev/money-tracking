@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:another_telephony/telephony.dart';
 import 'package:flutter/material.dart';
+import 'core/sms/sms_processing_pipeline.dart';
+import 'core/licence/licence_service.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -90,6 +92,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     // Particulier) : visibilité "détail complet" du patron sur ses agences.
     SyncService.pushIfNeeded();
     _resyncCatalog();
+    unawaited(_startupLicence());
     // Récap mensuel des dépenses (compte Particulier) — une fois par mois.
     unawaited(MonthlySummaryService.maybeShow());
     _syncSub = Stream.periodic(const Duration(minutes: 2)).listen((_) {
@@ -176,18 +179,37 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
         router.push('/transactions/pending/${payload.substring(3)}');
       } else if (payload == 'summary') {
         router.push('/budget');
+      } else if (payload == 'licence') {
+        router.push('/licence/statut');
+      } else if (payload == 'transactions') {
+        router.go('/transactions');
       } else {
         router.push('/notifications');
       }
     };
     // Quand une action est effectuée depuis la notif (confirmer/rejeter)
-    notifService.onActionPerformed = () {
-      ref.read(transactionsProvider.notifier).loadTransactions();
-      ref.read(pendingTransactionsProvider.notifier).loadPending();
-      ref.invalidate(dashboardStatsProvider(null));
-      ref.invalidate(particulierDashboardProvider);
-      ref.invalidate(uncategorizedCountProvider);
-    };
+    notifService.onActionPerformed = _refreshAfterNewTransactions;
+  }
+
+  /// Licence au démarrage (rafraîchissement en ligne, migration du jeton
+  /// d'appareil, clé publique des licences hors ligne), puis rejeu des SMS
+  /// restés en attente pendant une licence inactive.
+  Future<void> _startupLicence() async {
+    try {
+      await LicenceService.verifierAuDemarrage();
+      final created = await replayPendingSms();
+      if (created > 0 && mounted) _refreshAfterNewTransactions();
+    } catch (e) {
+      debugPrint('[Licence] démarrage: $e');
+    }
+  }
+
+  void _refreshAfterNewTransactions() {
+    ref.read(transactionsProvider.notifier).loadTransactions();
+    ref.read(pendingTransactionsProvider.notifier).loadPending();
+    ref.invalidate(dashboardStatsProvider(null));
+    ref.invalidate(particulierDashboardProvider);
+    ref.invalidate(uncategorizedCountProvider);
   }
 
   /// Met à jour en arrière-plan les patterns SMS des opérateurs déjà
