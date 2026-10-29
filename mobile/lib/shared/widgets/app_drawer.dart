@@ -1,51 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/categories/category_providers.dart';
 import '../../core/onboarding/onboarding_state.dart';
-import '../../core/theme/app_colors.dart';
-import '../../features/auth/providers/auth_provider.dart';
-import '../../features/operators/providers/operator_provider.dart';
-import 'operator_avatar.dart';
 
-/// Drawer latéral avec sections Opérateurs et Sécurité
+/// Menu latéral : seulement ce qui sert au quotidien. Les onglets du bas
+/// couvrent déjà l'essentiel ; ici, le reste de l'usage courant, puis
+/// Paramètres et Aide. Les réglages techniques (opérateurs, modèles de SMS,
+/// diagnostic) vivent dans Paramètres → Paramètres avancés.
 class AppDrawer extends ConsumerWidget {
   const AppDrawer({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final operatorsAsync = ref.watch(operatorsProvider);
-    final accountType = ref.watch(accountTypeProvider).valueOrNull ?? 'agence';
+    final isAgence = ref.watch(accountTypeProvider).valueOrNull == 'agence';
+    final toCategorize = isAgence ? 0 : (ref.watch(uncategorizedCountProvider).valueOrNull ?? 0);
     final theme = Theme.of(context);
+
+    void open(String route) {
+      Navigator.pop(context);
+      context.push(route);
+    }
 
     return Drawer(
       child: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // En-tête avec logo
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary,
-              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
               child: Row(
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: Image.asset(
                       'assets/logo.png',
-                      width: 48,
-                      height: 48,
-                      errorBuilder: (_, _, _) => Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(30),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.account_balance_wallet,
-                            color: Colors.white, size: 28),
-                      ),
+                      width: 44,
+                      height: 44,
+                      errorBuilder: (_, _, _) => Icon(Icons.account_balance_wallet,
+                          size: 44, color: theme.colorScheme.primary),
                     ),
                   ),
                   const SizedBox(width: 14),
@@ -53,267 +46,40 @@ class AppDrawer extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'MoneyTracking',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const Text(
-                          'Gestion de transactions Mobile Money',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 11,
-                          ),
-                        ),
+                        Text('MoneyTracking',
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w800)),
+                        Text(isAgence ? 'Mon agence' : 'Mon argent, simplement',
+                            style: theme.textTheme.bodySmall),
                       ],
                     ),
                   ),
                 ],
               ),
             ),
-
-            // Contenu scrollable
+            Divider(height: 1, color: theme.colorScheme.outlineVariant.withAlpha(110)),
             Expanded(
               child: ListView(
-                padding: EdgeInsets.zero,
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
-                  // === SECTION OPÉRATEURS ===
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Text(
-                      'OPÉRATEURS',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: theme.colorScheme.primary,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                  operatorsAsync.when(
-                    loading: () => const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Center(
-                          child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2))),
-                    ),
-                    error: (_, _) => const ListTile(
-                      leading: Icon(Icons.error_outline),
-                      title: Text('Erreur de chargement'),
-                    ),
-                    data: (operators) {
-                      final activeOps =
-                          operators.where((o) => o.isActive).toList();
-                      return Column(
-                        children: [
-                          ...activeOps.map((op) => ListTile(
-                                leading: OperatorAvatar(
-                                  name: op.name,
-                                  logoPath: op.logoPath,
-                                  radius: 16,
-                                ),
-                                title: Text(op.name),
-                                subtitle: op.accountNumber != null
-                                    ? Text(op.accountNumber!,
-                                        style: const TextStyle(fontSize: 11))
-                                    : null,
-                                dense: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  context.push('/operators/edit/${op.id}');
-                                },
-                              )),
-                          // Bouton ajouter opérateur
-                          ListTile(
-                            leading: CircleAvatar(
-                              radius: 16,
-                              backgroundColor:
-                                  AppColors.accentColor.withAlpha(20),
-                              child: const Icon(Icons.add,
-                                  size: 18, color: AppColors.accentColor),
-                            ),
-                            title: const Text('Ajouter un opérateur'),
-                            dense: true,
-                            onTap: () {
-                              Navigator.pop(context);
-                              context.push('/operators/add');
-                            },
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-
-                  // === SECTION CLIENTS === (Agence uniquement — D18 : un
-                  // compte Particulier ne gère pas de clients)
-                  if (accountType == 'agence') ...[
-                    const Divider(height: 24),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Text(
-                        'CLIENTS',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: theme.colorScheme.primary,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.people_outline),
-                      title: const Text('Liste des clients'),
-                      dense: true,
-                      onTap: () {
-                        Navigator.pop(context);
-                        context.push('/clients');
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.person_add_outlined),
-                      title: const Text('Ajouter un client'),
-                      dense: true,
-                      onTap: () {
-                        Navigator.pop(context);
-                        context.push('/clients/add');
-                      },
-                    ),
+                  if (isAgence) ...[
+                    _Item(Icons.people_outline, 'Mes clients', () => open('/clients')),
+                    _Item(Icons.account_balance_outlined, 'Caisse et float',
+                        () => open('/settings/caisse')),
+                    _Item(Icons.store_outlined, 'Mes agences',
+                        () => open('/agences/mes-agences')),
+                  ] else ...[
+                    _Item(Icons.label_outline, 'Ranger mes dépenses',
+                        () => open('/categorize'),
+                        badge: toCategorize),
+                    _Item(Icons.phone_android, 'Mes téléphones',
+                        () => open('/telephones/mes-telephones')),
                   ],
-
-                  if (accountType == 'agence') ...[
-                    const Divider(height: 24),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Text(
-                        'MULTI-AGENCE',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: theme.colorScheme.primary,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.store_outlined),
-                      title: const Text('Mes agences'),
-                      dense: true,
-                      onTap: () {
-                        Navigator.pop(context);
-                        context.push('/agences/mes-agences');
-                      },
-                    ),
-                  ] else if (accountType == 'particulier') ...[
-                    const Divider(height: 24),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Text(
-                        'FINANCES',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: theme.colorScheme.primary,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.account_balance_wallet_outlined),
-                      title: const Text('Mon argent'),
-                      dense: true,
-                      onTap: () {
-                        Navigator.pop(context);
-                        context.go('/money');
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.savings_outlined),
-                      title: const Text('Budget & motifs'),
-                      dense: true,
-                      onTap: () {
-                        Navigator.pop(context);
-                        context.go('/budget');
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.label_outline),
-                      title: const Text('Catégoriser les dépenses'),
-                      dense: true,
-                      onTap: () {
-                        Navigator.pop(context);
-                        context.push('/categorize');
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.phone_android),
-                      title: const Text('Mes téléphones'),
-                      dense: true,
-                      onTap: () {
-                        Navigator.pop(context);
-                        context.push('/telephones/mes-telephones');
-                      },
-                    ),
-                  ],
-
-                  const Divider(height: 24),
-
-                  // === SECTION SÉCURITÉ ===
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Text(
-                      'SÉCURITÉ',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: theme.colorScheme.primary,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.pin_outlined),
-                    title: const Text('Modifier le PIN'),
-                    dense: true,
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.push('/security/change-pin');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.fingerprint),
-                    title: const Text('Empreinte digitale'),
-                    dense: true,
-                    onTap: () {
-                      Navigator.pop(context);
-                      _showBiometricInfo(context, ref);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.timer_outlined),
-                    title: const Text('Délai de verrouillage'),
-                    dense: true,
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.push('/security/lock-timeout');
-                    },
-                  ),
-
-                  const Divider(height: 24),
-
-                  // Paramètres
-                  ListTile(
-                    leading: const Icon(Icons.settings_outlined),
-                    title: const Text('Paramètres'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.push('/settings');
-                    },
-                  ),
+                  Divider(height: 24, indent: 16, endIndent: 16,
+                      color: theme.colorScheme.outlineVariant.withAlpha(110)),
+                  _Item(Icons.settings_outlined, 'Paramètres', () => open('/settings')),
+                  _Item(Icons.help_outline, 'Un SMS n\'a pas été détecté ?',
+                      () => open('/settings/aide-detection')),
                 ],
               ),
             ),
@@ -322,29 +88,23 @@ class AppDrawer extends ConsumerWidget {
       ),
     );
   }
+}
 
-  void _showBiometricInfo(BuildContext context, WidgetRef ref) {
-    final bioAvailable = ref.read(isBiometricAvailableProvider);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Empreinte digitale'),
-        content: bioAvailable.when(
-          data: (available) => Text(available
-              ? 'La biométrie est activée et disponible sur cet appareil.'
-              : 'La biométrie n\'est pas disponible. Vérifiez que vous avez '
-                  'enregistré une empreinte dans les paramètres de votre téléphone.'),
-          loading: () => const Text('Vérification...'),
-          error: (_, _) =>
-              const Text('Impossible de vérifier la biométrie.'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
+class _Item extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final int badge;
+
+  const _Item(this.icon, this.label, this.onTap, {this.badge = 0});
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+        leading: Icon(icon),
+        title: Text(label),
+        trailing: badge > 0
+            ? Badge(label: Text('$badge'), backgroundColor: Theme.of(context).colorScheme.primary)
+            : null,
+        onTap: onTap,
+      );
 }

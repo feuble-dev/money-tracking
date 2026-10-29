@@ -37,9 +37,9 @@ const docs: Doc[] = [
     items: [
       { title: 'Automatique, même application fermée', text: 'La détection continue après un redémarrage du téléphone. Les SMS reçus pendant une coupure sont rattrapés à l’ouverture suivante.' },
       { title: 'Détection incertaine', text: 'Si un SMS ressemble à un modèle sans lui correspondre exactement, l’opération est créée « à vérifier » : confirmez-la ou corrigez son type.' },
-      { title: 'Vérifier un SMS', text: 'Paramètres → Diagnostic → Tester un SMS : collez un message pour voir comment il est compris.' },
+      { title: 'Vérifier un SMS', text: 'Menu → « Un SMS n’a pas été détecté ? » : collez le message pour voir comment il est compris, puis suivez les étapes proposées.' },
     ],
-    note: 'Un téléphone Tecno, Infinix, Xiaomi ou Samsung peut arrêter l’application pour économiser la batterie. Paramètres → Diagnostic → Fonctionnement en arrière-plan règle ce point en un geste.',
+    note: 'Un téléphone Tecno, Infinix, Xiaomi ou Samsung peut arrêter l’application pour économiser la batterie. L’aide « Un SMS n’a pas été détecté ? » règle ce point en un geste.',
   },
   {
     id: 'mon-argent',

@@ -622,10 +622,13 @@ class _OperatorFormScreenState extends ConsumerState<OperatorFormScreen> {
       appBar: AppBar(
         title: const Text('Modifier l\'opérateur'),
         actions: [
-          IconButton(
+          // Libellé visible plutôt qu'une icône seule : c'est ici qu'on
+          // apprend à l'app un SMS qu'elle ne reconnaît pas encore.
+          TextButton.icon(
             onPressed: () => context.push('/operators/${widget.operatorId}/sms-config'),
-            icon: const Icon(Icons.sms),
-            tooltip: 'Configuration SMS',
+            icon: const Icon(Icons.sms_outlined),
+            label: const Text('Modèles de SMS'),
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
           ),
         ],
       ),

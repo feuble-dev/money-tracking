@@ -9,6 +9,8 @@ import '../features/auth/screens/lock_timeout_screen.dart';
 import '../features/backup/screens/backup_screen.dart';
 import '../features/backup/screens/restore_screen.dart';
 import '../features/caisse/screens/caisse_screen.dart';
+import '../features/dashboard/screens/advanced_settings_screen.dart';
+import '../features/dashboard/screens/detection_help_screen.dart';
 import '../features/clients/screens/client_detail_screen.dart';
 import '../features/clients/screens/client_form_screen.dart';
 import '../features/clients/screens/clients_list_screen.dart';
@@ -180,6 +182,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/settings',
         builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: '/settings/avances',
+        builder: (context, state) => const AdvancedSettingsScreen(),
+      ),
+      GoRoute(
+        path: '/settings/aide-detection',
+        builder: (context, state) => const DetectionHelpScreen(),
       ),
       GoRoute(
         path: '/settings/caisse',
