@@ -81,7 +81,7 @@ class MonthlySummaryService {
         buffer.write(' Top : $topLabel ${currency.format(topAmount)}.');
       }
 
-      await NotificationService().showMonthlySummary(
+      await NotificationService().showSummary(
         title: 'Bilan de ${_cap(monthName)}',
         body: buffer.toString(),
       );

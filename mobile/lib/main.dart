@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/categories/category_providers.dart';
 import 'core/categories/monthly_summary_service.dart';
+import 'core/summary/daily_summary_service.dart';
 import 'core/database/database_helper.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/onboarding/catalog_sync_service.dart';
@@ -94,8 +95,9 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     SyncService.pushIfNeeded();
     _resyncCatalog();
     unawaited(_startupLicence());
-    // Récap mensuel des dépenses (compte Particulier) — une fois par mois.
+    // Bilans au démarrage : mois écoulé (Particulier), veille (Agence).
     unawaited(MonthlySummaryService.maybeShow());
+    unawaited(DailySummaryService.maybeShow());
     _syncSub = Stream.periodic(const Duration(minutes: 2)).listen((_) {
       SyncService.pushIfNeeded();
       markSmsForegroundAlive();
@@ -184,6 +186,8 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
         router.push('/licence/statut');
       } else if (payload == 'transactions') {
         router.go('/transactions');
+      } else if (payload == 'commissions') {
+        router.go('/commissions');
       } else if (payload == 'caisse') {
         router.push('/settings/caisse');
       } else {

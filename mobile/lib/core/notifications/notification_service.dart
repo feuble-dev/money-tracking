@@ -223,14 +223,16 @@ class NotificationService {
     );
   }
 
-  /// Récapitulatif mensuel (compte Particulier) — affiché une fois par mois
-  /// au démarrage, résume les dépenses du mois écoulé. Tap → écran Budget.
-  Future<void> showMonthlySummary({
+  /// Bilan au démarrage : mois écoulé (Particulier, tap → Budget) ou
+  /// journée de la veille (Agence, tap → Commissions).
+  Future<void> showSummary({
     required String title,
     required String body,
+    int id = 920001,
+    String payload = 'summary',
   }) async {
     await _plugin.show(
-      920001,
+      id,
       title,
       body,
       const NotificationDetails(
@@ -244,7 +246,7 @@ class NotificationService {
           styleInformation: BigTextStyleInformation(''),
         ),
       ),
-      payload: 'summary',
+      payload: payload,
     );
   }
 
