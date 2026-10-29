@@ -18,9 +18,7 @@ class LicenceService {
     // 1. Vérifier d'abord en local (fonctionne offline)
     final statut = await LicenceStorage.verifierLocalement();
 
-    if (statut == LicenceStatut.active ||
-        statut == LicenceStatut.expireBientot ||
-        statut == LicenceStatut.essaiActif) {
+    if (statut.permetEcriture) {
       // Licence locale valide → sync en arrière-plan
       _syncEnArrierePlan();
       return statut;

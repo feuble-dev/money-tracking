@@ -160,6 +160,10 @@ class _LicenceStatusScreenState extends State<LicenceStatusScreen> {
         icon = Icons.lock;
         color = Colors.grey;
         label = 'Aucune Licence';
+      case LicenceStatut.gratuit:
+        icon = Icons.favorite;
+        color = Colors.green;
+        label = 'Gratuit pour les particuliers';
     }
 
     return Card(
@@ -177,7 +181,9 @@ class _LicenceStatusScreenState extends State<LicenceStatusScreen> {
                 color: color,
               ),
             ),
-            if (_jours > 0 && _statut != LicenceStatut.nonActivee)
+            if (_jours > 0 &&
+                _statut != LicenceStatut.nonActivee &&
+                _statut != LicenceStatut.gratuit)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(

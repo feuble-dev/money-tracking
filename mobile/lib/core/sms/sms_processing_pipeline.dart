@@ -178,9 +178,7 @@ Future<void> processIncomingSms(
 
   // 7. Vérifier licence avant de créer la transaction
   final licenceStatut = await LicenceStorage.verifierLocalement();
-  final peutCreer = licenceStatut == LicenceStatut.active ||
-      licenceStatut == LicenceStatut.essaiActif ||
-      licenceStatut == LicenceStatut.expireBientot;
+  final peutCreer = licenceStatut.permetEcriture;
 
   if (!peutCreer) {
     // SMS enregistré mais pas de transaction

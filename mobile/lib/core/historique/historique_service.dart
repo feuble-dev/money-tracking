@@ -91,10 +91,6 @@ class HistoriqueImportService {
     required DateTime dateFin,
     required Function(int traites, int total) onProgress,
   }) async {
-    final token = await HistoriqueStorage.getToken();
-    if (token == null) {
-      return ResultatImport.erreur('Achat non activé');
-    }
     if (!await HistoriqueStorage.couvre(dateDebut)) {
       return ResultatImport.erreur(
           'Cette période n\'est pas couverte par votre achat.');

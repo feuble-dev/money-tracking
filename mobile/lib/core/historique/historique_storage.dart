@@ -1,4 +1,5 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../licence/licence_storage.dart';
 
 class HistoriqueStorage {
   static const _storage = FlutterSecureStorage();
@@ -22,7 +23,9 @@ class HistoriqueStorage {
     return _storage.read(key: _keyToken);
   }
 
+  /// Import d'historique gratuit et illimité pour un compte Particulier.
   static Future<bool> estActive() async {
+    if (await LicenceStorage.estParticulier()) return true;
     final token = await getToken();
     return token != null && token.isNotEmpty;
   }
@@ -33,6 +36,7 @@ class HistoriqueStorage {
   /// (installé avant cette version) répond `false` : l'écran redemande alors
   /// au backend, qui sait ce qui a été payé.
   static Future<bool> couvre(DateTime dateDebut) async {
+    if (await LicenceStorage.estParticulier()) return true;
     if (!await estActive()) return false;
     final c = await _storage.read(key: _keyCouverture);
     if (c == null) return false;
