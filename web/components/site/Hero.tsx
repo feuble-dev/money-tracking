@@ -1,95 +1,99 @@
-import React from 'react';
+'use client';
+
+import React, { useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
+import Icon from './Icon';
+import PhoneDemo, { type DemoMode } from './PhoneDemo';
+
+const copy: Record<DemoMode, { title: React.ReactNode; text: string; cta: string; facts: string[] }> = {
+  particulier: {
+    title: (
+      <>
+        Votre argent Mobile Money, <span className="text-primary">enfin clair.</span>
+      </>
+    ),
+    text: 'MoneyTracking lit les SMS de vos opérateurs et range chaque dépense pour vous. Ajoutez vos espèces et votre banque : vous savez à tout moment où est votre argent, et où il part.',
+    cta: 'Télécharger gratuitement',
+    facts: ['Gratuit pour les particuliers', 'Vos données restent sur votre téléphone', 'Fonctionne sans Internet'],
+  },
+  agence: {
+    title: (
+      <>
+        Votre agence tourne, <span className="text-primary">vos comptes se font seuls.</span>
+      </>
+    ),
+    text: 'Chaque SMS de dépôt ou de retrait devient une opération, avec sa commission. Float par opérateur, clients, exports, et vue patron sur toutes vos agences.',
+    cta: 'Essayer 3 mois gratuits',
+    facts: ['3 mois offerts par agence', 'Commissions automatiques', 'Suivi multi-agence'],
+  },
+};
 
 export default function Hero() {
+  const [mode, setMode] = useState<DemoMode>('particulier');
+  const c = copy[mode];
+
   return (
-    <section className="gradient-hero">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-20 pb-24 sm:pt-28 sm:pb-32">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
-          <div>
-            <h1 className="text-4xl sm:text-5xl font-extrabold text-white leading-tight tracking-tight">
-              Gerez votre agence Mobile Money sans effort
-            </h1>
-            <p className="mt-5 text-lg text-blue-100 leading-relaxed max-w-xl">
-              MoneyTracking detecte vos SMS Orange Money, Moov Money et Coris Money pour creer
-              automatiquement vos transactions, calculer vos commissions et suivre votre tresorerie.
-            </p>
-            <div className="mt-8 flex flex-col sm:flex-row gap-3">
-              <Link href="/download"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-accent text-white font-semibold text-sm rounded-lg hover:bg-accent-hover transition-colors">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Telecharger pour Android
-              </Link>
-              <Link href="/features"
-                className="inline-flex items-center justify-center px-6 py-3 text-white text-sm font-medium rounded-lg border border-white/25 hover:bg-white/10 transition-colors">
-                Decouvrir les fonctionnalites
-              </Link>
-            </div>
-            <div className="mt-10 flex flex-wrap gap-x-6 gap-y-2 text-sm text-blue-200">
-              <span>3 operateurs supportes</span>
-              <span className="text-blue-400">&middot;</span>
-              <span>Fonctionne hors ligne</span>
-              <span className="text-blue-400">&middot;</span>
-              <span>Essai gratuit 3 mois</span>
-            </div>
+    <section className="relative overflow-hidden bg-soft">
+      <div className="bg-grid absolute inset-0 [mask-image:linear-gradient(to_bottom,black,transparent_85%)]" />
+      <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-4 pb-20 pt-14 sm:px-6 sm:pt-20 lg:grid-cols-[1.1fr_0.9fr] lg:pb-28">
+        <div>
+          {/* Deux publics, deux promesses */}
+          <div role="tablist" aria-label="Pour qui ?" className="inline-flex rounded-full border border-gray-200 bg-white p-1 text-sm shadow-sm">
+            {(
+              [
+                ['particulier', 'Pour moi'],
+                ['agence', 'Pour mon agence'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                role="tab"
+                aria-selected={mode === value}
+                onClick={() => setMode(value)}
+                className={`rounded-full px-4 py-1.5 font-medium transition-colors ${
+                  mode === value ? 'bg-ink text-white' : 'text-muted hover:text-dark'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
-          {/* Phone mockup */}
-          <div className="hidden lg:flex justify-center">
-            <div className="w-[280px] h-[560px] bg-gray-900 rounded-[2.5rem] p-3 shadow-2xl shadow-black/30 border border-white/10">
-              <div className="absolute left-1/2 -translate-x-1/2 w-28 h-6 bg-gray-900 rounded-b-xl" style={{ position: 'relative', margin: '-12px auto 0' }} />
-              <div className="w-full h-full bg-gradient-to-b from-primary-dark to-primary rounded-[2rem] overflow-hidden flex flex-col items-center pt-10 relative">
-                <Image src="/logo.png" alt="MoneyTracking" width={72} height={72} className="rounded-2xl mb-4" />
-                <p className="text-white text-lg font-bold">MoneyTracking</p>
-                <p className="text-blue-200 text-xs mb-6">Gestion Mobile Money</p>
+          <h1 key={`t-${mode}`} className="row-enter mt-7 font-display text-[2.6rem] font-bold leading-[1.05] tracking-tight text-ink sm:text-6xl">
+            {c.title}
+          </h1>
+          <p key={`p-${mode}`} className="row-enter mt-6 max-w-xl text-lg leading-relaxed text-muted [animation-delay:80ms]">
+            {c.text}
+          </p>
 
-                <div className="w-full px-4 space-y-2.5">
-                  <div className="bg-white/15 rounded-xl p-3 flex items-center gap-3">
-                    <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-xs font-medium">Depot Orange Money</p>
-                      <p className="text-blue-200 text-[10px]">70 12 34 56</p>
-                    </div>
-                    <span className="text-green-300 text-sm font-semibold">+50 000</span>
-                  </div>
-
-                  <div className="bg-white/15 rounded-xl p-3 flex items-center gap-3">
-                    <div className="w-8 h-8 bg-red-500/20 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-xs font-medium">Retrait Moov Money</p>
-                      <p className="text-blue-200 text-[10px]">65 98 76 54</p>
-                    </div>
-                    <span className="text-red-300 text-sm font-semibold">-25 000</span>
-                  </div>
-
-                  <div className="bg-white/15 rounded-xl p-3 flex items-center gap-3">
-                    <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-xs font-medium">Depot Coris Money</p>
-                      <p className="text-blue-200 text-[10px]">76 54 32 10</p>
-                    </div>
-                    <span className="text-green-300 text-sm font-semibold">+100 000</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+            <Link
+              href="/download"
+              className="group inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
+            >
+              <Icon name="download" className="h-4 w-4" strokeWidth={2} />
+              {c.cta}
+            </Link>
+            <Link
+              href="/features"
+              className="group inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-6 py-3.5 text-sm font-semibold text-dark transition-colors hover:border-gray-400"
+            >
+              Voir comment ça marche
+              <Icon name="arrowRight" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" strokeWidth={2} />
+            </Link>
           </div>
+
+          <ul className="mt-9 flex flex-wrap gap-x-6 gap-y-2 text-sm text-dark/80">
+            {c.facts.map((f) => (
+              <li key={f} className="flex items-center gap-2">
+                <Icon name="check" className="h-4 w-4 text-accent" strokeWidth={2.2} />
+                {f}
+              </li>
+            ))}
+          </ul>
         </div>
+
+        <PhoneDemo mode={mode} />
       </div>
     </section>
   );

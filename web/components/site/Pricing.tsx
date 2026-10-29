@@ -1,135 +1,77 @@
 import React from 'react';
 import Link from 'next/link';
+import { plans } from '@/lib/site-content';
+import Icon from './Icon';
+import Reveal from './motion/Reveal';
+import SectionTitle from './SectionTitle';
 
-const plans = [
-  {
-    name: 'Essai gratuit',
-    price: 'Gratuit',
-    period: '3 mois',
-    description: 'Toutes les fonctionnalites, sans engagement. Un nouvel essai a chaque agence creee.',
-    features: [
-      'Detection SMS automatique',
-      'Dashboard complet',
-      'Export PDF & CSV',
-      'Gestion clients',
-      '3 mois d\'essai par agence',
-    ],
-    cta: 'Commencer l\'essai',
-    highlighted: false,
-  },
-  {
-    name: 'Annuel',
-    price: '4 480',
-    currency: 'FCFA',
-    period: 'par an, par agence',
-    description: '17% de remise par rapport au mensuel.',
-    features: [
-      'Toutes les fonctionnalites',
-      'Detection SMS automatique',
-      'Dashboard complet',
-      'Export PDF & CSV',
-      'Support prioritaire',
-      'Mises a jour automatiques',
-    ],
-    cta: 'Choisir l\'annuel',
-    highlighted: true,
-  },
-  {
-    name: 'Mensuel',
-    price: '450',
-    currency: 'FCFA',
-    period: 'par mois, par agence',
-    description: 'Sans engagement, resiliable a tout moment.',
-    features: [
-      'Toutes les fonctionnalites',
-      'Detection SMS automatique',
-      'Dashboard complet',
-      'Export PDF & CSV',
-      'Support par email',
-    ],
-    cta: 'Choisir le mensuel',
-    highlighted: false,
-  },
-];
-
-export default function Pricing() {
+export default function Pricing({ withTitle = true }: { withTitle?: boolean }) {
   return (
-    <section className="py-20 bg-soft">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
-        <div className="mb-12">
-          <h2 className="text-2xl sm:text-3xl font-bold text-dark">Tarifs</h2>
-          <p className="mt-2 text-muted">
-            La licence est facturee par agence : un compte Particulier ou Agence peut geler plusieurs
-            agences, chacune avec son propre abonnement et son propre essai gratuit.
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-6 max-w-4xl">
-          {plans.map((plan) => (
-            <div key={plan.name}
-              className={`rounded-xl p-6 ${
-                plan.highlighted
-                  ? 'bg-accent text-white ring-1 ring-accent'
-                  : 'bg-white border border-gray-200'
-              }`}>
-              <p className={`text-sm font-medium ${plan.highlighted ? 'text-green-200' : 'text-muted'}`}>
-                {plan.name}
-              </p>
-              <div className="mt-3 flex items-baseline gap-1">
-                <span className={`text-3xl font-bold ${plan.highlighted ? 'text-white' : 'text-dark'}`}>
-                  {plan.price}
+    <section className="bg-soft py-24">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+        {withTitle && (
+          <SectionTitle
+            eyebrow="Tarifs"
+            title="Gratuit pour vous. Juste pour votre agence."
+            text="Un particulier ne paie jamais. Une agence paie sa licence, avec 3 mois offerts à la création."
+          />
+        )}
+        <div className="mt-12 grid gap-6 lg:grid-cols-3">
+          {plans.map((p, i) => (
+            <Reveal
+              key={p.name}
+              delay={i * 100}
+              className={`relative flex flex-col rounded-3xl p-8 ${
+                p.highlighted ? 'bg-ink text-white' : 'border border-gray-200 bg-white'
+              }`}
+            >
+              {p.highlighted && (
+                <span className="absolute right-6 top-6 rounded-full bg-accent px-3 py-1 text-xs font-semibold text-white">
+                  Le plus choisi
                 </span>
-                {plan.currency && (
-                  <span className={`text-sm ${plan.highlighted ? 'text-green-200' : 'text-muted'}`}>
-                    {plan.currency}
-                  </span>
-                )}
-              </div>
-              <p className={`text-xs mt-1 ${plan.highlighted ? 'text-green-200' : 'text-muted'}`}>
-                {plan.period}
+              )}
+              <p className={`text-sm font-medium ${p.highlighted ? 'text-white/60' : 'text-muted'}`}>{p.audience}</p>
+              <h3 className={`mt-1 font-display text-xl font-bold ${p.highlighted ? '' : 'text-ink'}`}>{p.name}</h3>
+              <p className="mt-6 flex items-baseline gap-1.5">
+                <span className={`font-display text-5xl font-bold ${p.highlighted ? '' : 'text-ink'}`}>{p.price}</span>
+                {p.unit && <span className={p.highlighted ? 'text-white/60' : 'text-muted'}>{p.unit}</span>}
               </p>
-              <p className={`text-sm mt-3 ${plan.highlighted ? 'text-green-100' : 'text-muted'}`}>
-                {plan.description}
+              <p className={`text-sm ${p.highlighted ? 'text-white/60' : 'text-muted'}`}>{p.period}</p>
+              <p className={`mt-5 text-[15px] leading-relaxed ${p.highlighted ? 'text-white/80' : 'text-muted'}`}>
+                {p.description}
               </p>
-
-              <ul className="mt-6 space-y-2.5">
-                {plan.features.map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-sm">
-                    <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${plan.highlighted ? 'text-green-400' : 'text-green-600'}`}
-                      fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span className={plan.highlighted ? 'text-gray-200' : 'text-gray-600'}>{f}</span>
+              <ul className="mt-6 flex-1 space-y-3">
+                {p.features.map((f) => (
+                  <li key={f} className="flex items-start gap-2.5 text-[15px]">
+                    <Icon
+                      name="check"
+                      className={`mt-0.5 h-4 w-4 flex-shrink-0 ${p.highlighted ? 'text-accent-light' : 'text-accent'}`}
+                      strokeWidth={2.4}
+                    />
+                    <span className={p.highlighted ? 'text-white/85' : 'text-dark'}>{f}</span>
                   </li>
                 ))}
               </ul>
-
-              <Link href="/download"
-                className={`block text-center mt-6 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  plan.highlighted
-                    ? 'bg-white text-accent hover:bg-green-50'
-                    : 'bg-accent-50 text-accent hover:bg-green-100'
-                }`}>
-                {plan.cta}
+              <Link
+                href="/download"
+                className={`mt-8 block rounded-xl py-3 text-center text-sm font-semibold transition-colors ${
+                  p.highlighted ? 'bg-accent text-white hover:bg-accent-hover' : 'bg-soft text-ink hover:bg-gray-200'
+                }`}
+              >
+                {p.cta}
               </Link>
-            </div>
+            </Reveal>
           ))}
         </div>
-
-        <div className="mt-10 max-w-4xl">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 bg-white rounded-xl border border-gray-200">
-            <div>
-              <p className="font-semibold text-dark text-sm">Import historique SMS</p>
-              <p className="text-muted text-sm mt-0.5">
-                Recuperez vos anciennes transactions depuis vos SMS. Gratuit jusqu&apos;a 1 an en arriere,
-                puis 200 FCFA par annee supplementaire.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 flex-shrink-0">
-              <span className="text-xl font-bold text-dark">Gratuit <span className="text-sm font-normal text-muted">≤ 1 an</span></span>
-            </div>
+        <Reveal className="mt-6 flex flex-col justify-between gap-4 rounded-2xl border border-gray-200 bg-white p-6 sm:flex-row sm:items-center">
+          <div>
+            <p className="font-display font-semibold text-ink">Import de l’historique SMS (agences)</p>
+            <p className="mt-1 text-sm text-muted">
+              Gratuit jusqu’à un an en arrière, puis 200 FCFA par année supplémentaire. Toujours gratuit pour un particulier.
+            </p>
           </div>
-        </div>
+          <p className="font-display text-2xl font-bold text-ink">Dès 0 FCFA</p>
+        </Reveal>
       </div>
     </section>
   );
