@@ -66,6 +66,8 @@ class AppDrawer extends ConsumerWidget {
                     _Item(Icons.people_outline, 'Mes clients', () => open('/clients')),
                     _Item(Icons.account_balance_outlined, 'Caisse et float',
                         () => open('/settings/caisse')),
+                    _Item(Icons.fact_check_outlined, 'Clôture du jour',
+                        () => open('/caisse/cloture')),
                     _Item(Icons.store_outlined, 'Mes agences',
                         () => open('/agences/mes-agences')),
                   ] else ...[

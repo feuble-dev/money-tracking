@@ -116,7 +116,7 @@ Et en plus, à ta demande :
 
 ## 2. À décider ensemble (pas corrigé, choix produit ou migration nécessaire)
 
-> P1, P2, P3 et P5 sont **faits** (voir 1 bis). Restent P4, P6, P7 et P8.
+> P1, P2, P3, P5 et P7 sont **faits**, ainsi que la pagination des transactions (P8). Restent P4, P6 et le reste de P8.
 
 Classé par priorité.
 
@@ -176,7 +176,7 @@ Deux SMS légitimes **identiques au caractère près** produisent un seul enregi
 
 **Proposition.** Créer un keystore de release **maintenant**, le garder précieusement (et le sauvegarder), et le référencer via `key.properties`.
 
-### 🟡 P7 — Synchro patron : les modifications ne remontent pas
+### ✅ P7 — Synchro patron : les modifications ne remontent pas (fait : `sync_seq` par trigger, DB v17)
 
 Une transaction **annulée ou corrigée** après sa première synchronisation reste « completed » chez le patron. Le corriger demande une colonne `updated_at` sur `transactions` (migration DB v16) mise à jour à chaque modification, et un curseur basé dessus.
 
@@ -188,7 +188,7 @@ Une transaction **annulée ou corrigée** après sa première synchronisation re
 - **`PushSyncView`** n'est pas dans une transaction `atomic`, et une valeur invalide (champ trop long en MySQL strict) provoque une erreur 500 à chaque tentative. La synchro reste alors **bloquée pour toujours** sur ce lot. Il faudrait tronquer les champs et rejeter la ligne fautive, pas tout le lot.
 
 **Mobile**
-- **Transactions.** La liste est plafonnée à 500 sans pagination. Il faudrait un défilement infini, et des totaux calculés en SQL plutôt que sur la liste chargée.
+- ✅ **Transactions.** Pagination par 100 au défilement et totaux calculés en SQL sur tout le filtre (fait).
 - **Fiche client.** Elle relance sa requête à chaque reconstruction (`FutureBuilder` dont le `future` est recréé dans `build`).
 
 **Web**

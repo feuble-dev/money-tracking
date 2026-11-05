@@ -300,6 +300,26 @@ class DatabaseHelper {
     await _createCategoryIndexes(db);
     await _createWalletTables(db);
     await _createSyncTracking(db);
+    await _createCashClosings(db);
+  }
+
+  /// Clôtures de caisse (Agence, DB v17) : chaque soir, les espèces
+  /// attendues (départ + entrées − sorties du jour) face aux espèces
+  /// comptées. Une ligne par jour ; le compté d'hier sert de départ.
+  Future<void> _createCashClosings(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cash_closings (
+        id TEXT PRIMARY KEY,
+        day TEXT NOT NULL UNIQUE,
+        opening REAL NOT NULL,
+        total_in REAL NOT NULL,
+        total_out REAL NOT NULL,
+        expected REAL NOT NULL,
+        counted REAL NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL
+      )
+    ''');
   }
 
   /// Suivi des modifications pour la synchro patron (DB v17). Une ligne
@@ -767,6 +787,7 @@ class DatabaseHelper {
     }
     if (oldVersion < 17) {
       await _createSyncTracking(db);
+      await _createCashClosings(db);
     }
   }
 

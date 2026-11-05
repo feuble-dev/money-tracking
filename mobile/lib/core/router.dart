@@ -9,6 +9,7 @@ import '../features/auth/screens/lock_timeout_screen.dart';
 import '../features/backup/screens/backup_screen.dart';
 import '../features/backup/screens/restore_screen.dart';
 import '../features/caisse/screens/caisse_screen.dart';
+import '../features/caisse/screens/cash_closing_screen.dart';
 import '../features/dashboard/screens/advanced_settings_screen.dart';
 import '../features/dashboard/screens/detection_help_screen.dart';
 import '../features/clients/screens/client_detail_screen.dart';
@@ -93,9 +94,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/dashboard';
       }
 
-      // Gestion des clients réservée aux comptes Agence (D18) — masquée du
-      // tiroir ET bloquée en accès direct.
-      if (accountType == 'particulier' && currentPath.startsWith('/clients')) {
+      // Gestion des clients et clôture de caisse : comptes Agence (D18).
+      if (accountType == 'particulier' &&
+          (currentPath.startsWith('/clients') || currentPath == '/caisse/cloture')) {
         return '/dashboard';
       }
 
@@ -190,6 +191,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/settings/aide-detection',
         builder: (context, state) => const DetectionHelpScreen(),
+      ),
+      GoRoute(
+        path: '/caisse/cloture',
+        builder: (context, state) => const CashClosingScreen(),
       ),
       GoRoute(
         path: '/settings/caisse',
