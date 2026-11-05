@@ -33,7 +33,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 16,
+      version: 17,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -299,6 +299,47 @@ class DatabaseHelper {
     await _seedExpenseCategories(db);
     await _createCategoryIndexes(db);
     await _createWalletTables(db);
+    await _createSyncTracking(db);
+  }
+
+  /// Suivi des modifications pour la synchro patron (DB v17). Une ligne
+  /// déjà envoyée puis modifiée (transaction annulée, confirmée, type
+  /// corrigé, client renommé) reçoit un `sync_seq` croissant via trigger :
+  /// [SyncService] renvoie tout ce qui dépasse son dernier `sync_seq` vu.
+  /// Le trigger couvre tous les chemins de modification de l'app sans
+  /// qu'aucun n'ait à y penser. Il ne se redéclenche pas lui-même : il ne
+  /// modifie que `sync_seq`, absent de sa liste de colonnes.
+  Future<void> _createSyncTracking(Database db) async {
+    Future<void> addColumn(String table) async {
+      final cols = await db.rawQuery('PRAGMA table_info($table)');
+      if (!cols.any((c) => c['name'] == 'sync_seq')) {
+        await db.execute('ALTER TABLE $table ADD COLUMN sync_seq INTEGER');
+      }
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_${table}_sync_seq ON $table(sync_seq)');
+    }
+
+    await addColumn('transactions');
+    await addColumn('clients');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS trg_transactions_sync_seq
+      AFTER UPDATE OF status, amount, commission, client_name, client_phone,
+                      transaction_type_id, direction ON transactions
+      BEGIN
+        UPDATE transactions
+        SET sync_seq = (SELECT COALESCE(MAX(sync_seq), 0) + 1 FROM transactions)
+        WHERE rowid = NEW.rowid;
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS trg_clients_sync_seq
+      AFTER UPDATE OF first_name, last_name, phone_number ON clients
+      BEGIN
+        UPDATE clients
+        SET sync_seq = (SELECT COALESCE(MAX(sync_seq), 0) + 1 FROM clients)
+        WHERE rowid = NEW.rowid;
+      END
+    ''');
   }
 
   /// « Tout mon argent » (DB v16, compte Particulier) : comptes tenus à la
@@ -723,6 +764,9 @@ class DatabaseHelper {
       // ajoutée au catalogue (INSERT OR IGNORE).
       await _seedExpenseCategories(db);
       await _createWalletTables(db);
+    }
+    if (oldVersion < 17) {
+      await _createSyncTracking(db);
     }
   }
 

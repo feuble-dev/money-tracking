@@ -201,7 +201,8 @@ class _TransactionsListScreenState
               loading: () =>
                   const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('Erreur: $e')),
-              data: (transactions) {
+              data: (page) {
+                final transactions = page.items;
                 if (transactions.isEmpty) {
                   return Center(
                     child: Column(
@@ -222,15 +223,6 @@ class _TransactionsListScreenState
                   );
                 }
 
-                double totalDep = 0, totalWit = 0;
-                for (final tx in transactions) {
-                  if (tx.isEntrant) {
-                    totalDep += tx.amount;
-                  } else {
-                    totalWit += tx.amount;
-                  }
-                }
-
                 return Column(
                   children: [
                     Container(
@@ -239,14 +231,12 @@ class _TransactionsListScreenState
                       child: Row(
                         children: [
                           Text(
-                              transactions.length >= kTransactionsPageLimit
-                                  ? '$kTransactionsPageLimit dernières'
-                                  : '${transactions.length} transaction${transactions.length > 1 ? 's' : ''}',
+                              '${page.count} transaction${page.count > 1 ? 's' : ''}',
                               style: Theme.of(context).textTheme.bodySmall),
                           const SizedBox(width: 12),
                           Expanded(
                             child: AmountText(
-                                '+${_currencyFormat.format(totalDep)}',
+                                '+${_currencyFormat.format(page.totalIn)}',
                                 alignment: AlignmentDirectional.centerEnd,
                                 style: const TextStyle(
                                     fontSize: 12,
@@ -256,7 +246,7 @@ class _TransactionsListScreenState
                           const SizedBox(width: 12),
                           Flexible(
                             child: AmountText(
-                                '-${_currencyFormat.format(totalWit)}',
+                                '-${_currencyFormat.format(page.totalOut)}',
                                 alignment: AlignmentDirectional.centerEnd,
                                 style: const TextStyle(
                                     fontSize: 12,
@@ -271,15 +261,29 @@ class _TransactionsListScreenState
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         cacheExtent: 800,
                         addAutomaticKeepAlives: true,
-                        itemCount: transactions.length,
-                        itemBuilder: (context, index) => RepaintBoundary(
-                          child: _TransactionCard(
-                            transaction: transactions[index],
-                            dateFormat: _dateFormat,
-                            currencyFormat: _currencyFormat,
-                            isAgence: isAgence,
-                          ),
-                        ),
+                        itemCount: transactions.length + (page.hasMore ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          // Dernière case : on charge la page suivante.
+                          if (index >= transactions.length) {
+                            ref.read(transactionsProvider.notifier).loadMore();
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 24),
+                              child: Center(
+                                  child: SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(strokeWidth: 2))),
+                            );
+                          }
+                          return RepaintBoundary(
+                            child: _TransactionCard(
+                              transaction: transactions[index],
+                              dateFormat: _dateFormat,
+                              currencyFormat: _currencyFormat,
+                              isAgence: isAgence,
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ],

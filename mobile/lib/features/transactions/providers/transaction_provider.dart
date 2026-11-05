@@ -9,17 +9,44 @@ export '../models/transaction_filter.dart';
 
 const _uuid = Uuid();
 
-/// Nombre max de transactions chargées dans la liste (au-delà, l'écran
-/// l'indique au lieu d'afficher un total trompeur).
-const kTransactionsPageLimit = 500;
+/// Taille d'une page de la liste ; la suivante se charge au défilement.
+const kTransactionsPageSize = 100;
+
+/// Une liste paginée : les lignes déjà chargées, s'il en reste, et les
+/// totaux calculés en SQL sur TOUT le filtre (pas seulement les lignes
+/// chargées — l'ancien total devenait faux au-delà de 500 lignes).
+class TransactionPage {
+  final List<TransactionModel> items;
+  final bool hasMore;
+  final int count;
+  final double totalIn;
+  final double totalOut;
+
+  const TransactionPage({
+    required this.items,
+    required this.hasMore,
+    required this.count,
+    required this.totalIn,
+    required this.totalOut,
+  });
+
+  TransactionPage append(List<TransactionModel> more, {required bool hasMore}) =>
+      TransactionPage(
+        items: [...items, ...more],
+        hasMore: hasMore,
+        count: count,
+        totalIn: totalIn,
+        totalOut: totalOut,
+      );
+}
 
 /// Provider pour le filtre actif
 final transactionFilterProvider =
     StateProvider<TransactionFilter>((ref) => const TransactionFilter());
 
-/// Provider pour la liste des transactions filtrées (uniquement completed)
+/// Liste paginée des transactions terminées, selon le filtre actif.
 final transactionsProvider =
-    StateNotifierProvider<TransactionsNotifier, AsyncValue<List<TransactionModel>>>(
+    StateNotifierProvider<TransactionsNotifier, AsyncValue<TransactionPage>>(
         (ref) {
   return TransactionsNotifier(ref);
 });
@@ -58,9 +85,46 @@ final todayTransactionsProvider =
   return results.map((e) => TransactionModel.fromMap(e)).toList();
 });
 
-/// Notifier pour les transactions confirmées
-class TransactionsNotifier
-    extends StateNotifier<AsyncValue<List<TransactionModel>>> {
+/// Clause WHERE de la liste pour [filter] (transactions terminées).
+(String, List<Object?>) transactionWhere(TransactionFilter filter) {
+  final where = StringBuffer("t.status = 'completed'");
+  final args = <Object?>[];
+  void add(String clause, Object? value) {
+    where.write(' AND $clause');
+    args.add(value);
+  }
+
+  if (filter.operatorId != null) add('t.operator_id = ?', filter.operatorId);
+  if (filter.clientId != null) add('t.client_id = ?', filter.clientId);
+  if (filter.transactionType != null) add('t.transaction_type = ?', filter.transactionType);
+  if (filter.direction != null) add('t.direction = ?', filter.direction);
+  if (filter.category == '__uncat__') {
+    where.write(" AND (t.category IS NULL OR t.category = '')");
+  } else if (filter.category != null) {
+    add('t.category = ?', filter.category);
+  }
+  if (filter.dateFrom != null) add('t.created_at >= ?', filter.dateFrom!.toIso8601String());
+  if (filter.dateTo != null) add('t.created_at <= ?', filter.dateTo!.toIso8601String());
+  final q = filter.searchQuery?.trim() ?? '';
+  if (q.isNotEmpty) {
+    // Recherche aussi par référence opérateur (ID de transaction du SMS).
+    // « % » et « _ » saisis sont cherchés tels quels (échappés avec « ! »).
+    final like = '%${q.replaceAll('!', '!!').replaceAll('%', '!%').replaceAll('_', '!_')}%';
+    where.write(" AND (t.client_phone LIKE ? ESCAPE '!' "
+        "OR t.client_name LIKE ? ESCAPE '!' "
+        "OR t.operator_transaction_id LIKE ? ESCAPE '!')");
+    args.addAll([like, like, like]);
+  }
+  return (where.toString(), args);
+}
+
+/// Même règle que `TransactionModel.isEntrant` : `direction` fait foi,
+/// repli sur l'ancien code `deposit` si elle manque.
+const _isIn =
+    "(t.direction = 'in' OR (t.direction IS NULL AND t.transaction_type = 'deposit'))";
+
+/// Notifier de la liste paginée.
+class TransactionsNotifier extends StateNotifier<AsyncValue<TransactionPage>> {
   final Ref _ref;
 
   TransactionsNotifier(this._ref) : super(const AsyncValue.loading()) {
@@ -71,79 +135,64 @@ class TransactionsNotifier
   /// arrive après (frappe rapide dans la recherche) est ignorée au lieu
   /// d'écraser des résultats plus récents.
   int _loadSeq = 0;
+  bool _loadingMore = false;
 
+  Future<List<TransactionModel>> _page(String where, List<Object?> args, int offset) async {
+    final db = await DatabaseHelper.instance.database;
+    final rows = await db.rawQuery('''
+      SELECT t.*, o.name as operator_name, tt.label as type_label
+      FROM transactions t
+      LEFT JOIN operators o ON t.operator_id = o.id
+      LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
+      WHERE $where
+      ORDER BY t.created_at DESC, t.rowid DESC
+      LIMIT $kTransactionsPageSize OFFSET $offset
+    ''', args);
+    return rows.map(TransactionModel.fromMap).toList();
+  }
+
+  /// Recharge depuis le début (nouveau filtre, nouvelle transaction…).
   Future<void> loadTransactions() async {
     final seq = ++_loadSeq;
     try {
-      final filter = _ref.read(transactionFilterProvider);
+      final (where, args) = transactionWhere(_ref.read(transactionFilterProvider));
       final db = await DatabaseHelper.instance.database;
-
-      // Construction de la requête optimisée
-      final where = StringBuffer('t.status = ?');
-      final whereArgs = <dynamic>['completed'];
-
-      if (filter.operatorId != null) {
-        where.write(' AND t.operator_id = ?');
-        whereArgs.add(filter.operatorId);
-      }
-      if (filter.clientId != null) {
-        where.write(' AND t.client_id = ?');
-        whereArgs.add(filter.clientId);
-      }
-      if (filter.transactionType != null) {
-        where.write(' AND t.transaction_type = ?');
-        whereArgs.add(filter.transactionType);
-      }
-      if (filter.direction != null) {
-        where.write(' AND t.direction = ?');
-        whereArgs.add(filter.direction);
-      }
-      if (filter.category != null) {
-        if (filter.category == '__uncat__') {
-          where.write(" AND (t.category IS NULL OR t.category = '')");
-        } else {
-          where.write(' AND t.category = ?');
-          whereArgs.add(filter.category);
-        }
-      }
-      if (filter.dateFrom != null) {
-        where.write(' AND t.created_at >= ?');
-        whereArgs.add(filter.dateFrom!.toIso8601String());
-      }
-      if (filter.dateTo != null) {
-        where.write(' AND t.created_at <= ?');
-        whereArgs.add(filter.dateTo!.toIso8601String());
-      }
-      if (filter.searchQuery != null && filter.searchQuery!.isNotEmpty) {
-        // Recherche aussi par référence opérateur (ID de transaction du SMS).
-        // « % » et « _ » saisis sont cherchés tels quels (échappés avec « ! »).
-        final q = filter.searchQuery!
-            .trim()
-            .replaceAll('!', '!!')
-            .replaceAll('%', '!%')
-            .replaceAll('_', '!_');
-        where.write(" AND (t.client_phone LIKE ? ESCAPE '!' "
-            "OR t.client_name LIKE ? ESCAPE '!' "
-            "OR t.operator_transaction_id LIKE ? ESCAPE '!')");
-        whereArgs.addAll(['%$q%', '%$q%', '%$q%']);
-      }
-
-      final results = await db.rawQuery('''
-        SELECT t.*, o.name as operator_name, tt.label as type_label
-        FROM transactions t
-        LEFT JOIN operators o ON t.operator_id = o.id
-        LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
-        WHERE $where
-        ORDER BY t.created_at DESC
-        LIMIT $kTransactionsPageLimit
-      ''', whereArgs);
-
+      final totals = (await db.rawQuery('''
+        SELECT COUNT(*) AS n,
+               COALESCE(SUM(CASE WHEN $_isIn THEN t.amount END), 0) AS total_in,
+               COALESCE(SUM(CASE WHEN $_isIn THEN 0 ELSE t.amount END), 0) AS total_out
+        FROM transactions t WHERE $where
+      ''', args)).first;
+      final items = await _page(where, args, 0);
       if (seq != _loadSeq || !mounted) return;
-      state = AsyncValue.data(
-          results.map((e) => TransactionModel.fromMap(e)).toList());
+      final count = (totals['n'] as num).toInt();
+      state = AsyncValue.data(TransactionPage(
+        items: items,
+        hasMore: items.length < count,
+        count: count,
+        totalIn: (totals['total_in'] as num).toDouble(),
+        totalOut: (totals['total_out'] as num).toDouble(),
+      ));
     } catch (e, st) {
       if (seq != _loadSeq || !mounted) return;
       state = AsyncValue.error(e, st);
+    }
+  }
+
+  /// Page suivante, appelée quand la liste arrive en bas.
+  Future<void> loadMore() async {
+    final current = state.valueOrNull;
+    if (current == null || !current.hasMore || _loadingMore) return;
+    _loadingMore = true;
+    final seq = _loadSeq;
+    try {
+      final (where, args) = transactionWhere(_ref.read(transactionFilterProvider));
+      final more = await _page(where, args, current.items.length);
+      if (seq != _loadSeq || !mounted) return;
+      state = AsyncValue.data(current.append(more,
+          hasMore: current.items.length + more.length < current.count));
+    } finally {
+      _loadingMore = false;
     }
   }
 
