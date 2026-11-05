@@ -163,6 +163,21 @@ class MoneyRepository {
     return rows.isEmpty ? null : MoneyEntry.fromMap(rows.first);
   }
 
+  /// Motifs les plus utilisés ces 90 derniers jours pour [direction]
+  /// (`out` dépenses, `in` revenus), du plus fréquent au moins fréquent —
+  /// la saisie les propose en premier, au lieu de l'ordre du catalogue.
+  static Future<List<String>> frequentCategories(String direction, {int limit = 7}) async {
+    final db = await _db;
+    final since = DateTime.now().subtract(const Duration(days: 90)).toIso8601String();
+    final rows = await db.rawQuery('''
+      SELECT category, COUNT(*) AS n FROM v_personal_flows
+      WHERE direction = ? AND category IS NOT NULL AND category != ''
+        AND occurred_at >= ?
+      GROUP BY category ORDER BY n DESC, MAX(occurred_at) DESC LIMIT ?
+    ''', [direction, since, limit]);
+    return [for (final r in rows) r['category'] as String];
+  }
+
   // -------------------------------------------------------------- Mouvements
 
   /// Fil chronologique : revenus/dépenses (Mobile Money + manuels, via

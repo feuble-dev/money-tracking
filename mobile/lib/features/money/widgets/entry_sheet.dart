@@ -57,6 +57,10 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
   late AccountRef? _counter = widget.editing?.counterAccount;
   late String? _category = widget.editing?.category;
   late DateTime _date = widget.editing?.occurredAt ?? DateTime.now();
+  // Description et note sont facultatives : repliées par défaut, sauf si
+  // l'opération modifiée en a déjà.
+  late bool _showDetails = (widget.editing?.label?.isNotEmpty ?? false) ||
+      (widget.editing?.note?.isNotEmpty ?? false);
   bool _saving = false;
   String? _error;
 
@@ -97,7 +101,7 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
         (_counter == null || _counter == account)) {
       error = 'Choisissez deux comptes différents';
     } else if (_kind != EntryKind.transfer && _category == null) {
-      error = 'Choisissez un motif';
+      error = 'Touchez un motif pour ranger cette opération';
     }
     if (error != null) {
       HapticFeedback.mediumImpact();
@@ -187,11 +191,18 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
     final cats = (ref.watch(expenseCategoriesProvider).valueOrNull ?? const [])
         .where((c) => c.code != kCategoryInternal && c.matchesDirection(_direction))
         .toList();
+    // Les motifs que l'utilisateur emploie le plus d'abord, puis l'ordre du
+    // catalogue : en pratique, le bon motif est presque toujours visible.
+    final frequent = ref.watch(frequentCategoriesProvider(_direction)).valueOrNull ?? const [];
+    final ordered = [
+      for (final code in frequent) ...cats.where((c) => c.code == code),
+      ...cats.where((c) => !frequent.contains(c.code)),
+    ];
     final shownCats = [
-      ...cats.take(7),
+      ...ordered.take(7),
       // La catégorie choisie via « Plus » reste visible.
-      if (_category != null && !cats.take(7).any((c) => c.code == _category))
-        ...cats.where((c) => c.code == _category),
+      if (_category != null && !ordered.take(7).any((c) => c.code == _category))
+        ...ordered.where((c) => c.code == _category),
     ];
 
     final accent = switch (_kind) {
@@ -211,7 +222,7 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
               segments: const [
                 ButtonSegment(value: EntryKind.expense, label: Text('Dépense')),
                 ButtonSegment(value: EntryKind.income, label: Text('Revenu')),
-                ButtonSegment(value: EntryKind.transfer, label: Text('Virement')),
+                ButtonSegment(value: EntryKind.transfer, label: Text('Transfert')),
               ],
               selected: {_kind},
               showSelectedIcon: false,
@@ -258,13 +269,25 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
                 textAlign: TextAlign.center,
                 style: theme.textTheme.labelLarge
                     ?.copyWith(color: scheme.onSurfaceVariant, letterSpacing: 1.5)),
+            if (!_isEdit) ...[
+              const SizedBox(height: 12),
+              _QuickAmounts(onPick: (v) => setState(() {
+                _amount.text = formatAmountInput(v);
+                _amount.selection = TextSelection.collapsed(offset: _amount.text.length);
+                _error = null;
+              })),
+            ],
             const SizedBox(height: 20),
-            _fieldLabel(_kind == EntryKind.transfer ? 'Depuis' : 'Compte'),
-            _AccountChoices(
-              accounts: choices,
-              selected: account,
-              onSelected: (r) => setState(() => _account = r),
-            ),
+            // Un seul compte possible (cas le plus courant : « Espèces ») :
+            // rien à choisir, donc rien à afficher.
+            if (_kind == EntryKind.transfer || choices.length > 1) ...[
+              _fieldLabel(_kind == EntryKind.transfer ? 'Depuis' : 'Compte'),
+              _AccountChoices(
+                accounts: choices,
+                selected: account,
+                onSelected: (r) => setState(() => _account = r),
+              ),
+            ],
             if (_kind == EntryKind.transfer) ...[
               const SizedBox(height: 12),
               _fieldLabel('Vers'),
@@ -286,80 +309,88 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
             ] else ...[
               const SizedBox(height: 12),
               _fieldLabel('Motif'),
-              SizedBox(
-                height: 92,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: [
-                    for (final c in shownCats)
-                      _CategoryBubble(
-                        icon: c.icon,
-                        label: c.label,
-                        color: c.color,
-                        selected: _category == c.code,
-                        onTap: () => setState(() {
-                          _category = c.code;
-                          _error = null;
-                        }),
-                      ),
-                    _CategoryBubble(
-                      icon: '⋯',
-                      label: 'Plus de motifs',
-                      color: scheme.outline,
-                      selected: false,
-                      onTap: _moreCategories,
-                    ),
-                  ],
+              GridView(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                // Hauteur fixe qui suit la taille de texte du téléphone :
+                // un libellé sur deux lignes ne déborde jamais de sa case.
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  mainAxisExtent:
+                      62 + MediaQuery.textScalerOf(context).scale(11) * 2.6,
                 ),
+                children: [
+                  for (final c in shownCats)
+                    _CategoryBubble(
+                      icon: c.icon,
+                      label: c.shortLabel,
+                      color: c.color,
+                      selected: _category == c.code,
+                      onTap: () => setState(() {
+                        _category = c.code;
+                        _error = null;
+                      }),
+                    ),
+                  _CategoryBubble(
+                    icon: '⋯',
+                    label: 'Autres motifs',
+                    color: scheme.outline,
+                    selected: false,
+                    onTap: _moreCategories,
+                  ),
+                ],
               ),
             ],
-            const SizedBox(height: 16),
-            TextField(
-              controller: _label,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                labelText: switch (_kind) {
-                  EntryKind.expense => 'Pour quoi / à qui ? (facultatif)',
-                  EntryKind.income => 'De qui ? (facultatif)',
-                  EntryKind.transfer => 'Libellé (facultatif)',
-                },
-                border: const OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
             const SizedBox(height: 12),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
               children: [
-                Expanded(
-                  child: Wrap(
-                    spacing: 8,
-                    children: [
-                      _dateChip("Aujourd'hui", DateTime.now()),
-                      _dateChip(
-                          'Hier', DateTime.now().subtract(const Duration(days: 1))),
-                      ActionChip(
-                        avatar: const Icon(Icons.event, size: 18),
-                        label: Text(_isOtherDay
-                            ? AppFormats.date.format(_date)
-                            : 'Autre jour'),
-                        onPressed: _pickDate,
-                      ),
-                    ],
-                  ),
+                _dateChip("Aujourd'hui", DateTime.now()),
+                _dateChip('Hier', DateTime.now().subtract(const Duration(days: 1))),
+                ActionChip(
+                  avatar: const Icon(Icons.event, size: 18),
+                  label: Text(_isOtherDay ? AppFormats.date.format(_date) : 'Autre jour'),
+                  onPressed: _pickDate,
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _note,
-              minLines: 1,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Note (facultatif)',
-                border: OutlineInputBorder(),
-                isDense: true,
+            if (!_showDetails)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _showDetails = true),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Ajouter une description'),
+                ),
+              )
+            else ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _label,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(
+                  labelText: switch (_kind) {
+                    EntryKind.expense => 'Pour quoi / à qui ?',
+                    EntryKind.income => 'De qui ?',
+                    EntryKind.transfer => 'Description',
+                  },
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
               ),
-            ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _note,
+                minLines: 1,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Note',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ],
             AnimatedSize(
               duration: const Duration(milliseconds: 200),
               child: _error == null
@@ -478,13 +509,12 @@ class _CategoryBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.all(2),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          width: 78,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
             color: selected ? color.withAlpha(40) : Colors.transparent,
@@ -493,6 +523,7 @@ class _CategoryBubble extends StatelessWidget {
                 color: selected ? color : Colors.transparent, width: 1.5),
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
                 width: 38,
@@ -503,15 +534,52 @@ class _CategoryBubble extends StatelessWidget {
                 child: Text(icon, style: const TextStyle(fontSize: 19)),
               ),
               const SizedBox(height: 6),
-              Text(label,
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, height: 1.15)),
+              Flexible(
+                // Un mot seul trop long (« Alimentation ») est légèrement
+                // réduit plutôt que coupé en deux ; sinon deux lignes.
+                child: label.contains(' ')
+                    ? Text(label,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11, height: 1.15))
+                    : FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(label,
+                            maxLines: 1,
+                            style: const TextStyle(fontSize: 11, height: 1.15)),
+                      ),
+              ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+/// Montants courants en un geste (espèces du quotidien).
+class _QuickAmounts extends StatelessWidget {
+  final ValueChanged<double> onPick;
+  const _QuickAmounts({required this.onPick});
+
+  static const _values = [500.0, 1000.0, 2000.0, 5000.0];
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final v in _values)
+            ActionChip(
+              label: Text(formatAmountInput(v)),
+              visualDensity: VisualDensity.compact,
+              onPressed: () {
+                HapticFeedback.selectionClick();
+                onPick(v);
+              },
+            ),
+        ],
+      );
 }

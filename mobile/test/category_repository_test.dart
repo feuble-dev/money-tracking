@@ -130,4 +130,12 @@ void main() {
     expect((await CategoryRepository.getBudgets()).containsKey('alimentation'),
         isFalse);
   });
+
+  test('libellé court des motifs pour les petites cases', () {
+    ExpenseCategory c(String l) =>
+        ExpenseCategory(code: 'x', label: l, icon: '', colorHex: '#000000', direction: 'out');
+    expect(c('Transport / Carburant').shortLabel, 'Transport');
+    expect(c('Factures (SONABEL, ONEA)').shortLabel, 'Factures');
+    expect(c('Santé').shortLabel, 'Santé');
+  });
 }

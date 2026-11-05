@@ -99,10 +99,17 @@ final movementsProvider =
   return MoneyRepository.movements(account: account, limit: 80);
 });
 
+/// Motifs les plus utilisés (`out` ou `in`), pour la saisie rapide.
+final frequentCategoriesProvider =
+    FutureProvider.family<List<String>, String>((ref, direction) {
+  return MoneyRepository.frequentCategories(direction);
+});
+
 /// Après toute saisie/modification : soldes, fil, statistiques et budget.
 void invalidateMoney(WidgetRef ref) {
   ref.invalidate(walletsProvider);
   ref.invalidate(movementsProvider);
+  ref.invalidate(frequentCategoriesProvider);
   ref.invalidate(particulierDashboardProvider);
   ref.invalidate(monthlySpendByCategoryProvider);
   ref.invalidate(uncategorizedTransactionsProvider);

@@ -37,6 +37,13 @@ class ExpenseCategory {
     this.isActive = true,
   });
 
+  /// Libellé court pour les petites cases (« Transport / Carburant » →
+  /// « Transport », « Factures (SONABEL, ONEA) » → « Factures »).
+  String get shortLabel {
+    final cut = label.split(RegExp(r'\s*[/(]')).first.trim();
+    return cut.isEmpty ? label : cut;
+  }
+
   Color get color {
     final hex = colorHex.replaceAll('#', '');
     return Color(int.parse('FF$hex', radix: 16));

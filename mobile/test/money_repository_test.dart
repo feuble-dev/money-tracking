@@ -142,4 +142,23 @@ void main() {
     expect(all.any((w) => w.id == a.id && w.isArchived), isTrue);
     expect(all.any((w) => w.id == b.id), isFalse);
   });
+
+  test('motifs fréquents : les plus utilisés d\'abord, transferts exclus', () async {
+    final cash = (await MoneyRepository.wallets()).single;
+    for (var i = 0; i < 3; i++) {
+      await MoneyRepository.addEntry(
+          kind: EntryKind.expense, account: cash.ref, amount: 500, category: 'transport');
+    }
+    await MoneyRepository.addEntry(
+        kind: EntryKind.expense, account: cash.ref, amount: 2000, category: 'alimentation');
+    await momoTx('f1', 'out', 1000, category: 'alimentation');
+    await momoTx('f2', 'out', 1000, category: 'famille');
+    await momoTx('f3', 'out', 1000, category: kCategoryInternal);
+
+    final top = await MoneyRepository.frequentCategories('out');
+    expect(top.take(2), ['transport', 'alimentation']);
+    expect(top, contains('famille'));
+    expect(top, isNot(contains(kCategoryInternal)));
+    expect(await MoneyRepository.frequentCategories('in'), isEmpty);
+  });
 }
