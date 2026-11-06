@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/format/amount_input_formatter.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../../../shared/widgets/operator_avatar.dart';
 import '../../operators/providers/operator_provider.dart';
 import '../providers/caisse_provider.dart';
@@ -70,7 +72,7 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
                                 const Text('Caisse non configurée'),
                             trailing: ElevatedButton(
                               onPressed: () =>
-                                  _showInitDialog(context, op.id, op.name),
+                                  _showInitDialog(context, op.id, op.name, null),
                               child: const Text('Configurer'),
                             ),
                           ),
@@ -105,7 +107,7 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
           const Text('Solde global',
               style: TextStyle(color: Colors.white70, fontSize: 13)),
           const SizedBox(height: 4),
-          Text(
+          AmountText(
             _currencyFormat.format(totalSolde),
             style: const TextStyle(
               color: Colors.white,
@@ -131,12 +133,15 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
           children: [
             Row(
               children: [
-                Text(
-                  caisse.operatorName ?? 'Opérateur',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 16),
+                Expanded(
+                  child: Text(
+                    caisse.operatorName ?? 'Opérateur',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 16),
+                  ),
                 ),
-                const Spacer(),
                 if (caisse.isAlerte)
                   Container(
                     padding:
@@ -167,7 +172,7 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
                     children: [
                       Text('Solde actuel',
                           style: Theme.of(context).textTheme.bodySmall),
-                      Text(_currencyFormat.format(caisse.soldeActuel),
+                      AmountText(_currencyFormat.format(caisse.soldeActuel),
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -184,7 +189,8 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
                     children: [
                       Text('Seuil alerte',
                           style: Theme.of(context).textTheme.bodySmall),
-                      Text(_currencyFormat.format(caisse.seuilAlerte),
+                      AmountText(_currencyFormat.format(caisse.seuilAlerte),
+                          alignment: AlignmentDirectional.centerEnd,
                           style: const TextStyle(fontSize: 14)),
                     ],
                   ),
@@ -205,8 +211,8 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _showInitDialog(
-                        context, caisse.operatorId!, caisse.operatorName!),
+                    onPressed: () => _showInitDialog(context,
+                        caisse.operatorId!, caisse.operatorName!, caisse),
                     icon: const Icon(Icons.edit, size: 18),
                     label: const Text('Modifier'),
                   ),
@@ -219,10 +225,17 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
     );
   }
 
-  void _showInitDialog(
-      BuildContext context, String operatorId, String operatorName) {
-    final soldeCtrl = TextEditingController();
-    final seuilCtrl = TextEditingController();
+  /// [existing] non nul = modification : les champs sont pré-remplis avec
+  /// les valeurs actuelles. Avant, ils s'ouvraient vides et « Enregistrer »
+  /// sans rien saisir remettait le solde à 0.
+  void _showInitDialog(BuildContext context, String operatorId,
+      String operatorName, CaisseModel? existing) {
+    final soldeCtrl = TextEditingController(
+        text: existing != null ? formatAmountInput(existing.soldeActuel) : '');
+    final seuilCtrl = TextEditingController(
+        text: existing != null && existing.seuilAlerte > 0
+            ? formatAmountInput(existing.seuilAlerte)
+            : '');
 
     showDialog(
       context: context,
@@ -233,8 +246,16 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
           children: [
             TextField(
               controller: soldeCtrl,
-              decoration: const InputDecoration(labelText: 'Solde initial (FCFA)'),
+              decoration: InputDecoration(
+                labelText: existing != null
+                    ? 'Solde actuel (FCFA)'
+                    : 'Solde initial (FCFA)',
+                helperText: existing != null
+                    ? 'Le prochain SMS opérateur le remettra à jour'
+                    : null,
+              ),
               keyboardType: TextInputType.number,
+              inputFormatters: const [AmountInputFormatter()],
             ),
             const SizedBox(height: 12),
             TextField(
@@ -242,6 +263,7 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
               decoration:
                   const InputDecoration(labelText: 'Seuil d\'alerte (FCFA)'),
               keyboardType: TextInputType.number,
+              inputFormatters: const [AmountInputFormatter()],
             ),
           ],
         ),
@@ -251,12 +273,13 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
               child: const Text('Annuler')),
           ElevatedButton(
             onPressed: () async {
-              final solde =
-                  double.tryParse(soldeCtrl.text.replaceAll(RegExp(r'[^\d]'), '')) ??
-                      0;
-              final seuil =
-                  double.tryParse(seuilCtrl.text.replaceAll(RegExp(r'[^\d]'), '')) ??
-                      0;
+              final solde = parseAmountInput(soldeCtrl.text);
+              if (solde == null) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Saisissez le solde (0 si la caisse est vide)')));
+                return;
+              }
+              final seuil = parseAmountInput(seuilCtrl.text) ?? 0;
               await ref.read(caissesProvider.notifier).initCaisse(
                     operatorId: operatorId,
                     soldeInitial: solde,
@@ -287,6 +310,8 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
               controller: montantCtrl,
               decoration: const InputDecoration(labelText: 'Montant (FCFA)'),
               keyboardType: TextInputType.number,
+              inputFormatters: const [AmountInputFormatter()],
+              autofocus: true,
             ),
             const SizedBox(height: 12),
             TextField(
@@ -301,9 +326,7 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
               child: const Text('Annuler')),
           ElevatedButton(
             onPressed: () async {
-              final montant = double.tryParse(
-                      montantCtrl.text.replaceAll(RegExp(r'[^\d]'), '')) ??
-                  0;
+              final montant = parseAmountInput(montantCtrl.text) ?? 0;
               if (montant > 0) {
                 await ref.read(caissesProvider.notifier).recharger(
                       operatorId: operatorId,

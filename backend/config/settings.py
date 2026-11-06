@@ -99,7 +99,22 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
+    # Anti force brute sur les mots de passe (login compte D13 + login
+    # admin) — appliqué via `throttle_scope = 'login'` sur ces vues.
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '10/min',
+    },
 }
 
 # Clé secrète pour signer les licences
 LICENCE_SECRET = os.getenv('LICENCE_SECRET', 'moneytracking-secret-key-2024')
+
+# Les valeurs par défaut ci-dessus sont publiques (dépôt git) : en
+# production, une SECRET_KEY connue permet de forger une session admin
+# Django. On ne bloque pas le démarrage, mais on le signale bruyamment.
+if not DEBUG:
+    import warnings
+    if SECRET_KEY == 'change-moi':
+        warnings.warn('DJANGO_SECRET_KEY non défini dans .env — clé par défaut publique !')
+    if LICENCE_SECRET == 'moneytracking-secret-key-2024':
+        warnings.warn('LICENCE_SECRET non défini dans .env — clé par défaut publique !')

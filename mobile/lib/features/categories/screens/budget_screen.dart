@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/categories/category_providers.dart';
 import '../../../core/format/formats.dart';
+import '../../../core/format/amount_input_formatter.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../../../core/categories/category_repository.dart';
 import '../../../core/categories/expense_category.dart';
 import '../../../core/theme/app_colors.dart';
@@ -96,7 +98,7 @@ class BudgetScreen extends ConsumerWidget {
                           style: const TextStyle(
                               color: Colors.white70, fontSize: 13)),
                       const SizedBox(height: 6),
-                      Text(
+                      AmountText(
                         '${currency.format(totalSpentBudgeted)} / ${currency.format(totalBudget)}',
                         style: const TextStyle(
                             color: Colors.white,
@@ -148,7 +150,7 @@ class BudgetScreen extends ConsumerWidget {
   Future<void> _editBudget(BuildContext context, WidgetRef ref,
       ExpenseCategory cat, double? current) async {
     final ctrl = TextEditingController(
-        text: current != null && current > 0 ? current.toStringAsFixed(0) : '');
+        text: current != null && current > 0 ? formatAmountInput(current) : '');
     final value = await showDialog<double>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -156,6 +158,7 @@ class BudgetScreen extends ConsumerWidget {
         content: TextField(
           controller: ctrl,
           keyboardType: TextInputType.number,
+          inputFormatters: const [AmountInputFormatter()],
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Plafond mensuel (FCFA)',
@@ -229,14 +232,18 @@ class _BudgetRow extends StatelessWidget {
                   Icon(Icons.info_outline,
                       size: 16, color: Colors.orange.shade700),
                 const SizedBox(width: 6),
-                Text(
-                  hasBudget
-                      ? '${currency.format(spent)} / ${currency.format(limit!)}'
-                      : currency.format(spent),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: over ? Colors.red : null,
+                Flexible(
+                  flex: 2,
+                  child: AmountText(
+                    hasBudget
+                        ? '${currency.format(spent)} / ${currency.format(limit!)}'
+                        : currency.format(spent),
+                    alignment: AlignmentDirectional.centerEnd,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: over ? Colors.red : null,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 4),

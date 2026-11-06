@@ -6,10 +6,14 @@ import 'package:intl/intl.dart';
 import '../../../../core/categories/category_providers.dart';
 import '../../../../core/format/formats.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../shared/widgets/amount_text.dart';
 import '../../../caisse/providers/caisse_provider.dart';
+import '../../../money/providers/money_providers.dart';
+import '../../../money/widgets/account_avatar.dart';
+import '../../../money/widgets/entry_sheet.dart';
 import '../../../categories/providers/recurring_provider.dart';
 import '../../providers/particulier_dashboard_provider.dart';
-import '../../screens/dashboard_screen.dart' show balanceVisibleProvider;
+import '../../../../shared/providers/privacy_provider.dart';
 import '../bar_chart_widget.dart';
 import '../trend_indicator.dart';
 
@@ -141,11 +145,18 @@ class _EmptyState extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           'Vos transactions Mobile Money apparaîtront ici automatiquement, '
-          'dès qu\'un SMS d\'opérateur est reçu.',
+          'dès qu\'un SMS d\'opérateur est reçu. Ajoutez aussi ce que vous '
+          'payez en espèces ou par la banque pour tout voir au même endroit.',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.grey[600]),
         ),
         const SizedBox(height: 24),
+        FilledButton.icon(
+          onPressed: () => showEntrySheet(context),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Ajouter une dépense ou un revenu'),
+        ),
+        const SizedBox(height: 12),
         OutlinedButton.icon(
           onPressed: () => context.push('/settings/sms-test'),
           icon: const Icon(Icons.sms_outlined, size: 18),
@@ -194,29 +205,29 @@ class _OverviewCard extends ConsumerWidget {
                 visualDensity: VisualDensity.compact,
                 icon: Icon(hidden ? Icons.visibility_off : Icons.visibility,
                     color: Colors.white70, size: 20),
-                onPressed: () => ref.read(balanceVisibleProvider.notifier).state =
-                    !ref.read(balanceVisibleProvider),
+                onPressed: () =>
+                    ref.read(balanceVisibleProvider.notifier).toggle(),
               ),
             ],
           ),
+          AmountText(
+            m(net.abs()),
+            style: TextStyle(
+                color: net >= 0 ? Colors.greenAccent : Colors.orangeAccent,
+                fontSize: 26,
+                fontWeight: FontWeight.bold),
+          ),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                m(net.abs()),
-                style: TextStyle(
-                    color: net >= 0 ? Colors.greenAccent : Colors.orangeAccent,
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(net >= 0 ? 'épargné' : 'de plus dépensé',
+              Expanded(
+                child: Text(net >= 0 ? 'épargné ce mois' : 'dépensé de plus que reçu',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.white60, fontSize: 12)),
               ),
-              const Spacer(),
-              TrendIndicator(percentage: stats.outTrend, label: ''),
+              // Dépenses en hausse = mauvaise nouvelle : couleurs inversées.
+              TrendIndicator(
+                  percentage: stats.outTrend, label: 'dépenses', invertColors: true),
             ],
           ),
           const SizedBox(height: 14),
@@ -251,10 +262,15 @@ class _OverviewCard extends ConsumerWidget {
           Row(children: [
             Icon(icon, size: 14, color: color),
             const SizedBox(width: 6),
-            Text(label, style: TextStyle(fontSize: 11, color: color)),
+            Flexible(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: color)),
+            ),
           ]),
           const SizedBox(height: 4),
-          Text(value,
+          AmountText(value,
               style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -267,6 +283,9 @@ class _OverviewCard extends ConsumerWidget {
 
 // ---------------------------------------------------------------------------
 
+/// « Où est mon argent » : tous les comptes (Mobile Money annoncé par SMS
+/// + espèces/banque/épargne tenus à la main), ou le seul portefeuille de
+/// l'opérateur sur un onglet opérateur.
 class _WalletsCard extends ConsumerWidget {
   final String? operatorId;
   final NumberFormat currency;
@@ -276,66 +295,76 @@ class _WalletsCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final hidden = !ref.watch(balanceVisibleProvider);
-    final caissesAsync = ref.watch(caissesProvider);
+    final all = ref.watch(moneyAccountsProvider).valueOrNull ?? const [];
+    final accounts = operatorId == null
+        ? all
+        : all.where((a) => a.isMobileMoney && a.ref.id == operatorId).toList();
+    if (accounts.isEmpty) return const SizedBox.shrink();
     String m(num v) => hidden ? '••••' : currency.format(v);
+    final total = accounts.fold<double>(0, (s, a) => s + (a.balance ?? 0));
+    final theme = Theme.of(context);
 
-    return caissesAsync.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (caisses) {
-        final relevant = (operatorId == null
-                ? caisses
-                : caisses.where((c) => c.operatorId == operatorId))
-            .toList();
-        if (relevant.isEmpty) return const SizedBox.shrink();
-        final total = relevant.fold<double>(0, (s, c) => s + c.soldeActuel);
-
-        return Container(
+    return Material(
+      color: theme.cardTheme.color,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => context.go('/money'),
+        child: Padding(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardTheme.color,
-            borderRadius: BorderRadius.circular(16),
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Text('Mes portefeuilles Mobile Money',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  Text(m(total),
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Expanded(
+                    child: Text(
+                        operatorId == null
+                            ? 'Où est mon argent'
+                            : 'Mon portefeuille',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: AmountText(m(total),
+                        alignment: AlignmentDirectional.centerEnd,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  const Icon(Icons.chevron_right, size: 20),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text('Solde annoncé par le dernier SMS de chaque opérateur',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600])),
               const SizedBox(height: 8),
-              ...relevant.map((c) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.account_balance_wallet_outlined,
-                            size: 18),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: Text(c.operatorName ?? 'Opérateur',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w500))),
-                        Text(m(c.soldeActuel),
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600)),
-                      ],
-                    ),
-                  )),
+              for (final a in accounts)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      AccountAvatar(a, size: 28),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: Text(a.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w500))),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: AmountText(
+                            a.balance == null ? '—' : m(a.balance!),
+                            alignment: AlignmentDirectional.centerEnd,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -460,7 +489,7 @@ class _CategoryBreakdown extends ConsumerWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(currency.format(total),
+                      AmountText(currency.format(total),
                           style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold)),
                       Text('${stats.txCountOut} dépense'
@@ -496,9 +525,12 @@ class _CategoryBreakdown extends ConsumerWidget {
                             style: TextStyle(
                                 fontSize: 11, color: Colors.grey[600])),
                         const SizedBox(width: 8),
-                        Text(currency.format(r.amount),
-                            style: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.w600)),
+                        Flexible(
+                          child: AmountText(currency.format(r.amount),
+                              alignment: AlignmentDirectional.centerEnd,
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w600)),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -568,10 +600,14 @@ class _TopBeneficiaries extends StatelessWidget {
                     ],
                   ),
                 ),
-                Text(currency.format(b.amount),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.withdrawColor)),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: AmountText(currency.format(b.amount),
+                      alignment: AlignmentDirectional.centerEnd,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.withdrawColor)),
+                ),
               ],
             ),
           );
@@ -628,15 +664,21 @@ class _RecurringCard extends ConsumerWidget {
                       Text(
                         '${_cadence(s.avgIntervalDays)} · prochain vers le ${df.format(s.nextExpected)}'
                         '${cat != null ? ' · ${cat.label}' : ''}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                       ),
                     ],
                   ),
                 ),
-                Text('~${currency.format(s.typicalAmount)}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.withdrawColor)),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: AmountText('~${currency.format(s.typicalAmount)}',
+                      alignment: AlignmentDirectional.centerEnd,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.withdrawColor)),
+                ),
               ],
             ),
           );
@@ -673,11 +715,17 @@ class _OperatorSplit extends StatelessWidget {
                   children: [
                     Expanded(
                         child: Text(o['name'] as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                                 fontSize: 13, fontWeight: FontWeight.w500))),
-                    Text(currency.format(out),
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: AmountText(currency.format(out),
+                          alignment: AlignmentDirectional.centerEnd,
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 4),

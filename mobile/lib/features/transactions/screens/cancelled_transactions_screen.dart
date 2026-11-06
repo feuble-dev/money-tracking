@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/database/transaction_repository.dart';
+import '../../../shared/widgets/amount_text.dart';
 
 
 final cancelledTransactionsProvider =
@@ -74,18 +75,25 @@ class CancelledTransactionsScreen extends ConsumerWidget {
                   ),
                   title: Row(
                     children: [
-                      Text(
-                        typeLabel,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 14),
+                      Flexible(
+                        child: Text(
+                          typeLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 14),
+                        ),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        (tx['operator_name'] as String?) ?? '',
-                        style: TextStyle(
-                            color: Colors.grey[500], fontSize: 12),
+                      Expanded(
+                        child: Text(
+                          (tx['operator_name'] as String?) ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: Colors.grey[500], fontSize: 12),
+                        ),
                       ),
-                      const Spacer(),
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
@@ -126,12 +134,17 @@ class CancelledTransactionsScreen extends ConsumerWidget {
                       ),
                     ],
                   ),
-                  trailing: Text(
-                    currencyFormat.format(amount),
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[600],
-                      fontSize: 14,
+                  trailing: ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxWidth: MediaQuery.sizeOf(context).width * 0.3),
+                    child: AmountText(
+                      currencyFormat.format(amount),
+                      alignment: AlignmentDirectional.centerEnd,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[600],
+                        fontSize: 14,
+                      ),
                     ),
                   ),
                   onTap: () {

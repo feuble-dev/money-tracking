@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.permissions import IsAdminUser
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
@@ -8,6 +9,7 @@ from datetime import date
 from django.db.models import Sum
 from .models import Client, Agence, PricingTier, Licence, DemandeActivation, Notification, AchatHistorique
 from .services import LicenceService, HistoriqueService
+from .signature import cle_pour_licence
 from .serializers import (
     LicenceSerializer, DemandeActivationSerializer, ClientSerializer,
     NotificationSerializer, AgenceSerializer, PricingTierSerializer,
@@ -16,6 +18,9 @@ from .serializers import (
 
 class AdminLoginView(APIView):
     """POST /api/admin/login/ — Authentification admin"""
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
     def post(self, request):
         username = request.data.get('username', '').strip()
         password = request.data.get('password', '').strip()
@@ -234,6 +239,7 @@ class AdminGenererLicenceView(APIView):
         )
         return Response({
             'code': licence.code,
+            'cle_hors_ligne': cle_pour_licence(licence),
             'date_fin': str(licence.date_fin),
             'message': 'Licence générée avec succès',
         }, status=status.HTTP_201_CREATED)
@@ -304,6 +310,7 @@ class AdminValiderDemandeView(APIView):
 
         return Response({
             'code': licence.code,
+            'cle_hors_ligne': cle_pour_licence(licence),
             'date_fin': str(licence.date_fin),
             'message': 'Licence générée et demande validée',
         })
@@ -336,7 +343,8 @@ class AdminClientsListView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        clients = Client.objects.all()
+        from django.db.models import Count
+        clients = Client.objects.annotate(agences_count=Count('agences')).order_by('-created_at')
         serializer = ClientSerializer(clients, many=True)
         return Response(serializer.data)
 

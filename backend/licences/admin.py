@@ -9,7 +9,7 @@ from .services import LicenceService, HistoriqueService
 class DemandeActivationAdmin(admin.ModelAdmin):
     list_display = [
         'telephone', 'device_id_court', 'duree_mois',
-        'statut_badge', 'created_at', 'actions_rapides'
+        'statut_badge', 'created_at'
     ]
     list_filter = ['statut', 'duree_mois']
     search_fields = ['telephone']
@@ -34,51 +34,40 @@ class DemandeActivationAdmin(admin.ModelAdmin):
         )
     statut_badge.short_description = 'Statut'
 
-    def actions_rapides(self, obj):
-        if obj.statut == 'en_attente':
-            return format_html(
-                '<a href="/admin/licences/demandeactivation/'
-                '{}/valider/" style="background:#4CAF50; '
-                'color:white; padding:4px 10px; '
-                'border-radius:4px; text-decoration:none;">'
-                'Valider</a>',
-                obj.id
-            )
-        return '—'
-    actions_rapides.short_description = 'Action'
-
     def valider_demandes(self, request, queryset):
         count = 0
+        ignorees = 0
         for demande in queryset.filter(statut='en_attente'):
-            self._valider(demande)
-            count += 1
-        self.message_user(request, f'{count} licence(s) générée(s)')
+            if self._valider(demande):
+                count += 1
+            else:
+                ignorees += 1
+        msg = f'{count} licence(s) générée(s)'
+        if ignorees:
+            msg += f' — {ignorees} demande(s) sans agence ignorée(s)'
+        self.message_user(request, msg)
     valider_demandes.short_description = 'Valider les demandes sélectionnées'
 
     def _valider(self, demande):
-        client, _ = Client.objects.get_or_create(
-            telephone=demande.telephone
-        )
-
-        licence_actuelle = Licence.objects.filter(
-            client=client,
-            device_id=demande.device_id,
-            statut='active'
+        """Même logique que AdminValiderDemandeView (dashboard web) : la
+        licence est rattachée à l'AGENCE (D8). L'ancienne version écrivait
+        `Licence(client=...)`, champ qui n'existe plus → l'action plantait."""
+        if not demande.agence:
+            return False
+        agence = demande.agence
+        licence_actuelle = agence.licences.filter(
+            statut__in=['active', 'essai']
         ).order_by('-date_fin').first()
 
         date_fin = LicenceService.calculer_date_fin(
             demande.duree_mois,
             licence_actuelle.date_fin if licence_actuelle else None
         )
-
         code = LicenceService.generer_code(
-            demande.device_id,
-            demande.telephone,
-            date_fin
+            demande.device_id, demande.telephone, date_fin, agence.id
         )
-
         licence = Licence.objects.create(
-            client=client,
+            agence=agence,
             code=code,
             device_id=demande.device_id,
             date_debut=date.today(),
@@ -93,6 +82,7 @@ class DemandeActivationAdmin(admin.ModelAdmin):
         demande.statut = 'validee'
         demande.licence = licence
         demande.save()
+        return True
 
 
 @admin.register(Licence)
@@ -102,10 +92,11 @@ class LicenceAdmin(admin.ModelAdmin):
         'date_fin', 'jours_restants', 'duree_mois'
     ]
     list_filter = ['statut', 'duree_mois']
-    search_fields = ['client__telephone', 'code']
+    search_fields = ['agence__client__telephone', 'agence__nom', 'code']
+    list_select_related = ['agence__client']
 
     def telephone_client(self, obj):
-        return obj.client.telephone
+        return obj.agence.client.telephone
     telephone_client.short_description = 'Téléphone'
 
     def jours_restants(self, obj):

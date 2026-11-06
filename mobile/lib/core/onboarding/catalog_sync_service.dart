@@ -7,9 +7,9 @@ import '../database/database_helper.dart';
 import '../sms/sms_pattern_builder.dart';
 import 'models/catalog_models.dart';
 import 'operator_logo_cache.dart';
+import '../config/api_config.dart';
 
-const _catalogBaseUrl = 'https://api.money-tracking.site/api/catalog';
-// const _catalogBaseUrl = 'http://localhost:8000/api/catalog';
+const _catalogBaseUrl = ApiConfig.catalog;
 
 const _uuid = Uuid();
 

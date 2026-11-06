@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +7,7 @@ import '../../../core/categories/category_providers.dart';
 import '../../../core/categories/category_repository.dart';
 import '../../../core/onboarding/onboarding_state.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../../../shared/widgets/main_shell.dart';
 import '../../categories/providers/categorize_provider.dart';
 import '../../categories/widgets/category_picker_sheet.dart';
@@ -28,9 +30,11 @@ class _TransactionsListScreenState
   final _currencyFormat =
       NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
   final _searchController = TextEditingController();
+  Timer? _searchDebounce;
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -85,7 +89,7 @@ class _TransactionsListScreenState
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Rechercher par numéro ou nom...',
+                hintText: 'Numéro, nom ou référence…',
                 hintStyle: TextStyle(
                     color: Theme.of(context).colorScheme.onPrimary.withAlpha(180)),
                 prefixIcon: Icon(Icons.search,
@@ -95,7 +99,9 @@ class _TransactionsListScreenState
                         icon: Icon(Icons.close,
                             color: Theme.of(context).colorScheme.onPrimary, size: 18),
                         onPressed: () {
+                          _searchDebounce?.cancel();
                           _searchController.clear();
+                          setState(() {});
                           ref.read(transactionFilterProvider.notifier).state =
                               filter.copyWith(searchQuery: null);
                           ref.read(transactionsProvider.notifier).loadTransactions();
@@ -112,9 +118,17 @@ class _TransactionsListScreenState
               ),
               style: TextStyle(color: Theme.of(context).colorScheme.onPrimary),
               onChanged: (query) {
-                ref.read(transactionFilterProvider.notifier).state =
-                    filter.copyWith(searchQuery: query.isEmpty ? null : query);
-                ref.read(transactionsProvider.notifier).loadTransactions();
+                // Une requête SQL par frappe faisait ramer la liste ; on
+                // attend une courte pause dans la saisie.
+                setState(() {}); // afficher/masquer la croix
+                _searchDebounce?.cancel();
+                _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+                  if (!mounted) return;
+                  final current = ref.read(transactionFilterProvider);
+                  ref.read(transactionFilterProvider.notifier).state =
+                      current.copyWith(searchQuery: query.isEmpty ? null : query);
+                  ref.read(transactionsProvider.notifier).loadTransactions();
+                });
               },
             ),
           ),
@@ -187,7 +201,8 @@ class _TransactionsListScreenState
               loading: () =>
                   const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('Erreur: $e')),
-              data: (transactions) {
+              data: (page) {
+                final transactions = page.items;
                 if (transactions.isEmpty) {
                   return Center(
                     child: Column(
@@ -208,15 +223,6 @@ class _TransactionsListScreenState
                   );
                 }
 
-                double totalDep = 0, totalWit = 0;
-                for (final tx in transactions) {
-                  if (tx.isEntrant) {
-                    totalDep += tx.amount;
-                  } else {
-                    totalWit += tx.amount;
-                  }
-                }
-
                 return Column(
                   children: [
                     Container(
@@ -224,20 +230,29 @@ class _TransactionsListScreenState
                           horizontal: 16, vertical: 10),
                       child: Row(
                         children: [
-                          Text('${transactions.length} transactions',
+                          Text(
+                              '${page.count} transaction${page.count > 1 ? 's' : ''}',
                               style: Theme.of(context).textTheme.bodySmall),
-                          const Spacer(),
-                          Text('+${_currencyFormat.format(totalDep)}',
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.depositColor,
-                                  fontWeight: FontWeight.w600)),
                           const SizedBox(width: 12),
-                          Text('-${_currencyFormat.format(totalWit)}',
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.withdrawColor,
-                                  fontWeight: FontWeight.w600)),
+                          Expanded(
+                            child: AmountText(
+                                '+${_currencyFormat.format(page.totalIn)}',
+                                alignment: AlignmentDirectional.centerEnd,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.depositColor,
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                          const SizedBox(width: 12),
+                          Flexible(
+                            child: AmountText(
+                                '-${_currencyFormat.format(page.totalOut)}',
+                                alignment: AlignmentDirectional.centerEnd,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.withdrawColor,
+                                    fontWeight: FontWeight.w600)),
+                          ),
                         ],
                       ),
                     ),
@@ -246,15 +261,29 @@ class _TransactionsListScreenState
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         cacheExtent: 800,
                         addAutomaticKeepAlives: true,
-                        itemCount: transactions.length,
-                        itemBuilder: (context, index) => RepaintBoundary(
-                          child: _TransactionCard(
-                            transaction: transactions[index],
-                            dateFormat: _dateFormat,
-                            currencyFormat: _currencyFormat,
-                            isAgence: isAgence,
-                          ),
-                        ),
+                        itemCount: transactions.length + (page.hasMore ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          // Dernière case : on charge la page suivante.
+                          if (index >= transactions.length) {
+                            ref.read(transactionsProvider.notifier).loadMore();
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 24),
+                              child: Center(
+                                  child: SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(strokeWidth: 2))),
+                            );
+                          }
+                          return RepaintBoundary(
+                            child: _TransactionCard(
+                              transaction: transactions[index],
+                              dateFormat: _dateFormat,
+                              currencyFormat: _currencyFormat,
+                              isAgence: isAgence,
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ],
@@ -616,10 +645,14 @@ class _TransactionCard extends ConsumerWidget {
                     const SizedBox(height: 2),
                     Text(
                       transaction.clientName ?? transaction.clientPhone,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13),
                     ),
                     Text(
                       '${transaction.operatorName ?? ''} - ${dateFormat.format(transaction.createdAt)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     if (!isAgence && !isEntrant) ...[
@@ -639,22 +672,31 @@ class _TransactionCard extends ConsumerWidget {
                   ],
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${isEntrant ? '+' : '-'}${currencyFormat.format(transaction.amount)}',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: color, fontSize: 15),
-                  ),
-                  if (transaction.commission > 0)
-                    Text(
-                      'Com: ${currencyFormat.format(transaction.commission)}',
+              const SizedBox(width: 8),
+              // Le montant peut prendre jusqu'à ~40 % de la carte, puis
+              // rétrécit au lieu de déborder.
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * 0.4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    AmountText(
+                      '${isEntrant ? '+' : '-'}${currencyFormat.format(transaction.amount)}',
+                      alignment: AlignmentDirectional.centerEnd,
                       style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey[600]),
+                          fontWeight: FontWeight.bold, color: color, fontSize: 15),
                     ),
-                ],
+                    if (transaction.commission > 0)
+                      AmountText(
+                        'Com: ${currencyFormat.format(transaction.commission)}',
+                        alignment: AlignmentDirectional.centerEnd,
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey[600]),
+                      ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -664,6 +706,8 @@ class _TransactionCard extends ConsumerWidget {
   }
 
   void _showDetail(BuildContext context, WidgetRef ref) {
+    final isEntrant = transaction.isEntrant;
+    final color = isEntrant ? AppColors.depositColor : AppColors.withdrawColor;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -693,8 +737,15 @@ class _TransactionCard extends ConsumerWidget {
                     ),
                   ),
                   Text(
-                    '${transaction.displayLabel} - ${currencyFormat.format(transaction.amount)}',
-                    style: Theme.of(ctx2).textTheme.titleLarge?.copyWith(
+                    transaction.displayLabel,
+                    style: Theme.of(ctx2).textTheme.titleMedium?.copyWith(
+                          color: color,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  AmountText(
+                    '${isEntrant ? '+' : '-'}${currencyFormat.format(transaction.amount)}',
+                    style: Theme.of(ctx2).textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
                   ),
@@ -788,7 +839,7 @@ class _TransactionCard extends ConsumerWidget {
                     fontWeight: FontWeight.w500, color: Colors.grey)),
           ),
           Expanded(
-              child: Text(value,
+              child: SelectableText(value,
                   style: const TextStyle(fontWeight: FontWeight.w500))),
         ],
       ),
@@ -824,6 +875,7 @@ class _UncategorizedBanner extends ConsumerWidget {
                       color: Colors.orange.shade900),
                 ),
               ),
+              const SizedBox(width: 8),
               Text('Catégoriser',
                   style: TextStyle(
                       fontSize: 12,
@@ -857,6 +909,8 @@ class _MiniPill extends StatelessWidget {
       ),
       child: Text(
         text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
             fontSize: 11, color: color, fontWeight: FontWeight.w600),
       ),

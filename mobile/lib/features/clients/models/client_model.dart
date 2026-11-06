@@ -29,6 +29,16 @@ class ClientModel {
 
   String get fullName => '$firstName $lastName';
 
+  /// Initiales pour l'avatar — sûr même si un nom est vide (un client créé
+  /// depuis un SMS peut n'avoir que le prénom), là où `firstName[0]`
+  /// levait une RangeError et cassait l'écran.
+  String get initials {
+    final f = firstName.trim();
+    final l = lastName.trim();
+    final s = '${f.isNotEmpty ? f[0] : ''}${l.isNotEmpty ? l[0] : ''}';
+    return s.isEmpty ? '?' : s.toUpperCase();
+  }
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'first_name': firstName,

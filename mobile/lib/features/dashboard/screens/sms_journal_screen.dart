@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/sms/sms_processing_pipeline.dart' show SmsStatus;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/database/database_helper.dart';
@@ -75,7 +76,9 @@ class SmsJournalScreen extends ConsumerWidget {
             itemCount: messages.length,
             itemBuilder: (context, index) {
               final sms = messages[index];
-              final processed = (sms['processed'] as int?) == 1;
+              final status = sms['processed'] as int? ?? SmsStatus.pending;
+              final processed = status == SmsStatus.transaction;
+              final waiting = status == SmsStatus.pending;
               final sender = sms['sender'] as String? ?? 'Inconnu';
               final body = sms['body'] as String? ?? '';
               final receivedAt = sms['received_at'] as String?;
@@ -111,7 +114,11 @@ class SmsJournalScreen extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          processed ? 'Traité' : 'Ignoré',
+                          processed
+                              ? 'Traité'
+                              : waiting
+                                  ? 'En attente'
+                                  : 'Ignoré',
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w600,

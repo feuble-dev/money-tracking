@@ -3,6 +3,14 @@ import 'database_helper.dart';
 
 const _uuid = Uuid();
 
+/// Le float d'un opérateur vient de passer sous le seuil d'alerte fixé par
+/// l'agent : le prévenir avant qu'il ne puisse plus servir un client.
+class FloatAlert {
+  final double solde;
+  final double seuil;
+  const FloatAlert({required this.solde, required this.seuil});
+}
+
 /// Mise à jour du solde caisse, indépendante de Riverpod — utilisée par les
 /// chemins qui ne tournent pas dans un widget tree (pipeline SMS temps réel
 /// ET headless, import historique). `CaissesNotifier.updateSoldeAfterTransaction`
@@ -29,7 +37,10 @@ class CaisseRepository {
   ///
   /// direction='in' (l'argent du client augmente, ex-dépôt) : solde diminue.
   /// direction='out' (l'argent du client diminue, ex-retrait) : solde augmente.
-  static Future<void> updateSoldeAfterTransaction({
+  ///
+  /// Renvoie une [FloatAlert] uniquement au moment où le solde FRANCHIT le
+  /// seuil vers le bas (pas à chaque opération tant qu'il reste dessous).
+  static Future<FloatAlert?> updateSoldeAfterTransaction({
     required String operatorId,
     required double amount,
     required String direction,
@@ -41,7 +52,7 @@ class CaisseRepository {
         where: 'operator_id = ?', whereArgs: [operatorId]);
 
     if (existing.isEmpty) {
-      if (soldeApres == null) return;
+      if (soldeApres == null) return null;
       final at = transactionAt ?? DateTime.now();
       await db.insert('caisse', {
         'id': _uuid.v4(),
@@ -52,21 +63,27 @@ class CaisseRepository {
         'seuil_alerte': 0,
         'updated_at': DateTime.now().toIso8601String(),
       });
-      return;
+      return null;
     }
+
+    final before = (existing.first['solde_actuel'] as num?)?.toDouble() ?? 0;
+    final seuil = (existing.first['seuil_alerte'] as num?)?.toDouble() ?? 0;
+    FloatAlert? crossing(double after) => seuil > 0 && before >= seuil && after < seuil
+        ? FloatAlert(solde: after, seuil: seuil)
+        : null;
 
     if (soldeApres != null) {
       final refAtStr = existing.first['solde_ref_at'] as String?;
       final refAt = refAtStr != null ? DateTime.tryParse(refAtStr) : null;
       final at = transactionAt ?? DateTime.now();
       if (refAt != null && !at.isAfter(refAt)) {
-        return;
+        return null;
       }
       await db.rawUpdate(
         'UPDATE caisse SET solde_actuel = ?, solde_ref_at = ?, updated_at = ? WHERE operator_id = ?',
         [soldeApres, at.toIso8601String(), DateTime.now().toIso8601String(), operatorId],
       );
-      return;
+      return crossing(soldeApres);
     }
 
     final delta = direction == 'in' ? -amount : amount;
@@ -74,5 +91,6 @@ class CaisseRepository {
       'UPDATE caisse SET solde_actuel = solde_actuel + ?, updated_at = ? WHERE operator_id = ?',
       [delta, DateTime.now().toIso8601String(), operatorId],
     );
+    return crossing(before + delta);
   }
 }

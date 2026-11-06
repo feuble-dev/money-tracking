@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/licence/licence_storage.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
+import '../../../core/format/formats.dart';
 import '../services/patron_api.dart';
 
 /// Détail complet en lecture seule d'une agence affiliée/possédée (droits
@@ -25,6 +27,13 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
   bool _loading = true;
   late final TabController _tabController;
   final _fcfa = NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+
+  /// Les dates arrivent du serveur en ISO brut (« 2026-10-27T14:03:22 ») —
+  /// affichées au format habituel de l'app.
+  static String _date(Object? v) {
+    final d = DateTime.tryParse('${v ?? ''}');
+    return d == null ? '${v ?? ''}' : AppFormats.dateTime.format(d);
+  }
 
   @override
   void initState() {
@@ -98,11 +107,16 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
               color: isIn ? AppColors.depositColor : AppColors.withdrawColor,
             ),
             title: Text('${t['transaction_type_label']} - ${t['operator_name']}'),
-            subtitle: Text('${t['client_name'] ?? ''} ${t['client_phone'] ?? ''}\n${t['created_at']}'),
+            subtitle: Text('${t['client_name'] ?? ''} ${t['client_phone'] ?? ''}\n${_date(t['created_at'])}'),
             isThreeLine: true,
-            trailing: Text(
-              _fcfa.format(num.tryParse(t['amount'].toString()) ?? 0),
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            trailing: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.sizeOf(context).width * 0.32),
+              child: AmountText(
+                _fcfa.format(num.tryParse(t['amount'].toString()) ?? 0),
+                alignment: AlignmentDirectional.centerEnd,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ),
         );
@@ -139,9 +153,16 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
           child: ListTile(
             leading: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.accentColor),
             title: Text('${o['type']} - ${o['operator_name']}'),
-            subtitle: Text('${o['note'] ?? ''}\n${o['created_at']}'),
+            subtitle: Text('${o['note'] ?? ''}\n${_date(o['created_at'])}'),
             isThreeLine: true,
-            trailing: Text(_fcfa.format(num.tryParse(o['montant'].toString()) ?? 0)),
+            trailing: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.sizeOf(context).width * 0.32),
+              child: AmountText(
+                _fcfa.format(num.tryParse(o['montant'].toString()) ?? 0),
+                alignment: AlignmentDirectional.centerEnd,
+              ),
+            ),
           ),
         );
       },

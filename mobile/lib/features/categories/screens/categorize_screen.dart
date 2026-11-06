@@ -5,6 +5,7 @@ import '../../../core/categories/category_providers.dart';
 import '../../../core/format/formats.dart';
 import '../../../core/categories/category_repository.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../../transactions/models/transaction_model.dart';
 import '../../transactions/providers/transaction_provider.dart';
 import '../providers/categorize_provider.dart';
@@ -183,7 +184,7 @@ class _CategorizeScreenState extends ConsumerState<CategorizeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          AmountText(
             _currency.format(tx.amount),
             style: const TextStyle(
                 fontSize: 26,

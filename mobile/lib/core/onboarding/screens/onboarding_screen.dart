@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../licence/licence_service.dart';
@@ -8,10 +11,22 @@ import '../catalog_sync_service.dart';
 import '../models/catalog_models.dart';
 import '../onboarding_state.dart';
 
-/// Premier lancement : type de compte -> téléphone/pays -> agence (avec
-/// essai gratuit) -> sélection des opérateurs du catalogue à importer.
-/// Inséré avant /setup-pin dans le router (le catalogue doit exister avant
-/// que l'agent puisse créer sa première transaction).
+/// Étapes de l'inscription. Le parcours est volontairement court :
+/// Bienvenue → Pour qui ? (un geste) → une seule page d'identité →
+/// opérateurs. La connexion et le rattachement à un compte existant sont
+/// des chemins à part, jamais imposés à un nouvel utilisateur.
+enum _Step { welcome, login, profile, identity, operators, waiting }
+
+/// Pour qui est cette installation.
+/// - [moi] : compte Particulier (gratuit, D23)
+/// - [agence] : compte Agence, l'utilisateur en est le propriétaire
+/// - [agent] : rejoindre l'agence d'un patron (D-affiliation)
+/// - [relier] : relier ce téléphone à un compte Particulier sans mot de
+///   passe (comptes antérieurs à D13) — même mécanisme qu'[agent]
+enum _Profile { moi, agence, agent, relier }
+
+/// Premier lancement. Inséré avant /setup-pin dans le router : le catalogue
+/// doit exister avant la première transaction.
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
 
@@ -22,898 +37,830 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _catalogService = CatalogSyncService();
 
-  int _step = 0;
-  String _accountType = 'agence';
-  final _telephoneController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _passwordConfirmController = TextEditingController();
+  _Step _step = _Step.welcome;
+  _Profile _profile = _Profile.moi;
+
+  final _phone = TextEditingController();
+  final _password = TextEditingController();
+  final _agenceNom = TextEditingController(text: 'Agence principale');
+  final _linkPhone = TextEditingController();
+  final _loginPhone = TextEditingController();
+  final _loginPassword = TextEditingController();
+
   List<CatalogCountry> _countries = [];
-  String? _countryCode;
-  final _agenceNomController =
-      TextEditingController(text: 'Agence principale');
-  // 'creer' = premier appareil sur ce compte ; 'rejoindre' = rattacher cet
-  // appareil à un compte existant (patron multi-agence OU second téléphone
-  // d'un même Particulier — mécanisme identique, copie différente, D7).
-  String _setupMode = 'creer';
-  final _linkTelephoneController = TextEditingController();
+  // Le catalogue ne sert aujourd'hui que le Burkina Faso : valeur par défaut
+  // immédiate, sans attendre le réseau (l'ancien écran restait bloqué sur
+  // une roue de chargement hors ligne).
+  String _countryCode = 'BF';
+
   List<CatalogOperator> _operators = [];
   final Set<int> _selectedOperatorIds = {};
   String? _localAgenceId;
+  List<AgenceLogin>? _loginAgences;
+  String? _loginAccountType;
+  StreamSubscription<AffiliationStatutPoll>? _pollSub;
+
   bool _loading = false;
   String? _error;
 
-  // Étape 0 (D13) : "avez-vous déjà un compte ?" — 'non' = nouveau compte
-  // (flux existant, inchangé), 'oui' = connexion instantanée par mot de
-  // passe depuis un nouvel appareil, sans passer par l'affiliation.
-  String _hasAccountMode = 'non';
-  final _loginTelephoneController = TextEditingController();
-  final _loginPasswordController = TextEditingController();
-  List<AgenceLogin>? _loginAgences;
-  String? _loginAccountType;
+  String get _accountType =>
+      _profile == _Profile.moi || _profile == _Profile.relier ? 'particulier' : 'agence';
 
   @override
   void initState() {
     super.initState();
-    _loadCountries();
+    _catalogService.fetchCountries().then((c) {
+      if (mounted) setState(() => _countries = c);
+    }).catchError((_) {});
   }
 
   @override
   void dispose() {
-    _telephoneController.dispose();
-    _passwordController.dispose();
-    _passwordConfirmController.dispose();
-    _agenceNomController.dispose();
-    _linkTelephoneController.dispose();
-    _loginTelephoneController.dispose();
-    _loginPasswordController.dispose();
+    _pollSub?.cancel();
+    for (final c in [_phone, _password, _agenceNom, _linkPhone, _loginPhone, _loginPassword]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  Future<void> _loadCountries() async {
-    try {
-      final countries = await _catalogService.fetchCountries();
-      if (!mounted) return;
-      setState(() {
-        _countries = countries;
-        if (countries.isNotEmpty) _countryCode = countries.first.code;
+  void _go(_Step step) => setState(() {
+        _step = step;
+        _error = null;
       });
-    } catch (_) {
-      // Pas bloquant — l'agent pourra réessayer, le champ pays restera vide.
-    }
-  }
 
-  /// Connexion instantanée à un compte existant (D13) — le mot de passe
-  /// prouve la propriété du compte, contrairement à _rejoindreCompte() qui
-  /// demande l'approbation d'un patron pour une agence qui n'est pas la
-  /// sienne. Le backend (LoginView) a déjà émis une licence pour ce
-  /// device_id sur chaque agence du compte ; il ne reste qu'à la récupérer
-  /// (recupererLicencePourAgence, même endpoint que l'affiliation) pour
-  /// l'agence choisie.
-  Future<void> _seConnecter() async {
-    if (_loginTelephoneController.text.trim().isEmpty ||
-        _loginPasswordController.text.isEmpty) {
-      setState(() => _error = 'Entrez votre numéro et votre mot de passe');
-      return;
+  void _fail(String message) => setState(() {
+        _loading = false;
+        _error = message;
+      });
+
+  /// Numéro saisi, chiffres seulement (« 70 12 34 56 » → « 70123456 »).
+  static String _digits(TextEditingController c) => c.text.replaceAll(RegExp(r'\D'), '');
+
+  static String? _phoneError(String digits) =>
+      digits.length < 8 ? 'Entrez un numéro à 8 chiffres' : null;
+
+  // --- Actions -------------------------------------------------------------
+
+  /// Connexion à un compte existant par mot de passe (D13) : instantanée,
+  /// sans approbation. Le backend a déjà émis une licence pour cet appareil
+  /// sur chaque agence du compte.
+  Future<void> _login() async {
+    final phone = _digits(_loginPhone);
+    if (_phoneError(phone) != null || _loginPassword.text.isEmpty) {
+      return _fail('Entrez votre numéro et votre mot de passe');
     }
     setState(() {
       _loading = true;
       _error = null;
     });
-
-    final resultat = await LicenceService.login(
-      telephone: _loginTelephoneController.text.trim(),
-      password: _loginPasswordController.text,
-    );
-
-    if (!resultat.reussi) {
-      setState(() {
-        _loading = false;
-        _error = resultat.message;
-      });
-      return;
-    }
-
-    final utilisables = resultat.agences
-        .where((a) => a.statut == 'active' || a.statut == 'essai')
-        .toList();
-    if (utilisables.isEmpty) {
-      setState(() {
-        _loading = false;
-        _error = 'Aucune agence active trouvée sur ce compte.';
-      });
-      return;
-    }
-
-    _loginAccountType = resultat.accountType;
-    if (utilisables.length == 1) {
-      await _finaliserLogin(utilisables.first);
+    final r = await LicenceService.login(telephone: phone, password: _loginPassword.text);
+    if (!mounted) return;
+    if (!r.reussi) return _fail(r.message);
+    final usable = r.agences.where((a) => a.statut == 'active' || a.statut == 'essai').toList();
+    if (usable.isEmpty) return _fail('Aucun espace actif sur ce compte.');
+    _loginAccountType = r.accountType;
+    if (usable.length == 1) {
+      await _finishLogin(usable.first);
     } else {
       setState(() {
         _loading = false;
-        _loginAgences = utilisables;
+        _loginAgences = usable;
       });
     }
   }
 
-  /// Termine la connexion pour l'agence choisie (auto-sélectionnée s'il n'y
-  /// en a qu'une) — récupère + persiste la licence, puis reproduit
-  /// exactement ce que fait le flux normal après _createAgenceAndTrial pour
-  /// rester indiscernable du reste de l'app (LicenceGuard, router).
-  Future<void> _finaliserLogin(AgenceLogin agence) async {
+  Future<void> _finishLogin(AgenceLogin agence) async {
     setState(() {
       _loading = true;
       _error = null;
     });
-
-    final telephone = _loginTelephoneController.text.trim();
     final ok = await AffiliationService.recupererLicencePourAgence(
-      telephone: telephone,
+      telephone: _digits(_loginPhone),
       agenceId: agence.id,
     );
-    if (!ok) {
-      setState(() {
-        _loading = false;
-        _error = 'Impossible de récupérer la licence pour cette agence.';
-      });
-      return;
-    }
-
+    if (!mounted) return;
+    if (!ok) return _fail('Connexion impossible pour le moment. Réessayez.');
     final accountType = _loginAccountType ?? 'agence';
-    // L'app ne sert aujourd'hui que le Burkina Faso (catalogue seedé) — le
-    // compte n'a pas de pays enregistré côté backend, donc pas d'autre
-    // source pour ce choix qu'un défaut, cohérent avec celui
-    // d'OnboardingStatusService.
-    const countryCode = 'BF';
-    await ref.read(onboardingStatusServiceProvider).saveAccountType(accountType);
-    ref.invalidate(accountTypeProvider);
-    await ref.read(onboardingStatusServiceProvider).saveCountryCode(countryCode);
-
-    final localAgenceId = await _catalogService.createLocalAgence(
+    _profile = accountType == 'particulier' ? _Profile.moi : _Profile.agence;
+    await _saveProfile();
+    final localId = await _catalogService.createLocalAgence(
       nom: agence.nom,
       backendAgenceId: agence.id,
       isDefault: true,
     );
-    try {
-      final ops = await _catalogService.fetchOperators(
-        countryCode,
-        accountType: accountType,
-      );
-      if (mounted) setState(() => _operators = ops);
-    } catch (_) {
-      // L'agent pourra configurer manuellement depuis les paramètres.
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _accountType = accountType;
-      _localAgenceId = localAgenceId;
-      _loading = false;
-      _step = 4;
-    });
+    await _toOperators(localId);
   }
 
-  Future<void> _createAgenceAndTrial() async {
-    if (_telephoneController.text.trim().isEmpty) {
-      setState(() => _error = 'Entrez votre numéro de téléphone');
-      return;
-    }
-    // Mot de passe compte obligatoire à la création (D13) — c'est ce qui
-    // permettra ensuite une connexion instantanée depuis un autre appareil.
-    if (_passwordController.text.length < 4) {
-      setState(() => _error = 'Choisissez un mot de passe d\'au moins 4 caractères');
-      return;
-    }
-    if (_passwordController.text != _passwordConfirmController.text) {
-      setState(() => _error = 'Les mots de passe ne correspondent pas');
-      return;
-    }
+  /// Nouveau compte (Particulier ou propriétaire d'agence).
+  Future<void> _create() async {
+    final phone = _digits(_phone);
+    final err = _phoneError(phone) ??
+        (_password.text.length < 4 ? 'Choisissez un mot de passe d\'au moins 4 caractères' : null) ??
+        (_profile == _Profile.agence && _agenceNom.text.trim().isEmpty
+            ? 'Donnez un nom à votre agence'
+            : null);
+    if (err != null) return _fail(err);
     setState(() {
       _loading = true;
       _error = null;
     });
-
-    final resultat = await LicenceService.demarrerEssaiAvecAgence(
-      telephone: _telephoneController.text.trim(),
+    // Un Particulier a une agence cachée (D7) : jamais nommée par lui.
+    final nom = _profile == _Profile.moi ? 'Mon suivi personnel' : _agenceNom.text.trim();
+    final r = await LicenceService.demarrerEssaiAvecAgence(
+      telephone: phone,
       accountType: _accountType,
-      agenceNom: _agenceNomController.text.trim(),
-      password: _passwordController.text,
+      agenceNom: nom,
+      password: _password.text,
     );
-
-    if (!resultat.reussi) {
-      setState(() {
-        _loading = false;
-        _error = resultat.message;
-      });
-      return;
-    }
-
-    final localAgenceId = await _catalogService.createLocalAgence(
-      nom: _agenceNomController.text.trim(),
-      backendAgenceId: resultat.agenceBackendId!,
+    if (!mounted) return;
+    if (!r.reussi) return _fail(r.message);
+    await _saveProfile();
+    final localId = await _catalogService.createLocalAgence(
+      nom: nom,
+      backendAgenceId: r.agenceBackendId!,
       isDefault: true,
     );
-    await ref.read(onboardingStatusServiceProvider).saveAccountType(_accountType);
-    ref.invalidate(accountTypeProvider);
-    if (_countryCode != null) {
-      await ref.read(onboardingStatusServiceProvider).saveCountryCode(_countryCode!);
-    }
-
-    if (_countryCode != null) {
-      try {
-        final ops = await _catalogService.fetchOperators(
-          _countryCode!,
-          accountType: _accountType,
-        );
-        if (mounted) setState(() => _operators = ops);
-      } catch (_) {
-        // L'agent pourra configurer manuellement depuis les paramètres.
-      }
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _localAgenceId = localAgenceId;
-      _loading = false;
-      _step = 4;
-    });
+    await _toOperators(localId);
   }
 
-  /// Rattachement à un compte existant (D-affiliation) au lieu de créer un
-  /// nouvel espace — même mécanisme pour les deux profils, deux usages
-  /// différents : un agent qui rejoint une agence de son patron, ou un
-  /// Particulier qui relie son second téléphone à son compte principal
-  /// (D7 : jamais de vocabulaire "agence" côté Particulier, mais sous le
-  /// capot c'est la même AffiliationRequest/Agence cachée).
-  Future<void> _rejoindreCompte() async {
-    if (_telephoneController.text.trim().isEmpty) {
-      setState(() => _error = 'Entrez votre numéro de téléphone');
-      return;
-    }
-    if (_linkTelephoneController.text.trim().isEmpty) {
-      setState(() => _error = _accountType == 'particulier'
-          ? 'Entrez le numéro de votre autre téléphone'
-          : 'Entrez le numéro de votre patron');
-      return;
-    }
+  /// Rejoindre l'agence d'un patron, ou relier un second téléphone à un
+  /// ancien compte Particulier : l'autre téléphone doit approuver.
+  Future<void> _requestLink() async {
+    final phone = _digits(_phone);
+    final other = _digits(_linkPhone);
+    final err = _phoneError(phone) ??
+        (_phoneError(other) == null
+            ? null
+            : _profile == _Profile.agent
+                ? 'Entrez le numéro de votre patron'
+                : 'Entrez le numéro de votre autre téléphone');
+    if (err != null) return _fail(err);
     setState(() {
       _loading = true;
       _error = null;
     });
-
-    final resultat = await AffiliationService.demander(
-      demandeurTelephone: _telephoneController.text.trim(),
-      patronTelephone: _linkTelephoneController.text.trim(),
-    );
-
-    if (!resultat.reussi) {
-      setState(() {
-        _loading = false;
-        _error = resultat.message;
-      });
-      return;
-    }
-
-    await ref.read(onboardingStatusServiceProvider).saveAccountType(_accountType);
-    ref.invalidate(accountTypeProvider);
-    if (_countryCode != null) {
-      await ref.read(onboardingStatusServiceProvider).saveCountryCode(_countryCode!);
-    }
+    final r = await AffiliationService.demander(demandeurTelephone: phone, patronTelephone: other);
     if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _step = 5;
-    });
-    _pollApprobation();
+    if (!r.reussi) return _fail(r.message);
+    await _saveProfile();
+    setState(() => _loading = false);
+    _go(_Step.waiting);
+    _pollSub?.cancel();
+    _pollSub = AffiliationService.attendreApprobation().listen(_onPoll);
   }
 
-  void _pollApprobation() {
-    AffiliationService.attendreApprobation().listen((poll) async {
-      if (!mounted) return;
-      if (poll.statut == 'approuve') {
+  Future<void> _onPoll(AffiliationStatutPoll poll) async {
+    if (!mounted) return;
+    switch (poll.statut) {
+      case 'approuve':
         final ok = await AffiliationService.recupererLicencePourAgence(
-          telephone: _telephoneController.text.trim(),
+          telephone: _digits(_phone),
           agenceId: poll.agenceId!,
         );
         if (!mounted) return;
-        if (!ok) {
-          setState(() => _error = 'Licence introuvable pour cette agence - réessayez.');
-          return;
-        }
-        final localAgenceId = await _catalogService.createLocalAgence(
+        if (!ok) return _fail('Accès accordé, mais la récupération a échoué. Réessayez.');
+        final localId = await _catalogService.createLocalAgence(
           nom: poll.agenceNom!,
           backendAgenceId: poll.agenceId!,
           isDefault: true,
         );
-        if (_countryCode != null) {
-          try {
-            final ops = await _catalogService.fetchOperators(
-              _countryCode!,
-              accountType: _accountType,
-            );
-            if (mounted) setState(() => _operators = ops);
-          } catch (_) {}
-        }
-        if (!mounted) return;
-        setState(() {
-          _localAgenceId = localAgenceId;
-          _step = 4;
-        });
-      } else if (poll.statut == 'rejete') {
-        setState(() {
-          _error = _accountType == 'particulier'
-              ? 'Votre demande a été refusée depuis votre autre téléphone.'
-              : 'Votre demande d\'affiliation a été refusée par le patron.';
-          _step = 3;
-        });
-      } else if (poll.statut == 'timeout') {
-        setState(() {
-          _error = 'Délai d\'attente dépassé - réessayez.';
-          _step = 3;
-        });
-      }
+        await _toOperators(localId);
+      case 'rejete':
+        _go(_Step.identity);
+        _fail(_profile == _Profile.agent
+            ? 'Votre patron a refusé la demande.'
+            : 'La demande a été refusée depuis votre autre téléphone.');
+      case 'timeout':
+        _go(_Step.identity);
+        _fail('Pas de réponse pour le moment. Réessayez plus tard.');
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    final status = ref.read(onboardingStatusServiceProvider);
+    await status.saveAccountType(_accountType);
+    await status.saveCountryCode(_countryCode);
+    ref.invalidate(accountTypeProvider);
+  }
+
+  Future<void> _toOperators(String localAgenceId) async {
+    List<CatalogOperator> ops = [];
+    try {
+      ops = await _catalogService.fetchOperators(_countryCode, accountType: _accountType);
+    } catch (_) {
+      // Hors ligne : on pourra les ajouter plus tard (Paramètres avancés).
+    }
+    if (!mounted) return;
+    setState(() {
+      _operators = ops;
+      _localAgenceId = localAgenceId;
+      _loading = false;
+      _step = _Step.operators;
+      _error = null;
     });
   }
 
-  Future<void> _finishImport() async {
+  Future<void> _finish() async {
     if (_localAgenceId == null) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final selected = _operators
-          .where((o) => _selectedOperatorIds.contains(o.id))
-          .toList();
-      if (selected.isNotEmpty) {
-        await _catalogService.importOperators(selected, _localAgenceId!);
-      }
+      final selected = _operators.where((o) => _selectedOperatorIds.contains(o.id)).toList();
+      if (selected.isNotEmpty) await _catalogService.importOperators(selected, _localAgenceId!);
       await ref.read(onboardingStatusServiceProvider).markComplete();
       ref.invalidate(isOnboardingCompleteProvider);
       if (mounted) context.go('/setup-pin');
-    } catch (e) {
-      setState(() => _error = "Erreur lors de l'import : $e");
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    } catch (_) {
+      _fail('L\'installation des opérateurs a échoué. Vérifiez votre connexion et réessayez.');
     }
   }
+
+  // --- Écrans --------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.lightBackground,
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (_step > 0) _buildHeader(),
-            if (_error != null)
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(_error!,
-                    style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
-              ),
-            Expanded(
-              child: IndexedStack(
-                index: _step,
-                children: [
-                  _buildHasAccountStep(),
-                  _buildAccountTypeStep(),
-                  _buildPhoneCountryStep(),
-                  _buildAgenceStep(),
-                  _buildOperatorsStep(),
-                  _buildWaitingApprovalStep(),
-                ],
+    final page = switch (_step) {
+      _Step.welcome => _welcome(),
+      _Step.login => _loginPage(),
+      _Step.profile => _profilePage(),
+      _Step.identity => _identityPage(),
+      _Step.operators => _operatorsPage(),
+      _Step.waiting => _waitingPage(),
+    };
+    return PopScope(
+      canPop: _step == _Step.welcome,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && !_loading) _back();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.lightBackground,
+        body: SafeArea(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            switchInCurve: Curves.easeOutCubic,
+            transitionBuilder: (child, anim) => FadeTransition(
+              opacity: anim,
+              child: SlideTransition(
+                position: Tween(begin: const Offset(0.04, 0), end: Offset.zero).animate(anim),
+                child: child,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Un compte Particulier n'a pas besoin de nommer une agence (D7) — le
-  /// libellé de l'étape 3 reste générique ("Configuration"), jamais
-  /// "Agence", mais les deux profils traversent les mêmes étapes.
-  List<String> get _stepLabels => _accountType == 'particulier'
-      ? const ['Compte', 'Téléphone', 'Configuration', 'Opérateurs']
-      : const ['Compte', 'Téléphone', 'Agence', 'Opérateurs'];
-
-  // La barre de progression ne représente que le flux "nouveau compte"
-  // (steps 1-4 réels) — l'étape 0 ("avez-vous déjà un compte ?") est un
-  // préalable, masqué (voir build()), donc pas besoin de la refléter ici.
-  int get _displayStep => (_step - 1).clamp(0, _stepLabels.length - 1);
-
-  Widget _buildHeader() {
-    final labels = _stepLabels;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-      child: Row(
-        children: List.generate(labels.length, (i) {
-          final active = i <= _displayStep;
-          return Expanded(
-            child: Column(
-              children: [
-                Container(
-                  height: 4,
-                  margin: const EdgeInsets.symmetric(horizontal: 2),
-                  decoration: BoxDecoration(
-                    color: active ? AppColors.primaryColor : Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  labels[i],
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-                    color: active ? AppColors.primaryColor : Colors.grey,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  /// Étape 0 (D13) : préalable à tout le reste du flux — un utilisateur qui
-  /// a déjà un compte (installe l'app sur un nouveau téléphone) peut s'y
-  /// connecter directement par mot de passe, sans repasser par la création
-  /// ou l'affiliation. Affiche aussi le sélecteur d'agence si le compte en
-  /// possède plusieurs.
-  Widget _buildHasAccountStep() {
-    if (_loginAgences != null) {
-      return _StepScaffold(
-        title: 'Quelle agence sur cet appareil ?',
-        subtitle: 'Ce compte possède plusieurs agences — choisissez celle que cet appareil va opérer.',
-        onBack: () => setState(() {
-          _loginAgences = null;
-          _error = null;
-        }),
-        child: Column(
-          children: _loginAgences!.map((a) {
-            return Card(
-              child: ListTile(
-                title: Text(a.nom),
-                subtitle: Text(a.statut == 'essai' ? 'Essai gratuit' : 'Active'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _loading ? null : () => _finaliserLogin(a),
-              ),
-            );
-          }).toList(),
-        ),
-      );
-    }
-
-    final seConnecter = _hasAccountMode == 'oui';
-    return _StepScaffold(
-      title: 'Avez-vous déjà un compte ?',
-      subtitle: seConnecter
-          ? 'Connectez-vous avec le numéro et le mot de passe de votre compte existant.'
-          : 'Si MoneyTracking est déjà installé sur un de vos autres téléphones avec ce compte, connectez-vous directement au lieu d\'en recréer un.',
-      onNext: seConnecter
-          ? (_loading ? null : _seConnecter)
-          : () => setState(() => _step = 1),
-      nextLabel: seConnecter
-          ? (_loading ? 'Connexion...' : 'Se connecter')
-          : 'Continuer',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'non', label: Text('Non, nouveau compte')),
-              ButtonSegment(value: 'oui', label: Text('Oui, me connecter')),
-            ],
-            selected: {_hasAccountMode},
-            onSelectionChanged: (v) => setState(() {
-              _hasAccountMode = v.first;
-              _error = null;
-            }),
+            child: KeyedSubtree(key: ValueKey(_step), child: page),
           ),
-          if (seConnecter) ...[
-            const SizedBox(height: 16),
-            TextField(
-              controller: _loginTelephoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Numéro de téléphone',
-                hintText: '70123456',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _loginPasswordController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Mot de passe',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildAccountTypeStep() {
-    return _StepScaffold(
-      title: 'Particulier ou agence ?',
-      subtitle:
-          'Un compte "Agence" gère commissions et clients. Un compte "Particulier" suit simplement ses propres opérations, sans commission.',
+  /// Retour : toujours vers l'écran précédent logique.
+  void _back() {
+    switch (_step) {
+      case _Step.login:
+        if (_loginAgences != null) {
+          setState(() => _loginAgences = null);
+        } else {
+          _go(_Step.welcome);
+        }
+      case _Step.profile:
+        _go(_Step.welcome);
+      case _Step.identity:
+        _go(_profile == _Profile.relier ? _Step.login : _Step.profile);
+      case _Step.waiting:
+        _pollSub?.cancel();
+        _go(_Step.identity);
+      case _Step.welcome:
+      case _Step.operators:
+        break;
+    }
+  }
+
+  Widget _welcome() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _AccountTypeCard(
-            label: 'Agence',
-            description: 'Usage professionnel, avec commissions et clients',
-            selected: _accountType == 'agence',
-            onTap: () => setState(() => _accountType = 'agence'),
+          const Spacer(),
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: Image.asset('assets/logo.png',
+                  width: 88,
+                  height: 88,
+                  errorBuilder: (_, _, _) => const Icon(Icons.account_balance_wallet,
+                      size: 88, color: AppColors.primaryColor)),
+            ),
+          ),
+          const SizedBox(height: 28),
+          const Text(
+            'Votre argent,\nenfin clair.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, height: 1.15),
           ),
           const SizedBox(height: 12),
-          _AccountTypeCard(
-            label: 'Particulier',
-            description: 'Suivi personnel multi-opérateur, sans commission',
-            selected: _accountType == 'particulier',
-            onTap: () => setState(() => _accountType = 'particulier'),
+          Text(
+            'Vos SMS Mobile Money deviennent des opérations rangées, '
+            'automatiquement. Rien à saisir.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, color: Colors.grey.shade700, height: 1.4),
           ),
-        ],
-      ),
-      onNext: () => setState(() => _step = 2),
-    );
-  }
-
-  Widget _buildPhoneCountryStep() {
-    return _StepScaffold(
-      title: 'Votre numéro et votre pays',
-      subtitle:
-          'Ça détermine les opérateurs mobile money qu\'on va vous proposer.',
-      onBack: () => setState(() => _step = 1),
-      onNext: _loading ? null : () => setState(() => _step = 3),
-      nextLabel: _loading ? 'Création...' : 'Continuer',
-      child: Column(
-        children: [
-          TextField(
-            controller: _telephoneController,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Numéro de téléphone',
-              hintText: '70123456',
-              border: OutlineInputBorder(),
-            ),
+          const Spacer(flex: 2),
+          _PrimaryButton(label: 'Commencer', onPressed: () => _go(_Step.profile)),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => _go(_Step.login),
+            child: const Text('J\'ai déjà un compte'),
           ),
-          const SizedBox(height: 16),
-          if (_countries.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: CircularProgressIndicator(),
-            )
-          else
-            DropdownButtonFormField<String>(
-              initialValue: _countryCode,
-              decoration: const InputDecoration(
-                labelText: 'Pays',
-                border: OutlineInputBorder(),
-              ),
-              items: _countries
-                  .map((c) => DropdownMenuItem(
-                        value: c.code,
-                        child: Text('${c.name} (${c.dialCode})'),
-                      ))
-                  .toList(),
-              onChanged: (v) => setState(() => _countryCode = v),
-            ),
         ],
       ),
     );
   }
 
-  Widget _buildAgenceStep() {
-    return _accountType == 'particulier' ? _buildParticulierSetupStep() : _buildAgenceSetupStep();
-  }
+  Widget _profilePage() {
+    void pick(_Profile p) {
+      setState(() => _profile = p);
+      _go(_Step.identity);
+    }
 
-  /// Compte Agence : créer une nouvelle agence (nommée), ou rejoindre une
-  /// agence existante d'un patron via son numéro (D-affiliation).
-  Widget _buildAgenceSetupStep() {
-    final rejoindre = _setupMode == 'rejoindre';
-    return _StepScaffold(
-      title: rejoindre ? 'Rejoindre une agence existante' : 'Nommez votre agence',
-      subtitle: rejoindre
-          ? 'Entrez le numéro de votre patron - il devra approuver votre demande et vous assigner une agence.'
-          : 'Vous pourrez en ajouter d\'autres plus tard. Chaque agence démarre avec un essai gratuit.',
-      onBack: () => setState(() => _step = 2),
-      onNext: _loading ? null : (rejoindre ? _rejoindreCompte : _createAgenceAndTrial),
-      nextLabel: _loading
-          ? (rejoindre ? 'Envoi...' : 'Création...')
-          : (rejoindre ? 'Envoyer la demande' : 'Créer et continuer'),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'creer', label: Text('Créer')),
-              ButtonSegment(value: 'rejoindre', label: Text('Rejoindre')),
-            ],
-            selected: {_setupMode},
-            onSelectionChanged: (v) => setState(() => _setupMode = v.first),
-          ),
-          const SizedBox(height: 16),
-          if (rejoindre)
-            TextField(
-              controller: _linkTelephoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Numéro de téléphone du patron',
-                hintText: '70123456',
-                border: OutlineInputBorder(),
-              ),
-            )
-          else ...[
-            TextField(
-              controller: _agenceNomController,
-              decoration: const InputDecoration(
-                labelText: 'Nom de l\'agence',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildPasswordFields(),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// Mot de passe compte (D13), obligatoire à la création — permet ensuite
-  /// une connexion instantanée depuis un autre appareil (LicenceService.login),
-  /// sans passer par l'affiliation/approbation.
-  Widget _buildPasswordFields() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return _Page(
+      onBack: _back,
+      title: 'Pour qui ?',
+      subtitle: 'Vous pourrez toujours changer d\'avis plus tard.',
       children: [
-        Text(
-          'Choisissez un mot de passe pour ce compte — il vous permettra de '
-          'vous reconnecter directement depuis un autre téléphone plus tard.',
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _passwordController,
-          obscureText: true,
-          decoration: const InputDecoration(
-            labelText: 'Mot de passe',
-            border: OutlineInputBorder(),
-          ),
+        _ChoiceCard(
+          icon: Icons.person_outline,
+          title: 'Pour moi',
+          text: 'Suivre mon argent, mes dépenses, mon budget. Gratuit.',
+          onTap: () => pick(_Profile.moi),
         ),
         const SizedBox(height: 12),
-        TextField(
-          controller: _passwordConfirmController,
-          obscureText: true,
-          decoration: const InputDecoration(
-            labelText: 'Confirmez le mot de passe',
-            border: OutlineInputBorder(),
+        _ChoiceCard(
+          icon: Icons.storefront_outlined,
+          title: 'Pour mon agence',
+          text: 'Je suis agent Mobile Money : commissions, caisse, clients.',
+          onTap: () => pick(_Profile.agence),
+        ),
+        const SizedBox(height: 20),
+        Center(
+          child: TextButton(
+            onPressed: () => pick(_Profile.agent),
+            child: const Text('Je travaille dans l\'agence de quelqu\'un'),
           ),
         ),
       ],
     );
   }
 
-  /// Compte Particulier : aucun vocabulaire "agence" — juste "premier
-  /// téléphone" (cas par défaut, un tap) ou "relier à un compte existant"
-  /// pour quelqu'un qui a déjà MoneyTracking sur un autre téléphone (même
-  /// mécanisme D-affiliation, copie différente, D7).
-  Widget _buildParticulierSetupStep() {
-    final relier = _setupMode == 'rejoindre';
-    return _StepScaffold(
-      title: relier ? 'Relier à votre compte existant' : 'Configuration de votre suivi',
-      subtitle: relier
-          ? 'Entrez le numéro de votre autre téléphone MoneyTracking - vous devrez approuver la demande depuis cet appareil.'
-          : 'Si vous utilisez déjà MoneyTracking sur un autre téléphone, vous pouvez relier celui-ci au lieu d\'en repartir de zéro.',
-      onBack: () => setState(() => _step = 2),
-      onNext: _loading
-          ? null
-          : (relier
-              ? _rejoindreCompte
-              : () {
-                  _agenceNomController.text = 'Mon suivi personnel';
-                  _createAgenceAndTrial();
-                }),
-      nextLabel: _loading
-          ? (relier ? 'Envoi...' : 'Création...')
-          : (relier ? 'Envoyer la demande' : 'Continuer'),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'creer', label: Text('Premier téléphone')),
-              ButtonSegment(value: 'rejoindre', label: Text('J\'ai déjà un compte')),
+  Widget _identityPage() {
+    final linking = _profile == _Profile.agent || _profile == _Profile.relier;
+    final (title, subtitle) = switch (_profile) {
+      _Profile.moi => (
+          'Créez votre compte',
+          'Votre numéro et un mot de passe : ils vous permettront de retrouver '
+              'votre compte sur un autre téléphone.'
+        ),
+      _Profile.agence => ('Votre agence', 'Chaque nouvelle agence a 3 mois d\'essai offerts.'),
+      _Profile.agent => (
+          'Rejoindre une agence',
+          'Votre patron recevra une demande sur son téléphone et choisira votre agence.'
+        ),
+      _Profile.relier => (
+          'Relier ce téléphone',
+          'Confirmez ensuite la demande depuis votre autre téléphone.'
+        ),
+    };
+    return _Page(
+      onBack: _back,
+      title: title,
+      subtitle: subtitle,
+      error: _error,
+      action: _PrimaryButton(
+        label: linking ? 'Envoyer la demande' : 'Continuer',
+        loading: _loading,
+        onPressed: linking ? _requestLink : _create,
+      ),
+      children: [
+        if (_profile == _Profile.agence) ...[
+          _Field(controller: _agenceNom, label: 'Nom de l\'agence', icon: Icons.storefront_outlined),
+          const SizedBox(height: 14),
+        ],
+        _PhoneField(controller: _phone, label: 'Mon numéro'),
+        const SizedBox(height: 14),
+        if (linking)
+          _PhoneField(
+            controller: _linkPhone,
+            label: _profile == _Profile.agent ? 'Numéro de mon patron' : 'Numéro de mon autre téléphone',
+          )
+        else
+          _PasswordField(controller: _password, label: 'Mot de passe'),
+        if (_countries.length > 1) ...[
+          const SizedBox(height: 14),
+          DropdownButtonFormField<String>(
+            initialValue: _countryCode,
+            decoration: _decoration('Pays', Icons.public),
+            items: [
+              for (final c in _countries)
+                DropdownMenuItem(value: c.code, child: Text('${c.name} (${c.dialCode})')),
             ],
-            selected: {_setupMode},
-            onSelectionChanged: (v) => setState(() => _setupMode = v.first),
+            onChanged: (v) => setState(() => _countryCode = v ?? _countryCode),
           ),
-          if (relier) ...[
-            const SizedBox(height: 16),
-            TextField(
-              controller: _linkTelephoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Numéro de votre autre téléphone',
-                hintText: '70123456',
-                border: OutlineInputBorder(),
-              ),
+        ],
+      ],
+    );
+  }
+
+  Widget _loginPage() {
+    if (_loginAgences != null) {
+      return _Page(
+        onBack: _back,
+        title: 'Quelle agence sur ce téléphone ?',
+        subtitle: 'Votre compte en a plusieurs : choisissez celle que ce téléphone va gérer.',
+        error: _error,
+        children: [
+          for (final a in _loginAgences!) ...[
+            _ChoiceCard(
+              icon: Icons.storefront_outlined,
+              title: a.nom,
+              text: a.statut == 'essai' ? 'En essai gratuit' : 'Active',
+              onTap: _loading ? null : () => _finishLogin(a),
             ),
-          ] else ...[
-            const SizedBox(height: 16),
-            _buildPasswordFields(),
+            const SizedBox(height: 12),
           ],
         ],
-      ),
+      );
+    }
+    return _Page(
+      onBack: _back,
+      title: 'Bon retour !',
+      subtitle: 'Le numéro et le mot de passe de votre compte.',
+      error: _error,
+      action: _PrimaryButton(label: 'Me connecter', loading: _loading, onPressed: _login),
+      children: [
+        _PhoneField(controller: _loginPhone, label: 'Mon numéro'),
+        const SizedBox(height: 14),
+        _PasswordField(
+          controller: _loginPassword,
+          label: 'Mot de passe',
+          onSubmitted: (_) => _login(),
+        ),
+        const SizedBox(height: 16),
+        // Comptes créés avant les mots de passe (D13) : rattachement approuvé
+        // depuis l'autre téléphone. Chemin rare, donc discret.
+        Center(
+          child: TextButton(
+            onPressed: () {
+              setState(() => _profile = _Profile.relier);
+              _go(_Step.identity);
+            },
+            child: const Text('Mon compte n\'a pas de mot de passe'),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildWaitingApprovalStep() {
-    return _StepScaffold(
-      title: 'En attente d\'approbation',
-      subtitle:
-          'Votre demande a été envoyée à ${_linkTelephoneController.text.trim()}. '
-          'Cet écran se mettra à jour automatiquement dès qu\'il aura répondu.',
-      onBack: () => setState(() => _step = 3),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
+  Widget _operatorsPage() {
+    final n = _selectedOperatorIds.length;
+    return _Page(
+      title: 'Vos opérateurs',
+      subtitle: 'Touchez ceux que vous utilisez. Leurs SMS seront reconnus automatiquement.',
+      error: _error,
+      action: _PrimaryButton(
+        label: n == 0 ? 'Plus tard' : 'Terminer',
+        loading: _loading,
+        onPressed: _finish,
       ),
-    );
-  }
-
-  Widget _buildOperatorsStep() {
-    return _StepScaffold(
-      title: 'Choisissez vos opérateurs',
-      subtitle: 'Sélectionnez ceux que vous utilisez - modifiable plus tard.',
-      onNext: _loading ? null : _finishImport,
-      nextLabel: _loading ? 'Import...' : 'Terminer',
-      child: _operators.isEmpty
-          ? const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'Aucun opérateur disponible pour ce pays pour le moment. '
-                'Vous pourrez en configurer manuellement depuis les paramètres.',
-              ),
-            )
-          : Column(
-              children: _operators.map((op) {
-                final selected = _selectedOperatorIds.contains(op.id);
-                return CheckboxListTile(
-                  value: selected,
-                  title: Text(op.name),
-                  subtitle: Text('${op.transactionTypes.length} type(s) de transaction'),
-                  onChanged: (v) => setState(() {
-                    if (v == true) {
-                      _selectedOperatorIds.add(op.id);
-                    } else {
-                      _selectedOperatorIds.remove(op.id);
-                    }
+      children: [
+        if (_operators.isEmpty)
+          Text(
+            'Impossible de charger la liste pour le moment. Vous pourrez ajouter '
+            'vos opérateurs ensuite, depuis les Paramètres.',
+            style: TextStyle(color: Colors.grey.shade700),
+          )
+        else
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.25,
+            children: [
+              for (final op in _operators)
+                _OperatorTile(
+                  operator: op,
+                  selected: _selectedOperatorIds.contains(op.id),
+                  onTap: () => setState(() {
+                    HapticFeedback.selectionClick();
+                    if (!_selectedOperatorIds.remove(op.id)) _selectedOperatorIds.add(op.id);
                   }),
-                );
-              }).toList(),
-            ),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _waitingPage() {
+    return _Page(
+      onBack: _back,
+      title: 'Demande envoyée',
+      subtitle: 'Dès que ${_digits(_linkPhone)} aura accepté, cet écran continuera tout seul. '
+          'Vous pouvez laisser l\'application ouverte.',
+      error: _error,
+      children: const [
+        SizedBox(height: 24),
+        Center(child: CircularProgressIndicator()),
+      ],
     );
   }
 }
 
-class _StepScaffold extends StatelessWidget {
+// --- Briques visuelles ------------------------------------------------------
+
+InputDecoration _decoration(String label, IconData icon, {Widget? suffix}) => InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon),
+      suffixIcon: suffix,
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+    );
+
+/// Gabarit d'une étape : retour, titre, texte, contenu, bouton principal en
+/// bas (toujours à la même place, à portée du pouce).
+class _Page extends StatelessWidget {
   final String title;
   final String subtitle;
-  final Widget child;
+  final List<Widget> children;
+  final Widget? action;
   final VoidCallback? onBack;
-  final VoidCallback? onNext;
-  final String nextLabel;
+  final String? error;
 
-  const _StepScaffold({
+  const _Page({
     required this.title,
     required this.subtitle,
-    required this.child,
+    required this.children,
+    this.action,
     this.onBack,
-    this.onNext,
-    this.nextLabel = 'Continuer',
+    this.error,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(subtitle, style: TextStyle(color: Colors.grey.shade600)),
-          const SizedBox(height: 24),
-          child,
-          const SizedBox(height: 32),
-          Row(
-            children: [
-              if (onBack != null)
-                Expanded(
-                  child: OutlinedButton(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 56,
+          child: onBack == null
+              ? null
+              : Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
                     onPressed: onBack,
-                    child: const Text('Retour'),
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Retour',
                   ),
                 ),
-              if (onBack != null) const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton(
-                  onPressed: onNext,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+            children: [
+              Text(title, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text(subtitle, style: TextStyle(fontSize: 15, color: Colors.grey.shade700, height: 1.4)),
+              const SizedBox(height: 28),
+              if (error != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text(nextLabel),
+                  child: Row(
+                    children: [
+                      Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(error!, style: TextStyle(color: Colors.red.shade800))),
+                    ],
+                  ),
                 ),
-              ),
+                const SizedBox(height: 16),
+              ],
+              ...children,
             ],
           ),
-        ],
-      ),
+        ),
+        if (action != null)
+          Padding(padding: const EdgeInsets.fromLTRB(24, 8, 24, 16), child: action),
+      ],
     );
   }
 }
 
-class _AccountTypeCard extends StatelessWidget {
+class _PrimaryButton extends StatelessWidget {
   final String label;
-  final String description;
+  final VoidCallback? onPressed;
+  final bool loading;
+
+  const _PrimaryButton({required this.label, this.onPressed, this.loading = false});
+
+  @override
+  Widget build(BuildContext context) => FilledButton(
+        onPressed: loading ? null : onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: AppColors.primaryColor,
+          minimumSize: const Size.fromHeight(54),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        child: loading
+            ? const SizedBox(
+                width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+            : Text(label),
+      );
+}
+
+class _Field extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  const _Field({required this.controller, required this.label, required this.icon});
+
+  @override
+  Widget build(BuildContext context) => TextField(
+        controller: controller,
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        decoration: _decoration(label, icon),
+      );
+}
+
+class _PhoneField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  const _PhoneField({required this.controller, required this.label});
+
+  @override
+  Widget build(BuildContext context) => TextField(
+        controller: controller,
+        keyboardType: TextInputType.phone,
+        textInputAction: TextInputAction.next,
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(RegExp(r'[\d ]')),
+          LengthLimitingTextInputFormatter(14),
+        ],
+        decoration: _decoration(label, Icons.phone_outlined).copyWith(hintText: '70 12 34 56'),
+      );
+}
+
+/// Un seul champ avec « afficher », plutôt que deux champs à confirmer.
+class _PasswordField extends StatefulWidget {
+  final TextEditingController controller;
+  final String label;
+  final ValueChanged<String>? onSubmitted;
+  const _PasswordField({required this.controller, required this.label, this.onSubmitted});
+
+  @override
+  State<_PasswordField> createState() => _PasswordFieldState();
+}
+
+class _PasswordFieldState extends State<_PasswordField> {
+  bool _visible = false;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+        controller: widget.controller,
+        obscureText: !_visible,
+        onSubmitted: widget.onSubmitted,
+        decoration: _decoration(
+          widget.label,
+          Icons.lock_outline,
+          suffix: IconButton(
+            tooltip: _visible ? 'Masquer' : 'Afficher',
+            icon: Icon(_visible ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+            onPressed: () => setState(() => _visible = !_visible),
+          ),
+        ).copyWith(helperText: 'Au moins 4 caractères'),
+      );
+}
+
+class _ChoiceCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String text;
+  final VoidCallback? onTap;
+
+  const _ChoiceCard({required this.icon, required this.title, required this.text, this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryColor.withAlpha(22),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: AppColors.primaryColor),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 3),
+                      Text(text, style: TextStyle(color: Colors.grey.shade700, height: 1.3)),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: Colors.grey.shade400),
+              ],
+            ),
+          ),
+        ),
+      );
+}
+
+class _OperatorTile extends StatelessWidget {
+  final CatalogOperator operator;
   final bool selected;
   final VoidCallback onTap;
 
-  const _AccountTypeCard({
-    required this.label,
-    required this.description,
-    required this.selected,
-    required this.onTap,
-  });
+  const _OperatorTile({required this.operator, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.primaryColor.withValues(alpha: 0.08) : Colors.white,
-          border: Border.all(
-            color: selected ? AppColors.primaryColor : Colors.grey.shade300,
-            width: selected ? 2 : 1,
-          ),
-          borderRadius: BorderRadius.circular(16),
+    final initial = Text(operator.name.isEmpty ? '?' : operator.name[0],
+        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.primaryColor));
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      decoration: BoxDecoration(
+        color: selected ? AppColors.primaryColor.withAlpha(18) : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: selected ? AppColors.primaryColor : Colors.grey.shade200,
+          width: selected ? 2 : 1,
         ),
-        child: Row(
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
           children: [
-            Icon(
-              selected ? Icons.check_circle : Icons.circle_outlined,
-              color: selected ? AppColors.primaryColor : Colors.grey,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
+            Center(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(label,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16)),
-                  Text(description,
-                      style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: operator.logoUrl == null
+                          ? Center(child: initial)
+                          : Image.network(operator.logoUrl!,
+                              fit: BoxFit.cover, errorBuilder: (_, _, _) => Center(child: initial)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(operator.name,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
                 ],
+              ),
+            ),
+            Positioned(
+              top: 10,
+              right: 10,
+              child: AnimatedScale(
+                scale: selected ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                child: const Icon(Icons.check_circle, color: AppColors.primaryColor, size: 22),
               ),
             ),
           ],

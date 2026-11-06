@@ -20,6 +20,21 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class PinService {
   static const _pinKey = 'moneytracking_pin_hash';
   static const _pinSetKey = 'moneytracking_pin_set';
+  static const _failCountKey = 'moneytracking_pin_fail_count';
+  static const _lockUntilKey = 'moneytracking_pin_lock_until';
+
+  /// Essais libres avant le premier blocage. Sans limite, 10 000 PIN de 4
+  /// chiffres se testent en quelques minutes avec le téléphone en main.
+  static const freeAttempts = 5;
+
+  /// Blocage après [failures] échecs consécutifs : 30 s au 5ᵉ, puis doublé
+  /// à chaque nouvel échec, plafonné à 15 min.
+  static Duration lockoutFor(int failures) {
+    if (failures < freeAttempts) return Duration.zero;
+    final steps = (failures - freeAttempts).clamp(0, 5);
+    final seconds = (30 * (1 << steps)).clamp(30, 900);
+    return Duration(seconds: seconds);
+  }
   // Un PIN de 4–6 chiffres a trop peu d'entropie pour qu'un nombre élevé
   // d'itérations change la donne face à une attaque hors-ligne ; on vise
   // surtout un déverrouillage instantané sur les téléphones d'entrée de
@@ -84,7 +99,39 @@ class PinService {
     await _storage.write(key: _pinSetKey, value: 'true');
   }
 
+  /// Temps restant avant de pouvoir retenter, [Duration.zero] si libre.
+  /// Persisté : redémarrer l'app ne lève pas le blocage.
+  Future<Duration> lockRemaining() async {
+    final raw = await _storage.read(key: _lockUntilKey);
+    final until = raw == null ? null : DateTime.tryParse(raw);
+    if (until == null) return Duration.zero;
+    final left = until.difference(DateTime.now());
+    return left.isNegative ? Duration.zero : left;
+  }
+
+  /// Vérifie le PIN en tenant le compte des échecs. Pendant un blocage,
+  /// renvoie `false` sans même comparer.
   Future<bool> verifyPin(String pin) async {
+    if (await lockRemaining() > Duration.zero) return false;
+    final ok = await _checkPin(pin);
+    if (ok) {
+      await _storage.delete(key: _failCountKey);
+      await _storage.delete(key: _lockUntilKey);
+    } else {
+      final count =
+          (int.tryParse(await _storage.read(key: _failCountKey) ?? '') ?? 0) + 1;
+      await _storage.write(key: _failCountKey, value: '$count');
+      final lock = lockoutFor(count);
+      if (lock > Duration.zero) {
+        await _storage.write(
+            key: _lockUntilKey,
+            value: DateTime.now().add(lock).toIso8601String());
+      }
+    }
+    return ok;
+  }
+
+  Future<bool> _checkPin(String pin) async {
     final stored = await _storage.read(key: _pinKey);
     if (stored == null || stored.isEmpty) return false;
 
@@ -112,5 +159,7 @@ class PinService {
   Future<void> resetPin() async {
     await _storage.delete(key: _pinKey);
     await _storage.delete(key: _pinSetKey);
+    await _storage.delete(key: _failCountKey);
+    await _storage.delete(key: _lockUntilKey);
   }
 }

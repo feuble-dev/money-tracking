@@ -61,9 +61,7 @@ class LicenceGuard {
     // Vérifier la licence
     final statut = await LicenceStorage.verifierLocalement();
 
-    final autorise = statut == LicenceStatut.active ||
-        statut == LicenceStatut.essaiActif ||
-        statut == LicenceStatut.expireBientot;
+    final autorise = statut.permetEcriture;
 
     if (!autorise && context.mounted) {
       await _afficherDialogLicence(context, statut);
