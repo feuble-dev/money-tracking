@@ -32,6 +32,10 @@ const config: Config = {
         warning: { DEFAULT: '#F59E0B', light: '#FEF3C7' },
         danger:  { DEFAULT: '#EF4444', light: '#FEE2E2' },
         dark: '#0F1923',
+        // Tons chauds (latérite, sable) : fonds éditoriaux et annotations,
+        // à petites doses à côté du bleu et du vert de la marque.
+        sand: { DEFAULT: '#F5EFE4', deep: '#EADFCB' },
+        clay: { DEFAULT: '#B4532A', light: '#F3DFD3' },
         ink: '#0B2545',
         soft: '#F5F7FA',
         muted: '#64748B',

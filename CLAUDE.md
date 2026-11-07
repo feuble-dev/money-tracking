@@ -275,15 +275,19 @@ web/
   app/
     layout.tsx            # next/font: Bricolage Grotesque (--font-display) + Inter (--font-body), metadata
     globals.css           # gradient-hero, bg-grid, reveal, sms-toast, row-enter, fade-up, marquee (+ reduced-motion)
-    (site)/               # home, features, pricing, download (NEXT_PUBLIC_APK_URL), docs
+    (site)/               # home, particuliers, agences, features, pricing, download (NEXT_PUBLIC_APK_URL), docs
     (admin)/
       layout.tsx          # shell: Sidebar + top bar + CommandPalette (Ctrl+K, « / »), AdminProvider
       dashboard/ licences/ clients/ clients/[id]/ demandes/ achats-historique/ notifications/ login/
       catalog/countries | operators | operators/[id] | transaction-types
   components/
-    site/                 # Navbar, Hero (toggle Pour moi / Pour mon agence), PhoneDemo, HowItWorks, FeatureGrid,
-                          # Audiences, Stats, Operators, Faq, CtaBand, Pricing, PageHeader, SectionTitle, Footer,
-                          # Icon (single SVG icon set, site + admin), motion/Reveal, motion/CountUp
+    site/                 # Navbar, Hero (toggle Pour moi / Pour mon agence), PhoneDemo, SmsDecoder (a real SMS,
+                          # fields highlighted then turned into a row), Showcase (Particulier/Agence screen compositions),
+                          # Story (day/week timeline), Comparison (cahier / tableur / app), MadeForHere, Privacy,
+                          # PatronView, SplitHeader, Chapter (editorial section header), Annotation (hand-drawn arrow),
+                          # Operators, Faq, CtaBand, Pricing, PageHeader, Footer, Icon (single SVG set), motion/Reveal
+    site/app/             # PhoneFrame + screens.tsx: app screens re-created in HTML (Mon argent, budget, dépenses,
+                          # commissions, clôture, notification) with numbers consistent across screens
     ui/                   # Button (variants, loading, href), Badge (dot), Modal (sheet on mobile)
     admin/
       shell/              # nav.ts (single source: groups, badges, titles), Sidebar, CommandPalette, AdminContext (compteurs + toasts)
@@ -324,7 +328,7 @@ Muted text       : #64748B (Tailwind: `muted`)
 
 ### Tailwind Custom Config (`web/tailwind.config.ts`)
 ```
-colors: primary (DEFAULT/#1565C0, dark, light, 50-700), accent (DEFAULT/#2E7D32, hover/#1B5E20, light/#4CAF50, 50/#E8F5E9), success, warning, danger, dark, soft, muted
+colors: primary (DEFAULT/#1565C0, dark, light, 50-700), accent (DEFAULT/#2E7D32, hover/#1B5E20, light/#4CAF50, 50/#E8F5E9), success, warning, danger, dark, ink (#0B2545), soft, muted, sand (#F5EFE4, deep), clay (#B4532A, light)
 fontFamily: Inter, system-ui, sans-serif
 boxShadow: soft, medium, large, blue, green
 ```
@@ -344,6 +348,8 @@ boxShadow: soft, medium, large, blue, green
 - Fake data presented as real (testimonials, counters) — `Stats` shows product facts only
 
 **Motion is allowed when it explains the product** (user request, 2026-10): scroll reveal (`Reveal`, `.reveal`), the `PhoneDemo` (an SMS arrives and becomes a row), operator `marquee`, `CountUp`, `fade-up` on titles. All of it is CSS/IntersectionObserver, and **every animation is disabled under `prefers-reduced-motion`** (`globals.css`). `pulse-dot`/`shimmer` stay admin-only.
+
+**Show the product, don't describe it**: every section pairs copy with a real app screen (`site/app/screens.tsx`) or a concrete artefact (an operator SMS, a backup file, the patron view) — never generic icon-card grids alone. Stories use named, local, plausible people (« Awa, enseignante à Koudougou », « Issa, agent à Tampouy »); figures are illustrative but **no claim the product can't back** (no "le plus choisi", no invented user counts or testimonials). Warm tones `sand`/`clay` (Tailwind) alternate with `ink` and white sections; section headers use `Chapter` (rule + small uppercase mark + big title, text on the right), not centred eyebrow+title. Phone compositions are fixed-size and scaled down below `sm` (no horizontal scroll at 390 px).
 
 **Preferred patterns:** clean borders, `gap-px bg-gray-200` grids, white cards on `bg-soft`, `font-display` headings in `text-ink`, `text-muted` descriptions, green accent CTAs (`bg-accent`), `tabular-nums` for amounts.
 

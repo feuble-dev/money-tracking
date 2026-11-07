@@ -75,7 +75,7 @@ export default function Hero() {
               {c.cta}
             </Link>
             <Link
-              href="/features"
+              href={mode === 'agence' ? '/agences' : '/particuliers'}
               className="group inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-6 py-3.5 text-sm font-semibold text-dark transition-colors hover:border-gray-400"
             >
               Voir comment ça marche

@@ -6,7 +6,9 @@ const columns = [
   {
     title: 'Produit',
     links: [
-      { href: '/features', label: 'Fonctionnalités' },
+      { href: '/particuliers', label: 'Pour les particuliers' },
+      { href: '/agences', label: 'Pour les agences' },
+      { href: '/features', label: 'Toutes les fonctionnalités' },
       { href: '/pricing', label: 'Tarifs' },
       { href: '/download', label: 'Télécharger' },
     ],

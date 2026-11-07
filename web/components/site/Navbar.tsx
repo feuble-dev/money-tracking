@@ -7,7 +7,8 @@ import { usePathname } from 'next/navigation';
 import Icon from './Icon';
 
 const links = [
-  { href: '/features', label: 'Fonctionnalités' },
+  { href: '/particuliers', label: 'Particuliers' },
+  { href: '/agences', label: 'Agences' },
   { href: '/pricing', label: 'Tarifs' },
   { href: '/docs', label: 'Aide' },
 ];
@@ -29,7 +30,9 @@ export default function Navbar() {
   return (
     <header
       className={`sticky top-0 z-50 transition-[background-color,border-color] duration-200 ${
-        scrolled || open ? 'border-b border-gray-200 bg-white' : 'border-b border-transparent bg-soft'
+        scrolled || open
+          ? 'border-b border-gray-200 bg-white'
+          : `border-b border-transparent ${pathname === '/' ? 'bg-soft' : 'bg-white'}`
       }`}
     >
       <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">

@@ -3,15 +3,15 @@ import Link from 'next/link';
 import { plans } from '@/lib/site-content';
 import Icon from './Icon';
 import Reveal from './motion/Reveal';
-import SectionTitle from './SectionTitle';
+import Chapter from './Chapter';
 
 export default function Pricing({ withTitle = true }: { withTitle?: boolean }) {
   return (
-    <section className="bg-soft py-24">
+    <section className="bg-soft py-24 sm:py-28">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         {withTitle && (
-          <SectionTitle
-            eyebrow="Tarifs"
+          <Chapter
+            mark="Tarifs"
             title="Gratuit pour vous. Juste pour votre agence."
             text="Un particulier ne paie jamais. Une agence paie sa licence, avec 3 mois offerts à la création."
           />
@@ -27,7 +27,7 @@ export default function Pricing({ withTitle = true }: { withTitle?: boolean }) {
             >
               {p.highlighted && (
                 <span className="absolute right-6 top-6 rounded-full bg-accent px-3 py-1 text-xs font-semibold text-white">
-                  Le plus choisi
+                  Gratuit
                 </span>
               )}
               <p className={`text-sm font-medium ${p.highlighted ? 'text-white/60' : 'text-muted'}`}>{p.audience}</p>
