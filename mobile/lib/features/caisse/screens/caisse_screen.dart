@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/format/amount_input_formatter.dart';
+import '../../../core/format/formats.dart';
+import '../../../shared/widgets/section_header.dart';
 import '../../../shared/widgets/amount_text.dart';
 import '../../../shared/widgets/operator_avatar.dart';
 import '../../operators/providers/operator_provider.dart';
@@ -51,6 +53,8 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
                   // Caisses par opérateur
                   ...caisses.map((caisse) =>
                       _buildCaisseCard(context, caisse)),
+
+                  _RechargeHistory(operators: {for (final o in activeOps) o.id: o.name}),
 
                   // Opérateurs sans caisse
                   if (opsWithoutCaisse.isNotEmpty) ...[
@@ -342,6 +346,46 @@ class _CaisseScreenState extends ConsumerState<CaisseScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Derniers rechargements de float (affichés seulement s'il y en a).
+class _RechargeHistory extends ConsumerWidget {
+  final Map<String, String> operators;
+  const _RechargeHistory({required this.operators});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ops = ref.watch(caisseOperationsProvider).valueOrNull ?? const [];
+    if (ops.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 12),
+        const SectionHeader('Derniers rechargements'),
+        Card(
+          margin: EdgeInsets.zero,
+          child: Column(children: [
+            for (final o in ops)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.add_circle_outline, color: AppColors.accentColor),
+                title: Text(operators[o.operatorId] ?? 'Opérateur'),
+                subtitle: Text([
+                  AppFormats.dateTime.format(o.createdAt),
+                  if (o.note != null && o.note!.isNotEmpty) o.note!,
+                ].join(' · ')),
+                trailing: SizedBox(
+                  width: 120,
+                  child: AmountText('+ ${AppFormats.fcfa(o.montant)}',
+                      alignment: AlignmentDirectional.centerEnd,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+          ]),
+        ),
+      ],
     );
   }
 }

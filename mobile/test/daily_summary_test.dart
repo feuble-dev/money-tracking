@@ -51,4 +51,14 @@ void main() {
   test('journée sans activité : pas de bilan', () async {
     expect(await DailySummaryService.summarize(await DatabaseHelper.instance.database, day), isNull);
   });
+
+  test('clôture de caisse détectée pour la journée', () async {
+    final db = await DatabaseHelper.instance.database;
+    expect(await DailySummaryService.isClosed(db, day), isFalse);
+    await db.insert('cash_closings', {
+      'id': 'c1', 'day': '2026-10-27', 'opening': 0, 'total_in': 0, 'total_out': 0,
+      'expected': 0, 'counted': 0, 'created_at': DateTime.now().toIso8601String(),
+    });
+    expect(await DailySummaryService.isClosed(db, day), isTrue);
+  });
 }

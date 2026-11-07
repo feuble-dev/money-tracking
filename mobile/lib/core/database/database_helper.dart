@@ -33,7 +33,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 17,
+      version: 18,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -301,6 +301,28 @@ class DatabaseHelper {
     await _createWalletTables(db);
     await _createSyncTracking(db);
     await _createCashClosings(db);
+    await _createAgenceDefaults(db);
+  }
+
+  /// Agence des nouvelles lignes (DB v18). Aucun chemin d'insertion (SMS en
+  /// direct ou en arrière-plan, import d'historique, clients, recharges)
+  /// ne renseignait `agence_id` : la synchro patron, qui filtre par agence,
+  /// ne voyait donc rien de ce qui avait été créé après la migration v9.
+  /// Un trigger attribue l'agence active de l'appareil (une seule par
+  /// appareil, voir CLAUDE.md) à toute ligne insérée sans agence — quel que
+  /// soit le code qui l'insère — et la migration rattrape l'existant.
+  Future<void> _createAgenceDefaults(Database db) async {
+    const agence = '(SELECT id FROM agences ORDER BY is_default DESC, created_at ASC LIMIT 1)';
+    for (final table in ['transactions', 'clients', 'caisse_operations']) {
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS trg_${table}_agence
+        AFTER INSERT ON $table WHEN NEW.agence_id IS NULL
+        BEGIN
+          UPDATE $table SET agence_id = $agence WHERE rowid = NEW.rowid;
+        END
+      ''');
+      await db.execute('UPDATE $table SET agence_id = $agence WHERE agence_id IS NULL');
+    }
   }
 
   /// Clôtures de caisse (Agence, DB v17) : chaque soir, les espèces
@@ -788,6 +810,9 @@ class DatabaseHelper {
     if (oldVersion < 17) {
       await _createSyncTracking(db);
       await _createCashClosings(db);
+    }
+    if (oldVersion < 18) {
+      await _createAgenceDefaults(db);
     }
   }
 

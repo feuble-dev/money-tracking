@@ -1,4 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime, time
+
+from django.db.models import Count, Sum
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -235,6 +237,30 @@ class MesAgencesView(APIView):
         return Response({'agences': agences_data})
 
 
+def _resume_agence(agence):
+    """Activité du jour et du mois (opérations terminées seulement : une
+    transaction annulée sur le téléphone de l'agent ne compte plus)."""
+    today = datetime.combine(date.today(), time.min)
+    month = today.replace(day=1)
+    base = SyncedTransaction.objects.filter(agence=agence, status='completed')
+
+    def bloc(since):
+        agg = base.filter(transaction_created_at__gte=since).aggregate(
+            n=Count('id'), volume=Sum('amount'), commissions=Sum('commission'))
+        return {
+            'operations': agg['n'] or 0,
+            'volume': float(agg['volume'] or 0),
+            'commissions': float(agg['commissions'] or 0),
+        }
+
+    derniere = SyncedTransaction.objects.filter(agence=agence).order_by('-synced_at').first()
+    return {
+        'aujourdhui': bloc(today),
+        'mois': bloc(month),
+        'derniere_synchro': derniere.synced_at.isoformat() if derniere else None,
+    }
+
+
 class AgenceSyncDetailView(APIView):
     """
     GET /api/sync/agence-detail/<id>/?telephone=patron_telephone&device_id=...
@@ -255,11 +281,13 @@ class AgenceSyncDetailView(APIView):
             return Response({'erreur': 'Agence introuvable pour ce compte'}, status=status.HTTP_404_NOT_FOUND)
 
         transactions = SyncedTransaction.objects.filter(agence=agence)[:200]
+        resume = _resume_agence(agence)
         clients = SyncedClient.objects.filter(agence=agence)[:200]
         caisse_operations = SyncedCaisseOperation.objects.filter(agence=agence)[:200]
 
         return Response({
             'agence': {'id': agence.id, 'nom': agence.nom},
+            'resume': resume,
             'transactions': [
                 {
                     'local_id': t.local_id,

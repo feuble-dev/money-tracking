@@ -1,93 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import '../../../core/database/database_helper.dart';
+import '../../../core/format/formats.dart';
 import '../../../core/sms/sms_listener.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../shared/widgets/main_shell.dart';
 import '../../../shared/widgets/amount_text.dart';
+import '../../../shared/widgets/main_shell.dart';
+import '../../../shared/widgets/section_header.dart';
+import '../data/commission_stats.dart';
 
-/// Provider pour les stats de commissions
-final commissionsStatsProvider =
-    FutureProvider<Map<String, dynamic>>((ref) async {
-  final db = await DatabaseHelper.instance.database;
+/// Période choisie (partagée le temps de la session).
+final commissionPeriodProvider =
+    StateProvider<CommissionPeriod>((ref) => CommissionPeriod.today);
 
-  // Commissions globales
-  final global = await db.rawQuery('''
-    SELECT
-      COALESCE(SUM(commission), 0) as total_commission,
-      COALESCE(SUM(CASE WHEN direction='in' THEN commission ELSE 0 END), 0) as comm_depot,
-      COALESCE(SUM(CASE WHEN direction='out' THEN commission ELSE 0 END), 0) as comm_retrait,
-      COUNT(*) as tx_count
-    FROM transactions
-    WHERE status = 'completed' AND commission > 0
-  ''');
-
-  // Commissions du jour
-  final today = DateTime.now();
-  final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
-  final todayStats = await db.rawQuery('''
-    SELECT COALESCE(SUM(commission), 0) as today_commission
-    FROM transactions
-    WHERE status = 'completed' AND DATE(created_at) = ?
-  ''', [todayStr]);
-
-  // Commissions cette semaine
-  final weekAgo = today.subtract(const Duration(days: 7));
-  final weekStats = await db.rawQuery('''
-    SELECT COALESCE(SUM(commission), 0) as week_commission
-    FROM transactions
-    WHERE status = 'completed' AND created_at >= ?
-  ''', [weekAgo.toIso8601String()]);
-
-  // Commissions ce mois
-  final monthStart = DateTime(today.year, today.month, 1);
-  final monthStats = await db.rawQuery('''
-    SELECT COALESCE(SUM(commission), 0) as month_commission
-    FROM transactions
-    WHERE status = 'completed' AND created_at >= ?
-  ''', [monthStart.toIso8601String()]);
-
-  // Par opérateur avec solde (du dernier SMS)
-  final perOperator = await db.rawQuery('''
-    SELECT
-      o.id, o.name, o.sms_sender,
-      COALESCE(SUM(t.commission), 0) as total_commission,
-      COALESCE(SUM(CASE WHEN t.direction='in' THEN t.commission ELSE 0 END), 0) as comm_depot,
-      COALESCE(SUM(CASE WHEN t.direction='out' THEN t.commission ELSE 0 END), 0) as comm_retrait,
-      COUNT(t.id) as tx_count
-    FROM operators o
-    LEFT JOIN transactions t ON t.operator_id = o.id AND t.status = 'completed'
-    WHERE o.is_active = 1
-    GROUP BY o.id
-    ORDER BY total_commission DESC
-  ''');
-
-  // Solde par opérateur : celui de la caisse, qui est déjà le solde annoncé
-  // par le dernier SMS (CaisseRepository, garde-fou `solde_ref_at`). Avant,
-  // cet écran ré-extrayait le solde du dernier SMS avec sa propre regex —
-  // qui lisait « 1 521,00 » (format Moov) comme 152 100 et faisait une
-  // requête par opérateur.
-  final soldeRows = await db.rawQuery(
-      'SELECT operator_id, SUM(solde_actuel) AS solde FROM caisse '
-      'WHERE operator_id IS NOT NULL GROUP BY operator_id');
-  final soldes = <String, double>{
-    for (final r in soldeRows)
-      r['operator_id'] as String: (r['solde'] as num?)?.toDouble() ?? 0,
-  };
-
-  return {
-    'global': global.first,
-    'today': (todayStats.first['today_commission'] as num).toDouble(),
-    'week': (weekStats.first['week_commission'] as num).toDouble(),
-    'month': (monthStats.first['month_commission'] as num).toDouble(),
-    'per_operator': perOperator,
-    'soldes': soldes,
-  };
+/// Statistiques de la période choisie (invalidé à chaque SMS détecté).
+final commissionsStatsProvider = FutureProvider<CommissionStats>((ref) async {
+  final period = ref.watch(commissionPeriodProvider);
+  return loadCommissionStats(await DatabaseHelper.instance.database, period);
 });
 
-/// Écran Commissions avec filtre opérateur
+/// Commissions : combien j'ai gagné sur la période, avec quels services,
+/// chez quel opérateur, et la tendance des deux dernières semaines.
 class CommissionsScreen extends ConsumerStatefulWidget {
   const CommissionsScreen({super.key});
 
@@ -96,22 +30,17 @@ class CommissionsScreen extends ConsumerStatefulWidget {
 }
 
 class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
-  String? _selectedOperatorId;
-
   @override
   void initState() {
     super.initState();
-    // Auto-refresh à chaque ouverture
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.invalidate(commissionsStatsProvider);
-    });
+    // Chiffres frais à chaque ouverture.
+    WidgetsBinding.instance.addPostFrameCallback((_) => ref.invalidate(commissionsStatsProvider));
   }
 
   @override
   Widget build(BuildContext context) {
+    final period = ref.watch(commissionPeriodProvider);
     final statsAsync = ref.watch(commissionsStatsProvider);
-    final currFmt =
-        NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
 
     return Scaffold(
       appBar: AppBar(
@@ -121,262 +50,258 @@ class _CommissionsScreenState extends ConsumerState<CommissionsScreen> {
         ),
         title: const Text('Commissions'),
         actions: [
+          Consumer(builder: (_, ref, _) {
+            final active = ref.watch(smsServiceActiveProvider);
+            return Tooltip(
+              message: active ? 'Détection des SMS active' : 'Détection des SMS inactive',
+              child: Icon(Icons.circle, size: 10, color: active ? Colors.greenAccent : Colors.red),
+            );
+          }),
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => ref.invalidate(commissionsStatsProvider),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: Consumer(builder: (_, ref, _) {
-              final active = ref.watch(smsServiceActiveProvider);
-              return Tooltip(
-                message: active ? 'SMS actif' : 'SMS inactif',
-                child: Icon(Icons.circle, size: 10,
-                    color: active ? Colors.greenAccent : Colors.red),
-              );
-            }),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Paramètres',
             onPressed: () => context.push('/settings'),
           ),
         ],
       ),
-      body: statsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Erreur: $e')),
-        data: (stats) {
-          final global = stats['global'] as Map<String, dynamic>;
-          final totalComm = (global['total_commission'] as num).toDouble();
-          final commDepot = (global['comm_depot'] as num).toDouble();
-          final commRetrait = (global['comm_retrait'] as num).toDouble();
-          final todayComm = stats['today'] as double;
-          final weekComm = stats['week'] as double;
-          final monthComm = stats['month'] as double;
-          final perOperator = stats['per_operator'] as List<Map<String, dynamic>>;
-          final soldes = stats['soldes'] as Map<String, double>;
-
-          return RefreshIndicator(
-            onRefresh: () async => ref.invalidate(commissionsStatsProvider),
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                // Carte résumé global
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.primaryColor, AppColors.primaryDark],
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Commissions totales',
-                          style: TextStyle(color: Colors.white70, fontSize: 13)),
-                      const SizedBox(height: 4),
-                      AmountText(currFmt.format(totalComm),
-                          style: const TextStyle(color: Colors.white,
-                              fontSize: 28, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          _miniCard('Entrées', currFmt.format(commDepot),
-                              AppColors.depositColor),
-                          const SizedBox(width: 10),
-                          _miniCard('Sorties', currFmt.format(commRetrait),
-                              AppColors.withdrawColor),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Périodes
-                Row(
-                  children: [
-                    Expanded(child: _periodCard(context, "Aujourd'hui",
-                        currFmt.format(todayComm))),
-                    const SizedBox(width: 10),
-                    Expanded(child: _periodCard(context, '7 jours',
-                        currFmt.format(weekComm))),
-                    const SizedBox(width: 10),
-                    Expanded(child: _periodCard(context, 'Ce mois',
-                        currFmt.format(monthComm))),
-                  ],
-                ),
-                const SizedBox(height: 24),
-
-                // Filtre opérateur
-                Text('Par opérateur',
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 38,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: FilterChip(
-                          label: const Text('Tous', style: TextStyle(fontSize: 12)),
-                          selected: _selectedOperatorId == null,
-                          onSelected: (_) => setState(() => _selectedOperatorId = null),
-                          selectedColor: AppColors.primaryColor.withAlpha(30),
-                        ),
-                      ),
-                      ...perOperator.map((op) => Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: FilterChip(
-                          label: Text(op['name'] as String, style: const TextStyle(fontSize: 12)),
-                          selected: _selectedOperatorId == op['id'],
-                          onSelected: (_) => setState(() => _selectedOperatorId = op['id'] as String),
-                          selectedColor: AppColors.primaryColor.withAlpha(30),
-                        ),
-                      )),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                ...perOperator.where((op) =>
-                    _selectedOperatorId == null || op['id'] == _selectedOperatorId
-                ).map((op) {
-                  final opId = op['id'] as String;
-                  final name = op['name'] as String;
-                  final opComm = (op['total_commission'] as num).toDouble();
-                  final opCommDep = (op['comm_depot'] as num).toDouble();
-                  final opCommRet = (op['comm_retrait'] as num).toDouble();
-                  final txCount = (op['tx_count'] as num).toInt();
-                  final solde = soldes[opId];
-
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w600, fontSize: 16)),
-                              ),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                child: AmountText(currFmt.format(opComm),
-                                    alignment: AlignmentDirectional.centerEnd,
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                        color: Theme.of(context).colorScheme.primary)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Text('$txCount tx',
-                                  style: Theme.of(context).textTheme.bodySmall),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: AmountText('Entrées : ${currFmt.format(opCommDep)}',
-                                    alignment: AlignmentDirectional.centerEnd,
-                                    style: const TextStyle(
-                                        fontSize: 11, color: AppColors.depositColor)),
-                              ),
-                              const SizedBox(width: 10),
-                              Flexible(
-                                child: AmountText('Sorties : ${currFmt.format(opCommRet)}',
-                                    alignment: AlignmentDirectional.centerEnd,
-                                    style: const TextStyle(
-                                        fontSize: 11, color: AppColors.withdrawColor)),
-                              ),
-                            ],
-                          ),
-                          if (solde != null) ...[
-                            const Divider(height: 16),
-                            Row(
-                              children: [
-                                const Icon(Icons.account_balance_wallet,
-                                    size: 16, color: AppColors.primaryColor),
-                                const SizedBox(width: 6),
-                                const Text('Solde opérateur :',
-                                    style: TextStyle(fontSize: 12)),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: AmountText(currFmt.format(solde),
-                                      alignment: AlignmentDirectional.centerEnd,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14)),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _miniCard(String label, String value, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.white.withAlpha(20),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      body: RefreshIndicator(
+        onRefresh: () async => ref.invalidate(commissionsStatsProvider),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
           children: [
-            Text(label, style: TextStyle(color: color, fontSize: 11)),
-            const SizedBox(height: 2),
-            AmountText(value,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13)),
+            SegmentedButton<CommissionPeriod>(
+              segments: [
+                for (final p in CommissionPeriod.values)
+                  ButtonSegment(value: p, label: Text(p.label, maxLines: 1)),
+              ],
+              selected: {period},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => ref.read(commissionPeriodProvider.notifier).state = s.first,
+            ),
+            const SizedBox(height: 16),
+            statsAsync.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 64),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (e, _) => Text('Erreur : $e'),
+              data: (s) => _Content(stats: s, period: period),
+            ),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _periodCard(BuildContext context, String label, String value) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(12),
-      ),
+class _Content extends StatelessWidget {
+  final CommissionStats stats;
+  final CommissionPeriod period;
+
+  const _Content({required this.stats, required this.period});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final s = stats;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.primaryColor,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Gagné · ${period.label.toLowerCase()}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 6),
+              AmountText(AppFormats.fcfa(s.total),
+                  style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 14),
+              Row(children: [
+                _Pill('${s.count} opération${s.count > 1 ? 's' : ''}'),
+                const SizedBox(width: 8),
+                Flexible(child: _Pill('≈ ${AppFormats.fcfa(s.perOperation)} / opération')),
+              ]),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        const SectionHeader('Ces 14 derniers jours'),
+        Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 16, 12, 10),
+            child: _DailyBars(values: s.last14Days),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const SectionHeader('Ce qui vous rapporte'),
+        if (s.byService.isEmpty)
+          _Empty(period: period)
+        else
+          Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(children: [
+                for (final l in s.byService) _RankRow(line: l, max: s.byService.first.commission),
+              ]),
+            ),
+          ),
+        const SizedBox(height: 24),
+        const SectionHeader('Par opérateur'),
+        for (final op in s.byOperator)
+          Card(
+            margin: const EdgeInsets.only(bottom: 10),
+            child: ListTile(
+              title: Text(op.label, style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(s.soldes[op.key] == null
+                  ? '${op.count} opération${op.count > 1 ? 's' : ''}'
+                  : '${op.count} opération${op.count > 1 ? 's' : ''} · float ${AppFormats.fcfa(s.soldes[op.key]!)}'),
+              trailing: SizedBox(
+                width: 120,
+                child: AmountText(AppFormats.fcfa(op.commission),
+                    alignment: AlignmentDirectional.centerEnd,
+                    style: TextStyle(fontWeight: FontWeight.w800, color: theme.colorScheme.primary)),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  final String text;
+  const _Pill(this.text);
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(color: Colors.white.withAlpha(30), borderRadius: BorderRadius.circular(20)),
+        child: Text(text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+      );
+}
+
+/// Classement d'un service : barre proportionnelle à la commission.
+class _RankRow extends StatelessWidget {
+  final CommissionLine line;
+  final double max;
+  const _RankRow({required this.line, required this.max});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final ratio = max <= 0 ? 0.0 : (line.commission / max).clamp(0.0, 1.0);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall),
+          Row(children: [
+            Expanded(
+              child: Text(line.label,
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 120,
+              child: AmountText(AppFormats.fcfa(line.commission),
+                  alignment: AlignmentDirectional.centerEnd,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: ratio,
+              minHeight: 6,
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+            ),
+          ),
           const SizedBox(height: 4),
-          AmountText(value,
-              alignment: Alignment.center,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          Text('${line.count} op. · ${AppFormats.fcfa(line.volume)} traités', style: theme.textTheme.bodySmall),
         ],
       ),
     );
   }
+}
+
+/// Mini-histogramme des commissions par jour (aujourd'hui à droite).
+class _DailyBars extends StatelessWidget {
+  final List<double> values;
+  const _DailyBars({required this.values});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final max = values.fold<double>(0, (m, v) => v > m ? v : m);
+    final now = DateTime.now();
+    return Column(
+      children: [
+        SizedBox(
+          height: 96,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              for (var i = 0; i < values.length; i++)
+                Expanded(
+                  child: Tooltip(
+                    message: AppFormats.fcfa(values[i]),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 400),
+                        curve: Curves.easeOutCubic,
+                        height: max <= 0 ? 2 : 2 + 94 * values[i] / max,
+                        decoration: BoxDecoration(
+                          color: i == values.length - 1
+                              ? AppColors.accentColor
+                              : AppColors.primaryColor.withAlpha(values[i] > 0 ? 200 : 40),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(children: [
+          Text(AppFormats.dayMonth.format(now.subtract(const Duration(days: 13))), style: theme.textTheme.bodySmall),
+          const Spacer(),
+          Text("Aujourd'hui", style: theme.textTheme.bodySmall),
+        ]),
+      ],
+    );
+  }
+}
+
+class _Empty extends StatelessWidget {
+  final CommissionPeriod period;
+  const _Empty({required this.period});
+
+  @override
+  Widget build(BuildContext context) => Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(
+            period == CommissionPeriod.today
+                ? 'Pas encore de commission aujourd\'hui. Elles s\'ajoutent toutes seules à chaque SMS d\'opération.'
+                : 'Aucune commission sur cette période.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+      );
 }

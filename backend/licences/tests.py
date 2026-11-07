@@ -156,6 +156,22 @@ class ControleAccesTests(Base):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(r.data['transactions']), 1)
 
+    def test_detail_agence_resume_du_jour_sans_les_annulees(self):
+        from datetime import datetime
+        now = datetime.now().replace(microsecond=0)
+        SyncedTransaction.objects.create(
+            agence=self.agence, local_id='tx2', amount=20000, commission=100,
+            status='completed', transaction_created_at=now)
+        SyncedTransaction.objects.create(
+            agence=self.agence, local_id='tx3', amount=99999, commission=999,
+            status='cancelled', transaction_created_at=now)
+        r = self.patron_api.get(
+            f'/api/sync/agence-detail/{self.agence.id}/',
+            {'telephone': PATRON_TEL, 'device_id': PATRON_DEVICE})
+        jour = r.data['resume']['aujourdhui']
+        self.assertEqual(jour, {'operations': 1, 'volume': 20000.0, 'commissions': 100.0})
+        self.assertIsNotNone(r.data['resume']['derniere_synchro'])
+
     def test_liste_agences_et_codes_reserves_au_proprietaire(self):
         r = self.intrus_api.get('/api/licence/agences/', {
             'telephone': PATRON_TEL, 'device_id': INTRUS_DEVICE})

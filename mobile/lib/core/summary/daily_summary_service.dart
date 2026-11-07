@@ -59,11 +59,14 @@ class DailySummaryService {
       final db = await DatabaseHelper.instance.database;
       final summary = await summarize(db, yesterday);
       if (summary == null) return;
+      // Journée travaillée sans clôture de caisse : on le rappelle, et la
+      // notification ouvre directement la clôture.
+      final closed = await isClosed(db, yesterday);
       await NotificationService().showSummary(
         id: 920004,
         title: 'Votre journée d\'hier',
-        body: summary.text,
-        payload: 'commissions',
+        body: closed ? summary.text : '${summary.text} Clôture de caisse non faite : touchez pour la faire.',
+        payload: closed ? 'commissions' : 'cloture',
       );
     } catch (e) {
       debugPrint('[DailySummary] erreur: $e');
@@ -96,6 +99,14 @@ class DailySummaryService {
       commissions: (t['commissions'] as num).toDouble(),
       commissionsWeekBefore: (before['commissions'] as num).toDouble(),
     );
+  }
+
+  /// Une clôture de caisse existe-t-elle pour [day] (table v17) ?
+  @visibleForTesting
+  static Future<bool> isClosed(DatabaseExecutor db, DateTime day) async {
+    final rows = await db.query('cash_closings',
+        columns: ['id'], where: 'day = ?', whereArgs: [_dayKey(day)], limit: 1);
+    return rows.isNotEmpty;
   }
 
   static String _dayKey(DateTime d) =>

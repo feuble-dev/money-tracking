@@ -71,4 +71,24 @@ void main() {
     final next = await SyncService.pending(db, 'ag', first.cursors);
     expect(next.transactions.map((t) => t['id']), ['t3']);
   });
+
+  test('une ligne insérée sans agence est rattachée à l\'agence de l\'appareil', () async {
+    // Le pipeline SMS, l'import et les recharges n'écrivent pas agence_id :
+    // sans le trigger v18, rien de tout cela n'atteignait le patron.
+    final first = await SyncService.pending(db, 'ag', {});
+    await db.insert('transactions', {
+      'id': 'sms1', 'operator_id': 'om', 'transaction_type': 'retrait', 'direction': 'out',
+      'amount': 2000, 'commission': 10, 'client_phone': '70000002', 'status': 'completed',
+      'source': 'sms_auto', 'created_at': DateTime.now().toIso8601String(),
+    });
+    await db.insert('caisse_operations', {
+      'id': 'r1', 'operator_id': 'om', 'type': 'rechargement', 'montant': 100000,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    final next = await SyncService.pending(db, 'ag', first.cursors);
+    expect(next.transactions.map((t) => t['id']), ['sms1']);
+    expect(next.caisseOps.map((o) => o['id']), ['r1']);
+    // Le rattachement ne compte pas comme une modification à renvoyer.
+    expect((await SyncService.pending(db, 'ag', next.cursors)).isEmpty, isTrue);
+  });
 }
