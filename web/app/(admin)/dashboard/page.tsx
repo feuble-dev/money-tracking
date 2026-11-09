@@ -1,425 +1,333 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
-import StatCard from '@/components/admin/StatCard';
-import { getStats } from '@/lib/api';
+import React, { useState } from 'react';
+import Link from 'next/link';
+import Icon, { type IconName } from '@/components/site/Icon';
+import Button from '@/components/ui/Button';
+import Badge from '@/components/ui/Badge';
+import Card from '@/components/admin/ui/Card';
+import KpiTile from '@/components/admin/ui/KpiTile';
+import PageHeader from '@/components/admin/ui/PageHeader';
+import Segmented from '@/components/admin/ui/Segmented';
+import EmptyState from '@/components/admin/ui/EmptyState';
+import AreaChart from '@/components/admin/charts/AreaChart';
+import BarChart from '@/components/admin/charts/BarChart';
+import Donut from '@/components/admin/charts/Donut';
+import { getAnalytics } from '@/lib/api';
+import { useAsync } from '@/lib/useAsync';
+import { ago, compact, fcfa, num } from '@/lib/format';
+import type { Analytics } from '@/lib/admin-types';
 
-interface ExpiringLicence {
-  id: number;
-  tel: string;
-  agence: string;
-  code: string;
-  expire: string;
-  jours: number;
-}
+const BLUE = '#1565C0';
+const GREEN = '#2E7D32';
 
-interface Activity {
-  type: string;
-  text: string;
-  time: string;
-  color: string;
-}
-
-interface MonthlyItem {
-  month: string;
-  value: number;
-  revenue: number;
-}
-
-interface GrowthItem {
-  month: string;
-  value: number;
-}
-
-interface Repartition {
-  annuel: number;
-  mensuel: number;
-  essai: number;
-}
-
-interface ComptesRepartition {
-  particulier: number;
-  agence: number;
-}
-
-interface CatalogCoverage {
-  countries: number;
-  operators: number;
-  transaction_types: number;
-}
-
-interface DashboardData {
-  licences_actives: number;
-  clients_total: number;
-  agences_total: number;
-  demandes_en_attente: number;
-  revenus_mois: number;
-  licences_expirant: ExpiringLicence[];
-  monthly_data: MonthlyItem[];
-  repartition: Repartition;
-  comptes_repartition: ComptesRepartition;
-  catalog_coverage: CatalogCoverage;
-  agences_growth: GrowthItem[];
-  activite: Activity[];
-}
-
-const EMPTY_DATA: DashboardData = {
-  licences_actives: 0,
-  clients_total: 0,
-  agences_total: 0,
-  demandes_en_attente: 0,
-  revenus_mois: 0,
-  licences_expirant: [],
-  monthly_data: [],
-  repartition: { annuel: 0, mensuel: 0, essai: 0 },
-  comptes_repartition: { particulier: 0, agence: 0 },
-  catalog_coverage: { countries: 0, operators: 0, transaction_types: 0 },
-  agences_growth: [],
-  activite: [],
-};
+const periods = [
+  { value: 7, label: '7 j' },
+  { value: 30, label: '30 j' },
+  { value: 90, label: '90 j' },
+  { value: 365, label: '12 mois' },
+];
 
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-
-  const loadData = useCallback(async () => {
-    try {
-      const result = await getStats();
-      setData({ ...EMPTY_DATA, ...result });
-    } catch {
-      setData(EMPTY_DATA);
-    } finally {
-      setLoading(false);
-      setLastRefresh(new Date());
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 30000);
-    return () => clearInterval(interval);
-  }, [loadData]);
-
-  if (loading || !data) {
-    return (
-      <div className="flex items-center justify-center py-32">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-full border-4 border-primary/20 border-t-primary animate-spin mx-auto mb-4" />
-          <p className="text-muted text-sm">Chargement du dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
-  const {
-    licences_expirant, monthly_data, repartition, activite,
-    comptes_repartition, catalog_coverage, agences_growth,
-  } = data;
-
-  const maxVal = monthly_data.length > 0 ? Math.max(...monthly_data.map(d => d.value), 1) : 1;
-  const totalLicencesMois = monthly_data.reduce((s, d) => s + d.value, 0);
-  const totalRepartition = repartition.annuel + repartition.mensuel + repartition.essai || 1;
-
-  const circumference = 2 * Math.PI * 38;
-  const annuelPct = repartition.annuel / totalRepartition;
-  const mensuelPct = repartition.mensuel / totalRepartition;
-  const essaiPct = repartition.essai / totalRepartition;
-
-  const totalComptes = comptes_repartition.particulier + comptes_repartition.agence || 1;
-  const agenceComptePct = comptes_repartition.agence / totalComptes;
-  const particulierComptePct = comptes_repartition.particulier / totalComptes;
-
-  const maxAgencesGrowth = agences_growth.length > 0 ? Math.max(...agences_growth.map(d => d.value), 1) : 1;
+  const [jours, setJours] = useState(30);
+  const { data, loading, error, reload } = useAsync(() => getAnalytics(jours), [jours]);
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-extrabold text-dark">Tableau de bord</h1>
-          <p className="text-muted text-sm mt-1">
-            Données en temps réel - mis à jour {lastRefresh.toLocaleTimeString('fr-FR')}
-          </p>
-        </div>
-        <button onClick={loadData}
-          className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-muted hover:text-primary hover:border-primary/30 transition-all shadow-soft">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Actualiser
-        </button>
+    <div className="space-y-6">
+      <PageHeader
+        title="Vue d’ensemble"
+        description={data ? `Sur les ${periodLabel(jours)}, comparé à la période précédente.` : 'Chargement des indicateurs…'}
+        actions={
+          <>
+            <Segmented value={jours} options={periods} onChange={setJours} />
+            <Button variant="outline" size="md" onClick={reload} loading={loading} aria-label="Actualiser">
+              <Icon name="sync" className="h-4 w-4" strokeWidth={2} />
+            </Button>
+          </>
+        }
+      />
+
+      {error && !data ? (
+        <Card>
+          <EmptyState title="Impossible de charger le tableau de bord" text={error} action={<Button onClick={reload}>Réessayer</Button>} />
+        </Card>
+      ) : !data ? (
+        <Skeleton />
+      ) : (
+        <Content data={data} />
+      )}
+    </div>
+  );
+}
+
+function periodLabel(j: number) {
+  return j === 365 ? '12 derniers mois' : `${j} derniers jours`;
+}
+
+function Content({ data }: { data: Analytics }) {
+  const { kpis, series, licences } = data;
+  const inscriptions = series.inscriptions_particulier.map((p, i) => p.value + (series.inscriptions_agence[i]?.value ?? 0));
+  const licenceTotal = licences.payantes + licences.essai + licences.suspendues + licences.expirees;
+
+  return (
+    <>
+      <TodoStrip data={data} />
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiTile
+          label="Revenus encaissés"
+          value={fcfa(kpis.revenus.value)}
+          delta={kpis.revenus.delta}
+          hint="vs période préc."
+          trend={series.revenus.map((p) => p.value)}
+          color={GREEN}
+        />
+        <KpiTile
+          label="Revenu mensuel récurrent"
+          value={fcfa(kpis.mrr)}
+          hint="licences payantes en cours, ramenées au mois"
+        />
+        <KpiTile
+          label="Nouveaux comptes"
+          value={num(kpis.nouveaux_comptes.value)}
+          delta={kpis.nouveaux_comptes.delta}
+          hint="vs période préc."
+          trend={inscriptions}
+          href="/clients"
+        />
+        <KpiTile
+          label="Volume synchronisé"
+          value={`${compact(kpis.volume_synchronise.value)} FCFA`}
+          delta={kpis.volume_synchronise.delta}
+          hint={`${num(kpis.transactions_synchronisees)} opérations`}
+          trend={series.volume.map((p) => p.value)}
+        />
       </div>
 
-      {/* Stats Cards — KPI principaux */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Licences actives" value={data.licences_actives} color="blue"
-          icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>} />
-        <StatCard title="Agences actives" value={data.agences_total} color="green"
-          icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m-1 4h1m4-4h1m-1 4h1M9 21v-4a2 2 0 012-2h2a2 2 0 012 2v4" /></svg>} />
-        <StatCard title="Demandes en attente" value={data.demandes_en_attente} color="orange"
-          icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} />
-        <StatCard title="Revenus ce mois" value={`${data.revenus_mois.toLocaleString('fr-FR')} FCFA`} color="purple"
-          icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} />
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-gray-200/80 bg-gray-200/80 lg:grid-cols-4">
+        <MiniStat label="Comptes au total" value={num(kpis.comptes_total)} hint={`${num(kpis.particuliers)} particuliers · ${num(kpis.agences_comptes)} agences`} />
+        <MiniStat label="Agences actives" value={num(kpis.agences_actives)} hint="hors comptes particuliers" />
+        <MiniStat label="Téléphones actifs" value={num(kpis.appareils_actifs_30j)} hint="ont appelé l’API sur 30 jours" />
+        <MiniStat
+          label="Conversion après essai"
+          value={kpis.conversion_essai === null ? '—' : `${kpis.conversion_essai} %`}
+          hint="agences de plus de 3 mois ayant payé"
+        />
       </div>
 
-      {/* Couverture du catalogue — mini-tuiles */}
-      <div className="grid sm:grid-cols-3 gap-4">
-        {[
-          { label: 'Pays couverts', value: catalog_coverage.countries, icon: 'M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-          { label: 'Opérateurs actifs', value: catalog_coverage.operators, icon: 'M9 7h6m0 10v-3m-3 3v-6m-3 6v-1m3-16l9 4v2H3V5l9-4z' },
-          { label: 'Types de transaction', value: catalog_coverage.transaction_types, icon: 'M8 7h12m0 0l-4-4m4 4l-4 4M16 17H4m0 0l4 4m-4-4l4-4' },
-        ].map((tile) => (
-          <div key={tile.label} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-soft flex items-center gap-4">
-            <div className="w-11 h-11 rounded-xl bg-primary-50 text-primary flex items-center justify-center flex-shrink-0">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={tile.icon} />
-              </svg>
-            </div>
-            <div>
-              <p className="text-2xl font-extrabold text-dark leading-none">{tile.value}</p>
-              <p className="text-xs text-muted mt-1">{tile.label}</p>
-            </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <Card title="Revenus" subtitle="Licences payées, par jour (par semaine sur 12 mois)" className="xl:col-span-2">
+          <AreaChart data={series.revenus} color={GREEN} format={fcfa} />
+        </Card>
+        <Card title="Licences d’agence" subtitle="État actuel, une agence comptée une fois">
+          <div className="pt-2">
+            <Donut
+              slices={[
+                { label: 'Payantes', value: licences.payantes, color: GREEN },
+                { label: 'En essai', value: licences.essai, color: BLUE },
+                { label: 'Suspendues', value: licences.suspendues, color: '#D97706' },
+                { label: 'Expirées', value: licences.expirees, color: '#64748B' },
+              ]}
+              center={
+                <>
+                  <span className="font-display text-2xl font-bold text-ink">{num(licenceTotal)}</span>
+                  <span className="text-[11px] text-muted">agences</span>
+                </>
+              }
+            />
           </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card
+          title="Inscriptions"
+          subtitle="Nouveaux comptes par type"
+          action={
+            <div className="flex gap-3 text-xs text-muted">
+              <Legend color={BLUE} label="Particulier" />
+              <Legend color={GREEN} label="Agence" />
+            </div>
+          }
+        >
+          <BarChart
+            dates={series.inscriptions_particulier.map((p) => p.date)}
+            series={[
+              { label: 'Particulier', color: BLUE, values: series.inscriptions_particulier.map((p) => p.value) },
+              { label: 'Agence', color: GREEN, values: series.inscriptions_agence.map((p) => p.value) },
+            ]}
+          />
+        </Card>
+        <Card title="Volume Mobile Money" subtitle="Opérations synchronisées par les agences">
+          <AreaChart data={series.volume} color={BLUE} format={fcfa} />
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <Card title="Expirent dans les 14 jours" subtitle="À relancer avant la coupure" padded={false}>
+          {data.expirent_bientot.length === 0 ? (
+            <p className="px-5 pb-6 pt-3 text-sm text-muted">Aucune licence n’expire bientôt.</p>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {data.expirent_bientot.map((l) => (
+                <li key={l.id}>
+                  <Link href={`/licences?q=${encodeURIComponent(l.telephone)}`} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-soft/70">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-ink">{l.agence}</p>
+                      <p className="text-xs text-muted">{l.telephone} · {l.statut === 'essai' ? 'essai' : 'payante'}</p>
+                    </div>
+                    <Badge variant={l.jours <= 3 ? 'danger' : 'warning'}>
+                      {l.jours === 0 ? 'aujourd’hui' : `${l.jours} j`}
+                    </Badge>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <RankCard
+          title="Agences les plus actives"
+          subtitle="Volume synchronisé sur la période"
+          rows={data.top_agences.map((a) => ({ key: a.id, label: a.nom, hint: `${num(a.transactions)} op.`, value: a.volume }))}
+          empty="Aucune opération synchronisée sur la période."
+        />
+        <RankCard
+          title="Opérateurs"
+          subtitle="Volume synchronisé par opérateur"
+          rows={data.operateurs.map((o) => ({ key: o.nom, label: o.nom, hint: `${num(o.transactions)} op.`, value: o.volume }))}
+          empty="Aucune opération synchronisée sur la période."
+        />
+      </div>
+
+      <Card title="Activité récente" padded={false}>
+        {data.activite.length === 0 ? (
+          <p className="px-5 pb-6 pt-3 text-sm text-muted">Rien pour le moment.</p>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {data.activite.map((e, i) => (
+              <li key={i} className="flex items-center gap-3 px-5 py-3">
+                <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${activityStyle[e.type].cls}`}>
+                  <Icon name={activityStyle[e.type].icon} className="h-4 w-4" strokeWidth={1.8} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-ink">{e.texte}</p>
+                  <p className="truncate text-xs text-muted">{e.detail}</p>
+                </div>
+                <span className="flex-shrink-0 text-xs text-muted">{ago(e.date)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
+  );
+}
+
+const activityStyle: Record<Analytics['activite'][number]['type'], { icon: IconName; cls: string }> = {
+  compte: { icon: 'users', cls: 'bg-primary-50 text-primary' },
+  paiement: { icon: 'coins', cls: 'bg-accent-50 text-accent' },
+  demande: { icon: 'inbox', cls: 'bg-amber-50 text-amber-700' },
+};
+
+/** Ce qui attend une action de l'admin, en tête de page. */
+function TodoStrip({ data }: { data: Analytics }) {
+  const items = [
+    { n: data.kpis.demandes_en_attente, label: 'demande(s) d’activation à valider', href: '/demandes', icon: 'inbox' as IconName },
+    { n: data.kpis.achats_en_attente, label: 'achat(s) d’import SMS à valider', href: '/achats-historique', icon: 'history' as IconName },
+    { n: data.expirent_bientot.length, label: 'licence(s) expirent sous 14 jours', href: '/licences', icon: 'clock' as IconName },
+  ].filter((i) => i.n > 0);
+  if (items.length === 0) return null;
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      {items.map((i) => (
+        <Link
+          key={i.href}
+          href={i.href}
+          className="group flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 transition-colors hover:border-amber-300"
+        >
+          <Icon name={i.icon} className="h-5 w-5 text-amber-700" strokeWidth={1.8} />
+          <p className="text-sm text-amber-900">
+            <span className="font-semibold">{i.n}</span> {i.label}
+          </p>
+          <Icon name="arrowRight" className="ml-auto h-4 w-4 text-amber-700 transition-transform group-hover:translate-x-0.5" strokeWidth={2} />
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="bg-white p-4 sm:p-5">
+      <p className="text-xs font-medium text-muted">{label}</p>
+      <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-ink">{value}</p>
+      <p className="mt-1 truncate text-xs text-muted">{hint}</p>
+    </div>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
+
+/** Classement avec barre proportionnelle (top agences, opérateurs). */
+function RankCard({
+  title,
+  subtitle,
+  rows,
+  empty,
+}: {
+  title: string;
+  subtitle: string;
+  rows: { key: string | number; label: string; hint: string; value: number }[];
+  empty: string;
+}) {
+  const max = Math.max(...rows.map((r) => r.value), 1);
+  return (
+    <Card title={title} subtitle={subtitle}>
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted">{empty}</p>
+      ) : (
+        <ul className="space-y-3.5">
+          {rows.map((r) => (
+            <li key={r.key}>
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="truncate font-medium text-ink">{r.label}</span>
+                <span className="flex-shrink-0 tabular-nums text-ink">
+                  {compact(r.value)} <span className="text-xs text-muted">FCFA · {r.hint}</span>
+                </span>
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                <div className="h-full rounded-full bg-primary transition-[width] duration-700" style={{ width: `${(r.value / max) * 100}%` }} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function Skeleton() {
+  const block = 'animate-pulse rounded-2xl border border-gray-200/80 bg-white';
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className={`${block} h-[118px]`} />
         ))}
       </div>
-
-      {/* Charts row 1 */}
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Bar chart : licences par mois */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6 shadow-soft">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h3 className="text-lg font-bold text-dark">Licences par mois</h3>
-              <p className="text-sm text-muted mt-0.5">12 derniers mois</p>
-            </div>
-            {totalLicencesMois > 0 && (
-              <div className="px-3 py-1.5 bg-primary-50 text-primary text-xs font-semibold rounded-lg">
-                {totalLicencesMois} total
-              </div>
-            )}
-          </div>
-          {monthly_data.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-muted text-sm">
-              Aucune donnée disponible
-            </div>
-          ) : (
-            <div className="h-64 flex items-end justify-between gap-2 px-2">
-              {monthly_data.map((d, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-2 group">
-                  <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
-                    {d.value}
-                  </span>
-                  <div className="w-full relative rounded-t-lg overflow-hidden cursor-pointer transition-all duration-300"
-                    style={{ height: `${(d.value / maxVal) * 200}px`, minHeight: d.value > 0 ? '8px' : '0' }}>
-                    <div className="absolute inset-0 bg-gradient-to-t from-primary to-primary-light opacity-80 group-hover:opacity-100 transition-opacity" />
-                    <div className="absolute inset-0 shimmer opacity-0 group-hover:opacity-100" />
-                  </div>
-                  <span className="text-[11px] text-muted font-medium">{d.month}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Donut chart : répartition des plans */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft">
-          <h3 className="text-lg font-bold text-dark mb-2">Répartition des plans</h3>
-          <p className="text-sm text-muted mb-6">Distribution par durée</p>
-          <div className="flex flex-col items-center">
-            <div className="relative w-44 h-44 mb-6">
-              <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-                <circle cx="50" cy="50" r="38" fill="none" stroke="#E5E7EB" strokeWidth="12" />
-                {annuelPct > 0 && (
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="#1565C0" strokeWidth="12"
-                    strokeDasharray={`${annuelPct * circumference} ${circumference}`} strokeDashoffset="0" strokeLinecap="round" />
-                )}
-                {mensuelPct > 0 && (
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="#2E7D32" strokeWidth="12"
-                    strokeDasharray={`${mensuelPct * circumference} ${circumference}`}
-                    strokeDashoffset={`${-annuelPct * circumference}`} strokeLinecap="round" />
-                )}
-                {essaiPct > 0 && (
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="#42A5F5" strokeWidth="12"
-                    strokeDasharray={`${essaiPct * circumference} ${circumference}`}
-                    strokeDashoffset={`${-(annuelPct + mensuelPct) * circumference}`} strokeLinecap="round" />
-                )}
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-extrabold text-dark">{data.licences_actives}</span>
-                <span className="text-xs text-muted">actives</span>
-              </div>
-            </div>
-            <div className="space-y-3 w-full">
-              {[
-                { label: 'Annuel', color: 'bg-primary', count: repartition.annuel, pct: Math.round(annuelPct * 100) },
-                { label: 'Mensuel', color: 'bg-accent', count: repartition.mensuel, pct: Math.round(mensuelPct * 100) },
-                { label: 'Essai', color: 'bg-primary-light', count: repartition.essai, pct: Math.round(essaiPct * 100) },
-              ].map((p) => (
-                <div key={p.label} className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${p.color}`} />
-                  <span className="text-sm text-gray-600 flex-1">{p.label}</span>
-                  <span className="text-sm font-bold text-dark">{p.count}</span>
-                  <span className="text-xs text-muted">{p.pct}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+      <div className={`${block} h-[92px]`} />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className={`${block} h-[300px] xl:col-span-2`} />
+        <div className={`${block} h-[300px]`} />
       </div>
-
-      {/* Charts row 2 — agences & comptes */}
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Bar chart : croissance des agences */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6 shadow-soft">
-          <div className="mb-6">
-            <h3 className="text-lg font-bold text-dark">Croissance des agences</h3>
-            <p className="text-sm text-muted mt-0.5">Nouvelles agences créées - 12 derniers mois</p>
-          </div>
-          {agences_growth.length === 0 ? (
-            <div className="h-56 flex items-center justify-center text-muted text-sm">
-              Aucune donnée disponible
-            </div>
-          ) : (
-            <div className="h-56 flex items-end justify-between gap-2 px-2">
-              {agences_growth.map((d, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-2 group">
-                  <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
-                    {d.value}
-                  </span>
-                  <div className="w-full relative rounded-t-lg overflow-hidden cursor-pointer transition-all duration-300"
-                    style={{ height: `${(d.value / maxAgencesGrowth) * 176}px`, minHeight: d.value > 0 ? '8px' : '0' }}>
-                    <div className="absolute inset-0 bg-gradient-to-t from-accent to-accent-light opacity-80 group-hover:opacity-100 transition-opacity" />
-                  </div>
-                  <span className="text-[11px] text-muted font-medium">{d.month}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Split bar : particulier vs agence */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-soft">
-          <h3 className="text-lg font-bold text-dark mb-2">Comptes</h3>
-          <p className="text-sm text-muted mb-6">Particulier vs Agence (D7)</p>
-
-          <div className="h-3 w-full rounded-full overflow-hidden flex mb-6 bg-gray-100">
-            {agenceComptePct > 0 && (
-              <div className="bg-primary h-full" style={{ width: `${agenceComptePct * 100}%` }} />
-            )}
-            {particulierComptePct > 0 && (
-              <div className="bg-accent h-full" style={{ width: `${particulierComptePct * 100}%` }} />
-            )}
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full bg-primary" />
-              <span className="text-sm text-gray-600 flex-1">Agence</span>
-              <span className="text-sm font-bold text-dark">{comptes_repartition.agence}</span>
-              <span className="text-xs text-muted">{Math.round(agenceComptePct * 100)}%</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full bg-accent" />
-              <span className="text-sm text-gray-600 flex-1">Particulier</span>
-              <span className="text-sm font-bold text-dark">{comptes_repartition.particulier}</span>
-              <span className="text-xs text-muted">{Math.round(particulierComptePct * 100)}%</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom row */}
-      <div className="grid lg:grid-cols-5 gap-6">
-        {/* Expiring licences */}
-        <div className="lg:col-span-3 bg-white rounded-2xl border border-gray-100 shadow-soft">
-          <div className="p-6 border-b border-gray-50 flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-dark">Licences expirant bientôt</h3>
-              <p className="text-sm text-muted mt-0.5">Dans les 30 prochains jours</p>
-            </div>
-            <span className="px-3 py-1 bg-orange-50 text-orange-600 text-xs font-semibold rounded-lg">
-              {licences_expirant.length} licence{licences_expirant.length > 1 ? 's' : ''}
-            </span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-50">
-                  {['Téléphone', 'Agence', 'Code licence', 'Expire le', 'Jours'].map((h) => (
-                    <th key={h} className="text-left px-6 py-3 text-[11px] font-bold text-muted uppercase tracking-wider">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {licences_expirant.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="text-center py-12 text-muted text-sm">
-                      <svg className="w-12 h-12 text-gray-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Aucune licence n&apos;expire prochainement
-                    </td>
-                  </tr>
-                ) : (
-                  licences_expirant.map((l) => (
-                    <tr key={l.id} className="border-b border-gray-50/50 hover:bg-soft/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <span className="text-sm font-semibold text-dark">{l.tel}</span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-muted">{l.agence}</td>
-                      <td className="px-6 py-4">
-                        <code className="text-xs bg-gray-50 px-2 py-1 rounded-md text-gray-600 font-mono">
-                          {l.code.length > 20 ? l.code.substring(0, 20) + '...' : l.code}
-                        </code>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-muted">{l.expire}</td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
-                          l.jours <= 5 ? 'bg-red-50 text-red-700' : l.jours <= 10 ? 'bg-orange-50 text-orange-700' : 'bg-yellow-50 text-yellow-700'
-                        }`}>
-                          {l.jours}j
-                        </span>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Recent activity */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6 shadow-soft">
-          <h3 className="text-lg font-bold text-dark mb-1">Activité récente</h3>
-          <p className="text-sm text-muted mb-6">Dernières actions</p>
-          {activite.length === 0 ? (
-            <div className="text-center py-8 text-muted text-sm">
-              <svg className="w-12 h-12 text-gray-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Aucune activité récente
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {activite.map((a, i) => (
-                <div key={i} className="flex gap-3">
-                  <div className="relative">
-                    <div className={`w-2.5 h-2.5 rounded-full ${a.color} mt-1.5`} />
-                    {i < activite.length - 1 && (
-                      <div className="absolute top-4 left-1 w-0.5 h-full bg-gray-100" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-dark leading-snug">{a.text}</p>
-                    <p className="text-xs text-muted mt-0.5">{a.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    </>
   );
 }

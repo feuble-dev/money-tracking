@@ -8,6 +8,7 @@ import '../../../features/dashboard/providers/dashboard_provider.dart';
 import '../../../features/transactions/providers/transaction_provider.dart';
 import '../../licence/licence_storage.dart';
 import '../../theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
 import '../historique_service.dart';
 import '../historique_storage.dart';
 
@@ -46,8 +47,11 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
     _checkStatus();
   }
 
+  /// `_dejaActif` = l'achat existant couvre la date de début CHOISIE (un
+  /// achat ne couvre que la période payée) — recalculé à chaque changement
+  /// de date.
   Future<void> _checkStatus() async {
-    final active = await HistoriqueStorage.estActive();
+    final active = await HistoriqueStorage.couvre(_dateDebut);
     if (mounted) setState(() => _dejaActif = active);
   }
 
@@ -124,6 +128,7 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
           _dateFin = date;
         }
       });
+      if (isStart) _checkStatus();
     }
   }
 
@@ -132,6 +137,7 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
       _dateDebut = DateTime.now().subtract(Duration(days: days));
       _dateFin = DateTime.now();
     });
+    _checkStatus();
   }
 
   Future<void> _startImport() async {
@@ -273,13 +279,16 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
                     style: TextStyle(
                       color: montantEstime == 0 ? Colors.green.shade800 : Colors.orange.shade800,
                     )),
-                const Spacer(),
-                Text(
+                const SizedBox(width: 12),
+                Expanded(
+                  child: AmountText(
                   montantEstime == 0 ? 'Gratuit' : '${_fcfaFmt.format(montantEstime)} FCFA',
+                  alignment: AlignmentDirectional.centerEnd,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 20,
                     color: montantEstime == 0 ? Colors.green.shade800 : Colors.orange.shade800,
+                  ),
                   ),
                 ),
               ],

@@ -21,7 +21,13 @@
     <application
         android:label="MoneyTracking"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false">
+        <!-- Pas de sauvegarde Android automatique : elle envoyait la base
+             (transactions, clients, dépenses) en clair dans Google Drive, et
+             une restauration rendait flutter_secure_storage illisible (PIN,
+             licence). Les sauvegardes passent par l'export chiffré (D25). -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

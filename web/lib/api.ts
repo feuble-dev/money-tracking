@@ -1,4 +1,8 @@
 import axios from 'axios';
+import type {
+  AchatHistorique, Analytics, ClientDetail, ClientRow, Compteurs, Demande, Licence,
+  LicenceStatut, NotificationRow, SearchResults,
+} from './admin-types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -29,7 +33,10 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
+    // Session expirée : retour à la connexion. Pas pour l'appel de login
+    // lui-même, dont le 401 (mauvais mot de passe) s'affiche dans le formulaire.
+    const isLogin = String(error.config?.url ?? '').includes('/admin/login/');
+    if (error.response?.status === 401 && !isLogin && typeof window !== 'undefined') {
       localStorage.removeItem('admin_token');
       window.location.href = '/login';
     }
@@ -43,16 +50,32 @@ export async function login(username: string, password: string) {
   return res.data;
 }
 
-// Dashboard stats
-export async function getStats() {
-  const res = await api.get('/admin/stats/');
+// Tableau de bord : tout en un appel, sur une période glissante.
+export async function getAnalytics(jours: number): Promise<Analytics> {
+  const res = await api.get('/admin/analytics/', { params: { jours } });
+  return res.data;
+}
+
+// Badges de la barre latérale.
+export async function getCompteurs(): Promise<Compteurs> {
+  const res = await api.get('/admin/compteurs/');
+  return res.data;
+}
+
+// Recherche globale (palette Ctrl+K).
+export async function searchAdmin(q: string): Promise<SearchResults> {
+  const res = await api.get('/admin/recherche/', { params: { q } });
   return res.data;
 }
 
 // Licences
-export async function getLicences(search?: string) {
-  const params = search ? { search } : {};
-  const res = await api.get('/admin/licences/', { params });
+export async function getLicences(): Promise<Licence[]> {
+  const res = await api.get('/admin/licences/');
+  return res.data;
+}
+
+export async function licenceAction(id: number, action: 'suspendre' | 'reactiver'): Promise<{ id: number; statut: LicenceStatut }> {
+  const res = await api.post(`/admin/licences/${id}/${action}/`);
   return res.data;
 }
 
@@ -205,13 +228,13 @@ export async function deleteSmsPattern(id: number) {
 }
 
 // Demandes
-export async function getDemandes() {
+export async function getDemandes(): Promise<Demande[]> {
   const res = await api.get('/admin/demandes/');
   return res.data;
 }
 
-export async function validerDemande(id: number) {
-  const res = await api.post(`/admin/demandes/${id}/valider/`);
+export async function validerDemande(id: number, note = ''): Promise<{ code: string; cle_hors_ligne: string; date_fin: string }> {
+  const res = await api.post(`/admin/demandes/${id}/valider/`, { note });
   return res.data;
 }
 
@@ -221,14 +244,23 @@ export async function rejeterDemande(id: number, motif: string) {
 }
 
 // Clients
-export async function getClients(search?: string) {
-  const params = search ? { search } : {};
-  const res = await api.get('/admin/clients/', { params });
+export async function getClients(): Promise<ClientRow[]> {
+  const res = await api.get('/admin/clients/');
   return res.data;
 }
 
+export async function getClient(id: number): Promise<ClientDetail> {
+  const res = await api.get(`/admin/clients/${id}/`);
+  return res.data;
+}
+
+// Un téléphone perdu ou volé ne peut plus appeler l'API au nom du compte.
+export async function revokeDevice(id: number) {
+  await api.delete(`/admin/appareils/${id}/`);
+}
+
 // Notifications
-export async function getNotifications() {
+export async function getNotifications(): Promise<NotificationRow[]> {
   const res = await api.get('/admin/notifications/');
   return res.data;
 }
@@ -244,7 +276,7 @@ export async function envoyerNotification(data: {
 }
 
 // Achats Historique
-export async function getAchatsHistorique() {
+export async function getAchatsHistorique(): Promise<AchatHistorique[]> {
   const res = await api.get('/admin/achats-historique/');
   return res.data;
 }

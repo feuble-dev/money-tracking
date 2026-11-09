@@ -21,6 +21,21 @@ class OperatorAvatar extends StatelessWidget {
     this.radius = 16,
   });
 
+  /// `File.existsSync()` est un appel disque synchrone : sans cache, chaque
+  /// ligne de liste en refaisait un à chaque reconstruction. Un logo ne
+  /// disparaît pas en cours de session ; si c'était le cas, l'errorBuilder
+  /// de l'image retombe sur l'initiale.
+  /// Seuls les fichiers trouvés sont mémorisés : un logo pas encore
+  /// téléchargé (resync en cours) doit pouvoir apparaître au rendu suivant.
+  static final Set<String> _existing = {};
+
+  static bool _fileExists(String path) {
+    if (_existing.contains(path)) return true;
+    final found = File(path).existsSync();
+    if (found) _existing.add(path);
+    return found;
+  }
+
   bool get _isRemoteUrl =>
       logoPath != null &&
       (logoPath!.startsWith('http://') || logoPath!.startsWith('https://'));
@@ -29,7 +44,7 @@ class OperatorAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final isRemote = _isRemoteUrl;
     final isLocalFile =
-        !isRemote && logoPath != null && File(logoPath!).existsSync();
+        !isRemote && logoPath != null && _fileExists(logoPath!);
     final hasLogo = isRemote || isLocalFile;
 
     final fallback = Text(
@@ -82,10 +97,22 @@ class OperatorAvatar extends StatelessWidget {
       );
     }
 
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: AppColors.primaryColor.withAlpha(20),
-      backgroundImage: FileImage(File(logoPath!)),
+    // Décodé à la taille affichée, pas en pleine résolution : un logo de
+    // 1024 px pour un avatar de 32 px gaspillait mémoire et temps de rendu.
+    final px = (radius * 2 * MediaQuery.devicePixelRatioOf(context)).round();
+    return ClipOval(
+      child: Image.file(
+        File(logoPath!),
+        width: radius * 2,
+        height: radius * 2,
+        fit: BoxFit.cover,
+        cacheWidth: px,
+        errorBuilder: (context, error, stackTrace) => CircleAvatar(
+          radius: radius,
+          backgroundColor: AppColors.primaryColor.withAlpha(20),
+          child: fallback,
+        ),
+      ),
     );
   }
 }

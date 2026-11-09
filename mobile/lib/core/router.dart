@@ -9,6 +9,9 @@ import '../features/auth/screens/lock_timeout_screen.dart';
 import '../features/backup/screens/backup_screen.dart';
 import '../features/backup/screens/restore_screen.dart';
 import '../features/caisse/screens/caisse_screen.dart';
+import '../features/caisse/screens/cash_closing_screen.dart';
+import '../features/dashboard/screens/advanced_settings_screen.dart';
+import '../features/dashboard/screens/detection_help_screen.dart';
 import '../features/clients/screens/client_detail_screen.dart';
 import '../features/clients/screens/client_form_screen.dart';
 import '../features/clients/screens/clients_list_screen.dart';
@@ -33,7 +36,10 @@ import '../features/transactions/screens/pending_list_screen.dart';
 import '../features/transactions/screens/pending_transaction_screen.dart';
 import '../features/transactions/screens/cancelled_transactions_screen.dart';
 import '../features/transactions/screens/transactions_list_screen.dart';
+import '../features/money/screens/account_screen.dart';
+import '../features/money/screens/money_screen.dart';
 import '../shared/widgets/main_shell.dart';
+import 'money/account_ref.dart';
 import 'historique/screens/import_historique_screen.dart';
 import 'licence/screens/activation_screen.dart';
 import 'licence/screens/licence_status_screen.dart';
@@ -88,9 +94,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/dashboard';
       }
 
-      // Gestion des clients réservée aux comptes Agence (D18) — masquée du
-      // tiroir ET bloquée en accès direct.
-      if (accountType == 'particulier' && currentPath.startsWith('/clients')) {
+      // Gestion des clients et clôture de caisse : comptes Agence (D18).
+      if (accountType == 'particulier' &&
+          (currentPath.startsWith('/clients') || currentPath == '/caisse/cloture')) {
         return '/dashboard';
       }
 
@@ -144,13 +150,51 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
+          // Compte Particulier : « Mon argent » et Budget sont de vrais
+          // onglets (MainShell choisit les onglets selon le type de compte).
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/money',
+                builder: (context, state) => const MoneyScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/budget',
+                builder: (context, state) => const BudgetScreen(),
+              ),
+            ],
+          ),
         ],
+      ),
+      GoRoute(
+        path: '/money/account/:ref',
+        builder: (context, state) => AccountScreen(
+          account: AccountRef.tryParse(
+                  Uri.decodeComponent(state.pathParameters['ref']!)) ??
+              const AccountRef.wallet('?'),
+        ),
       ),
 
       // Paramètres
       GoRoute(
         path: '/settings',
         builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: '/settings/avances',
+        builder: (context, state) => const AdvancedSettingsScreen(),
+      ),
+      GoRoute(
+        path: '/settings/aide-detection',
+        builder: (context, state) => const DetectionHelpScreen(),
+      ),
+      GoRoute(
+        path: '/caisse/cloture',
+        builder: (context, state) => const CashClosingScreen(),
       ),
       GoRoute(
         path: '/settings/caisse',
@@ -244,12 +288,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) =>
             CategorizeScreen(startId: state.pathParameters['id']),
       ),
-      // Budget mensuel par motif (3ᵉ onglet du compte Particulier) + gestion
-      // des motifs et des règles d'auto-catégorisation.
-      GoRoute(
-        path: '/budget',
-        builder: (context, state) => const BudgetScreen(),
-      ),
+      // Gestion des motifs et des règles d'auto-catégorisation (le Budget
+      // est un onglet du shell).
       GoRoute(
         path: '/categories/manage',
         builder: (context, state) => const ManageCategoriesScreen(),

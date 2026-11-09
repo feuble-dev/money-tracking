@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../licence_service.dart';
 import '../licence_storage.dart';
@@ -367,14 +368,31 @@ class _ActivationScreenState extends State<ActivationScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
+                    // Les clés signées (MT2-…) sont sensibles à la casse et
+                    // longues : on les colle, on ne les tape pas.
                     TextField(
                       controller: _cleCtrl,
-                      textCapitalization: TextCapitalization.characters,
-                      decoration: const InputDecoration(
+                      minLines: 1,
+                      maxLines: 4,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      decoration: InputDecoration(
                         labelText: 'Clé de licence',
-                        hintText: 'MT-XXXXXXXX-XXXXXXXXYYYYMMDD',
-                        prefixIcon: Icon(Icons.key),
-                        border: OutlineInputBorder(),
+                        hintText: 'Collez la clé reçue (MT2-…)',
+                        prefixIcon: const Icon(Icons.key),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          tooltip: 'Coller',
+                          icon: const Icon(Icons.content_paste),
+                          onPressed: () async {
+                            final data = await Clipboard.getData('text/plain');
+                            final text = data?.text?.trim();
+                            if (text != null && text.isNotEmpty) {
+                              _cleCtrl.text = text;
+                            }
+                          },
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),

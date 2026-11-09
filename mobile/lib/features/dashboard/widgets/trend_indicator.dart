@@ -6,16 +6,26 @@ class TrendIndicator extends StatelessWidget {
   final double percentage;
   final String label;
 
+  /// `true` quand une hausse est une mauvaise nouvelle (ex. dépenses d'un
+  /// Particulier) : la hausse s'affiche alors en orange, la baisse en vert.
+  final bool invertColors;
+
   const TrendIndicator({
     super.key,
     required this.percentage,
     this.label = 'vs période précédente',
+    this.invertColors = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final isUp = percentage >= 0;
-    final color = isUp ? AppColors.depositColor : AppColors.withdrawColor;
+    final Color color;
+    if (invertColors) {
+      color = isUp ? Colors.orange.shade400 : Colors.green.shade400;
+    } else {
+      color = isUp ? AppColors.depositColor : AppColors.withdrawColor;
+    }
     final icon = isUp ? Icons.trending_up : Icons.trending_down;
 
     return Row(
@@ -31,11 +41,13 @@ class TrendIndicator extends StatelessWidget {
             color: color,
           ),
         ),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-        ),
+        if (label.isNotEmpty) ...[
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+          ),
+        ],
       ],
     );
   }

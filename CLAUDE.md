@@ -59,7 +59,7 @@ npx tsc --noEmit # type-check — must be clean before considering work done
 
 ## Architecture
 
-### Design decisions (D1–D12)
+### Design decisions (D1–D28)
 
 These were the key calls made during the catalog/multi-agence/sync pivot — know them before touching related code:
 
@@ -68,7 +68,7 @@ These were the key calls made during the catalog/multi-agence/sync pivot — kno
 - **D3 — `TransactionType` is a GLOBAL catalog**, not tied to one operator. Dépôt/Retrait/Transfert/Paiement marchand/... are created once in the admin catalog and reused across operators. `OperatorTransactionType` (junction: operator + transaction_type + ussd_code + commission_taux + is_active) carries the operator-specific attributes. `SmsPattern` belongs to an `OperatorTransactionType` (not directly to a type), since the SMS wording is operator-specific.
 - **D4 — Pricing is a DB model (`PricingTier`)**, not a hardcoded dict. Editable from admin without a deploy.
 - **D5 — SMS history import cost is computed on demand**: free ≤ 1 year back, 200 FCFA per additional year started (`HistoriqueService.calculer_cout`).
-- **D6 — Catalog integrity via `catalog_version` + ETag**, not a fake HMAC. A `Country.catalog_version` bumps on any change to its operators/types/patterns (via `catalog/signals.py`), enabling incremental resync. The resync itself is `CatalogSyncService.resyncOperators()` (mobile) — updates SMS patterns/transaction-type links for operators **already** imported (never adds a new operator the agent didn't choose), matched by `catalog_pattern_id`/`source='catalog'` so it never touches a custom pattern. Runs automatically and silently on every app start, plus a manual "Resynchroniser le catalogue" button in Settings → Diagnostic for immediate use. Without this, an admin correction to a broken SMS pattern (e.g. an untagged date that froze into the compiled regex as literal text, or the D5-era `_seed_catalog.py`/`seed_catalog` date-tagging bug — see below) would never reach an already-onboarded device.
+- **D6 — Catalog integrity via `catalog_version` + ETag**, not a fake HMAC. A `Country.catalog_version` bumps on any change to its operators/types/patterns (via `catalog/signals.py`), enabling incremental resync. The resync itself is `CatalogSyncService.resyncOperators()` (mobile) — updates SMS patterns/transaction-type links for operators **already** imported (never adds a new operator the agent didn't choose), matched by `catalog_pattern_id`/`source='catalog'` so it never touches a custom pattern. Runs automatically and silently on every app start, plus a manual "Mettre à jour les modèles de SMS" action (Paramètres avancés, and step 3 of the « Un SMS n'a pas été détecté ? » help) for immediate use. Without this, an admin correction to a broken SMS pattern (e.g. an untagged date that froze into the compiled regex as literal text, or the D5-era `_seed_catalog.py`/`seed_catalog` date-tagging bug — see below) would never reach an already-onboarded device.
 - **D7 — `Client.account_type`** (`particulier`|`agence`), chosen at onboarding. Drives mobile UI differences: Commissions route blocked entirely for `particulier` (`accountTypeProvider`, router redirect); the bottom nav's 3rd tab is "Commissions" for `agence` but "Budget" for `particulier` (same slot, different destination — `MainShell`, tapping it `context.push`es `/budget` directly rather than going through a shell branch; was `/settings` before D19/D20); the "name your agency" onboarding step is skipped for `particulier` (silent default agence); sync/affiliation runs for both account types (see dedicated sections below) but only `agence` UI ever uses the word "agence".
 - **D8 — `Agence` is the backend billing unit**, not just a local mobile concept. `Licence` FKs to `Agence` (not directly to `Client`). Each agence has its own licence lifecycle (essai/active/expirée), independent of siblings. **Multiple `Licence` rows can exist for the same `Agence`** — one per device authorized to operate it (see D12).
 - **D9 — Commission stays simple**: one rate per `OperatorTransactionType`, no split by direction. Deliberately not complicated further yet.
@@ -90,6 +90,18 @@ These were the key calls made during the catalog/multi-agence/sync pivot — kno
 
 - **D20 — Separate Particulier dashboard, branched inside the shared `DashboardScreen` (not a forked screen — D18 convention).** The legacy dashboard is agent-oriented (caisse float, commissions, operator ranking, "Clients" KPI, hours-of-activity). For `accountType == 'particulier'`, `DashboardScreen` renders `ParticulierDashboardTab` instead of `_DashboardTab` per tab (Global + per-operator tabs kept; period selector + AppBar shared). `particulierDashboardProvider` (family on `operatorId`, reads `dashboardFilterProvider`) aggregates personal-finance stats with **direct indexed queries** (v15 added `idx_tx_category`, `idx_tx_dir_status_date`) — `daily_summaries_v2` stays unused/available for a later optimization. Cards: **Ce mois** (net = revenus − dépenses, i.e. épargne, + trend), **Mes portefeuilles Mobile Money** (real `caisse.solde_actuel` — the SMS-announced balance, per operator), **Dépenses par motif** (donut + ranked bars), **À qui je donne le plus** (top beneficiaries by outgoing), **Évolution des dépenses**, **Par opérateur**. Empty state (no activity) guides to SMS-test / history import instead of showing empty charts. The Particulier bottom-nav 3rd tab now opens **`/budget`** (`BudgetScreen` — monthly ceiling per motif, progress vs current-month spend, 80%/over alerts) instead of pushing `/settings` (D7's original stopgap).
 
+- **D21 — Per-device server token (`X-Device-Token`, `licences/auth.py`).** A `device_id` proves nothing (old builds sent `Build.ID`, identical on every phone of a firmware) and a phone number is not a secret. The server issues a random token (`AppareilAutorise`, stored hashed) at account creation, password login, or affiliation request; the mobile `ApiClient` (`core/network/api_client.dart`) stores it in secure storage and sends it on every client-facing call. `exige_jeton` guards endpoints; owner-level actions (`appareil_proprietaire`) additionally require a device authorized by the owner (creation/login), never via affiliation. Pre-existing installs get a token **once** via `POST /api/licence/appareil/enregistrer/` (first claimer wins); afterwards a new token for that device needs the account password. New installs use a random UUID device id (`core/security/device_identity.dart`); existing installs keep their old id. Admin can revoke a device (`DELETE /api/admin/appareils/<id>/`). **Deploy backend + new APK together**: old apps get 401s.
+- **D22 — Offline licence keys are Ed25519-signed (`MT2-…`, `licences/signature.py`).** Replaces the unsigned/forgeable `MT-` HMAC check on the phone (the secret had to ship in the APK). Payload (13 bytes, `'>IH6sB'`): agence id, expiry as days since 2020-01-01, `sha256(device_id)[:6]`, statut — base64url, then a 64-byte signature. The private key is derived from `LICENCE_SECRET` (`sha256('moneytracking-ed25519:' + secret)`); the phone only holds the **public** key (fetched from `/api/licence/cle-publique/`, cached) and verifies with the `cryptography` Dart package (`core/licence/offline_key.dart`). `LicenceSerializer.cle_hors_ligne`, licence generation and demande validation all return the MT2 key. Legacy `MT-` codes still exist as DB identifiers but are no longer accepted as offline proof.
+- **D23 — Particulier is free, history import included.** Migration `licences/0008` gives every Particulier licence `date_fin = 2099-12-31`; mobile `LicenceStatut.gratuit`/`permetEcriture`, `LicenceStorage.estParticulier()`, `HistoriqueStorage` covers any date for a Particulier. Licence UI (banner, renew) is Agence-only; admin licence lists/analytics exclude Particuliers.
+- **D24 — SMS received while a licence is inactive are kept and replayed.** The pipeline is two-phase: the `sms_messages` row is always stored first with a status (`SmsStatus`: 0 pending, 1 transaction, 2 ignored, 3 processing); without an active licence the SMS stays pending and one "Transaction en attente" notification is shown. `main._startupLicence()` refreshes the licence (`verifierAuDemarrage`) then `replayPendingSms()` turns pending SMS into transactions with their real `received_at`, followed by a summary notification. Covered by `test/sms_replay_test.dart`.
+- **D25 — Encrypted backups (`features/backup/data/backup_crypto.dart`).** Format `MMTBAK2`: PBKDF2-HMAC-SHA256 (100k iterations, random salt) → AES-256-GCM, run in `Isolate.run`. Password asked on backup and restore (`BackupPasswordDialog`); a WAL checkpoint precedes the copy. Without the password nobody (us included) can restore.
+- **D26 — "Mon argent" for Particulier (DB v16, `core/money/`, `features/money/`).** Money outside Mobile Money (cash, bank, tontine, savings) lives in local `wallets` + `wallet_entries` (kind `income`/`expense`/`transfer`, `account`/`counter_account` refs `wallet:<id>` or `momo:<operatorId>`, optional `linked_transaction_id`). Balances are **computed**, never stored. The view `v_personal_flows` unions Mobile Money transactions and wallet entries, excluding internal transfers (category `interne`) — **every personal statistic (dashboard, budget, monthly summary) reads this view**, so a withdrawal to one's own cash is never counted as spending. `MoneyRepository.claimTransferForSms` lets the SMS pipeline match a manually-entered transfer instead of double counting. A "Espèces" wallet exists by default. Particulier tabs: Accueil, Mon argent, Mobile Money, Budget (`ShellBranch` in `main_shell.dart`).
+- **D27 — Simple by default, configurable on demand (progressive disclosure).** The app must stay intuitive, above all for a Particulier; power features exist but never sit in the way. Concretely: the drawer (`app_drawer.dart`) holds only daily use (Agence: clients, caisse, agences; Particulier: ranger mes dépenses with a count badge, mes téléphones) plus Paramètres and the help « Un SMS n'a pas été détecté ? ». `SettingsScreen` holds only what an ordinary user looks for, in plain words (licence for Agence, sécurité, mes données — one « Exporter » entry choosing PDF/CSV —, apparence, aide). Everything technical — operators (USSD, commissions, SMS models), categories & rules, caisse corrections, detection tools, support identifier — lives in `/settings/avances` (`AdvancedSettingsScreen`). Detection troubleshooting is a **guided, ordered help** (`/settings/aide-detection`, `DetectionHelpScreen`) rather than a toolbox; its actions are shared with the advanced screen via `features/dashboard/diagnostic_actions.dart`. All settings pages are built from `SettingsSection`/`SettingsTile` (`shared/widgets/settings_tiles.dart`). **Rule for new features:** a new option goes to the advanced screen unless most users need it; labels describe the user's goal (« Récupérer mes anciens SMS »), never the mechanism (« Import historique », « pattern », « catalogue »).
+- **D28 — Short onboarding, quick entry (D27 applied).** `OnboardingScreen` is a `_Step` enum flow: Bienvenue (« Commencer » / « J'ai déjà un compte ») → « Pour qui ? » (one tap: Pour moi / Pour mon agence; « Je travaille dans l'agence de quelqu'un » as a discreet link = affiliation) → one identity page (phone + single password field with show/hide, agency name for Agence) → operator cards. Country defaults to `BF` and is only asked when the catalog lists several (the old step spun forever offline). A Particulier's second phone joins through **login** (password); the approval-based link stays only for pre-D13 accounts without a password (« Mon compte n'a pas de mot de passe »). `showEntrySheet` puts the user's most-used motifs first (`MoneyRepository.frequentCategories`, 90 days), shows 8 at once in a grid whose cell height follows the text scale (no overflow), uses `ExpenseCategory.shortLabel`, offers quick amounts, hides the account picker when there is only one choice, and folds description/note behind « Ajouter une description ».
+- **Agence daily tools.** Transactions list is **paginated** (`TransactionPage`, 100 per page via `loadMore()` on scroll; count and in/out totals computed in SQL over the whole filter — `transactionWhere()` builds the filter once). **Clôture du jour** (`/caisse/cloture`, `CashClosingScreen`, `features/caisse/data/cash_closing_repository.dart`, drawer, Agence only): expected cash = opening (yesterday's counted by default) + deposits (`in`) − withdrawals (`out`) of the day's completed transactions; the agent types what they counted, the gap is said in words (« Il manque 3 000 FCFA »), one `cash_closings` row per day.
+- **Agence — commissions, clients, patron view.** `CommissionsScreen` is driven by one period selector (`CommissionPeriod`: today / 7 days / month / all) over `loadCommissionStats()` (`features/commissions/data/commission_stats.dart`, tested): total, per-operation average, a 14-day bar strip, « Ce qui vous rapporte » (per service type) and per operator with float. `ClientDetailScreen` uses `clientTransactionsProvider` (no more FutureBuilder recreated on each build), shows operations/volume/commissions/last visit, a call button, and strikes cancelled operations. The caisse screen lists the last float top-ups (`caisseOperationsProvider`). `GET /api/sync/agence-detail/<id>/` returns a `resume` (today/month operations, volume, commissions — completed only — and last sync time) shown on top of the patron's detail screen, where cancelled operations are struck through. The morning summary says when yesterday's cash closing was not done and then opens it (payload `cloture`).
+- **Agence alerts.** `CaisseRepository.updateSoldeAfterTransaction` returns a `FloatAlert` when the balance **crosses** below `caisse.seuil_alerte` (once, not on every operation below); the SMS pipeline then notifies (payload `caisse`). `core/summary/daily_summary_service.dart` pushes "Votre journée d'hier" (operations, volume, commissions vs same weekday last week) once per day on first start, Agence only (payload `commissions`).
+
 ### Multi-agence ownership & cloud sync (patron/agent affiliation)
 
 A compte Agence can own several `Agence` records. The **first person to register a given phone number becomes that number's "patron"** and creates/names the agences from their own device (normal `/essai/` → `/agences/creer/` flow, unchanged). A second physical agent, operating a given agence day-to-day on a **different phone**, joins by entering the **patron's phone number** at onboarding (`AffiliationRequest`, `sync` app) — no invitation code. Once the patron approves and assigns one of their agences, the backend mints a **second `Licence` row for that agence** scoped to the agent's `device_id` (`LicenceService.cloner_licence_pour_device`) — from then on the normal licence-check codepath (`RecupererLicenceView`, `VerifierCleView`) works for that device with zero special-casing, since it's genuinely just another authorized device for that agence.
@@ -105,7 +117,7 @@ Backend (`backend/sync/`):
 - Endpoints (`/api/sync/`): `demander-affiliation/`, `affiliation-statut/` (mobile polls), `demandes-en-attente/` (patron polls), `affiliation/<id>/approuver|rejeter/`, `mes-agences/`, `agence-detail/<id>/`, `push/` (auth = a `Licence` row must exist for `agence_id`+`device_id`, else 403)
 
 Mobile:
-- `core/sync/sync_service.dart` — `SyncService.pushIfNeeded()`, called on a 2-minute timer (`main.dart`) and right after SMS-detected transactions. Watermark-based (`created_at` cursor in SharedPreferences), no-op for `particulier`. Idempotent — safe to retry on network failure, never loses data.
+- `core/sync/sync_service.dart` — `SyncService.pushIfNeeded()`, called on a 2-minute timer (`main.dart`) and right after SMS-detected transactions. Two cursors per table (SharedPreferences): insertion (`rowid`, catches backdated rows) and modification (`sync_seq`, DB v17, set by SQLite triggers on status/amount/commission/client/type changes) — so a transaction cancelled or confirmed after its first push is re-sent and the patron sees its real status. Queries live in `SyncService.pending()` (tested, `test/sync_tracking_test.dart`); no-op for `particulier`. Idempotent — safe to retry on network failure, never loses data.
 - `core/onboarding/affiliation_service.dart` — request/poll/claim-licence for the joining agent, wired into a "Créer" vs "Rejoindre" toggle on the onboarding agence step.
 - `features/agences/` — patron-side "Mes agences" screen (pending requests + approve/assign/reject, agence list with sync stats) and a read-only agence detail screen (transactions/clients/caisse tabs). Reachable from the drawer's "MULTI-AGENCE" section, shown only when `account_type == 'agence'`.
 
@@ -129,7 +141,7 @@ Real-time SMS detection previously only worked while the Flutter process was ali
 - `core/sms/background_sms_handler.dart` — a top-level `@pragma('vm:entry-point')` function (`backgroundSmsHandler`), registered via `Telephony.instance.listenIncomingSms(onNewMessage: (_) {}, onBackgroundMessage: backgroundSmsHandler, listenInBackground: true)` in `main.dart`, right after SMS permissions are granted. `onNewMessage` is deliberately a no-op. In practice the plugin's manifest `IncomingSmsReceiver` **still invokes `backgroundSmsHandler` even while the app is foregrounded** (it can't see the EventChannel listener in the other isolate), so the handler early-returns when a `SharedPreferences` heartbeat `sms_fg_heartbeat` (written by `main.dart` on `resumed` / listener start / 2-min sync tick, key + helper `markSmsForegroundAlive()` live in this file) is < 90 s old. That's an optimization only — the real guarantee against duplicate transactions is the atomic `content_hash` dedup in `processIncomingSms()` (DB v14), which holds no matter how many receivers/isolates fire.
 - `android/app/src/main/AndroidManifest.xml` declares `com.shounakmulay.telephony.sms.IncomingSmsReceiver` (the plugin's receiver) alongside the existing `.SmsReceiver`, both listening for `SMS_RECEIVED`. This works even after a fresh reboot with no app interaction, because `SMS_RECEIVED` is a protected system broadcast exempt from Android 8+'s implicit-broadcast background-execution limits — **no `RECEIVE_BOOT_COMPLETED`/boot receiver/foreground service was needed** for this specific behavior.
 - Fixed a pre-existing bug found while touching this code: `MainActivity.kt` was registering a **second**, dynamic instance of `.SmsReceiver` on top of the manifest-declared one every time the EventChannel's `onListen` fired, both invoking the same static callback — i.e. every SMS was processed twice while the app was foregrounded (silently masked by the DB-level dedup in the SMS pipeline). Removed the dynamic `registerReceiver`/`unregisterReceiver` calls; the manifest receiver alone is sufficient.
-- Settings → Diagnostic → "Fonctionnement en arrière-plan" requests `Permission.ignoreBatteryOptimizations` (`permission_handler`), always preceded by an explanatory dialog — never silently. Without this, aggressive OEM battery managers (Xiaomi, Tecno, Infinix, Samsung — common in Burkina Faso) can still kill the process regardless of the broadcast mechanism above; there is no unified Android API for OEM-specific "autostart" allow-lists, so this is the best available standard mechanism.
+- « Fonctionnement en arrière-plan » (Paramètres avancés, and step 2 of the detection help) requests `Permission.ignoreBatteryOptimizations` (`permission_handler`), always preceded by an explanatory dialog — never silently. Without this, aggressive OEM battery managers (Xiaomi, Tecno, Infinix, Samsung — common in Burkina Faso) can still kill the process regardless of the broadcast mechanism above; there is no unified Android API for OEM-specific "autostart" allow-lists, so this is the best available standard mechanism.
 - **Not implemented**: periodic background sync unrelated to an incoming SMS (e.g. a `WorkManager` job pushing every N minutes regardless of activity). Sync is triggered by `processIncomingSms()` on every detected transaction (the moment that actually matters to a patron) and by the 2-minute foreground timer in `main.dart` while the app is open — genuinely periodic background sync was judged not worth the added complexity/battery cost for now.
 - **`core/sms/sms_catchup_service.dart`** (D15) catches up on SMS received while the app was closed, at every start — see D15 above for the mechanism.
 - Permission handling was hardened (D16): SMS/phone permissions are no longer requested unconditionally on every launch (skipped if already granted or already `permanentlyDenied`), and are re-checked on every app resume (`WidgetsBindingObserver` in `main.dart`) so a permission granted from system Settings mid-session starts the listener immediately rather than requiring a restart.
@@ -139,11 +151,14 @@ Real-time SMS detection previously only worked while the Flutter process was ali
 mobile/
   lib/
     core/
-      database/       # SQLite singleton (DatabaseHelper), WAL mode, DB version 15
+      database/       # SQLite singleton (DatabaseHelper), WAL mode, DB version 18; CaisseRepository (FloatAlert)
       categories/      # ExpenseCategory + kDefaultExpenseCategories, CategoryRepository (motifs/règles/budgets — static, headless-safe), category_providers.dart, MonthlySummaryService (D19)
       sms/             # SmsListenerService (EventChannel), SmsMatchingEngine (unified), SmsFieldExtractor (legacy fallback), SmsPatternBuilder (real regex compiler), CommissionCalculator, SmsCatchupService (D15, missed-SMS catch-up on start), sms_dedup.dart (smsContentHash — atomic SMS dedup key, DB v14 / D18)
-      licence/         # LicenceService (incl. login() — D13), LicenceStorage, LicenceGuard, LicenceValidator
-      security/        # PinService, BiometricService (isAvailable = hardware, isEnabled/setEnabled = user opt-in, D14)
+      licence/         # LicenceService (incl. login() — D13), LicenceStorage, LicenceGuard, offline_key.dart (Ed25519 MT2 — D22)
+      network/         # ApiClient — X-Device-Token on every call (D21)
+      money/           # Wallets, entries, AccountRef, MoneyRepository — « Mon argent » (D26)
+      summary/         # DailySummaryService — bilan de la veille (Agence)
+      security/        # DeviceIdentity (D21), PinService (lockout), BiometricService (isAvailable = hardware, isEnabled/setEnabled = user opt-in, D14)
       onboarding/      # OnboardingScreen (avez-vous un compte ?→compte→téléphone/pays→agence→opérateurs, D13), CatalogSyncService, AffiliationService, OnboardingStatusService (account_type, onboarding_complete)
       sync/            # SyncService — push continu vers /api/sync/push/
       historique/      # SMS history import (purchase + import flow)
@@ -163,8 +178,10 @@ mobile/
       backup/          # Encrypted SQLite backup/restore
       export/          # PDF and CSV export (colonnes Motif/Note pour Particulier — D19)
       categories/      # CategorizeScreen (catégorisation rapide), BudgetScreen (3e onglet Particulier), ManageCategoriesScreen, CategoryPickerSheet/CategoryGrid, categorize_provider.dart (D19)
+      money/           # MoneyScreen, AccountScreen (/money/account/:ref), entry/wallet sheets (D26)
       dashboard/widgets/particulier/  # ParticulierDashboardTab + cartes — branché depuis DashboardScreen quand account_type == particulier (D20)
-    shared/widgets/    # MainShell (3-tab bottom nav — 3rd tab is Commissions for agence, Budget for particulier → /budget), AppDrawer (section FINANCES pour Particulier)
+    shared/widgets/    # MainShell (tabs by account type: Agence = Accueil/Transactions/Commissions, Particulier = Accueil/Mon argent/Mobile Money/Budget), AppDrawer, AmountText (montants qui ne débordent jamais), AnimatedAmount, FadeSlideIn
+    shared/providers/  # balanceVisibleProvider (masquer les montants, persistant)
   android/             # Native Android project + MainActivity.kt
   assets/              # App icons and logos
   pubspec.yaml
@@ -177,7 +194,7 @@ mobile/
 - Dashboard/transactions/commissions providers auto-invalidate on SMS detection (see `main.dart`), which also triggers `SyncService.pushIfNeeded()`
 
 ### Database
-- SQLite via `sqflite`, singleton in `DatabaseHelper.instance`, **DB version 15** (v10: `v_transactions_with_operator` gained a `transaction_types` join for `type_label`, plus a one-time `refreshAllSummaries()` — see "Transaction display/creation" section below; v11: `caisse.solde_ref_at` for the announced-balance tracking described below; v12: `transactions.match_confidence` for the fuzzy-matching tier, D17; v13: `operators.logo_url` — catalog operator logos are now downloaded once and cached on disk instead of re-fetched from the server on every render, see below; v14: `sms_messages.content_hash` + UNIQUE index — atomic SMS dedup, see "SMS Processing" below; v15: `transactions.category`/`note` + `expense_categories`/`category_rules`/`category_budgets` tables + `idx_tx_category`/`idx_tx_dir_status_date` — the D19 motive layer, seeded via `_seedExpenseCategories`; migration is purely additive). `DatabaseHelper.debugDatabaseName` (`@visibleForTesting`) lets each DB-touching test file use its own SQLite file so parallel `flutter test` runs don't delete each other's DB.
+- SQLite via `sqflite`, singleton in `DatabaseHelper.instance`, **DB version 18** (v18: AFTER INSERT triggers give every new `transactions`/`clients`/`caisse_operations` row without `agence_id` the device's active agence + backfill — no insertion path ever set it, so the patron sync, which filters by agence, saw nothing created after v9; v17: `sync_seq` + triggers on `transactions`/`clients` for patron sync of modifications, `cash_closings` for the Agence daily cash closing; v16: `wallets`/`wallet_entries` + `v_personal_flows`, D26; v10: `v_transactions_with_operator` gained a `transaction_types` join for `type_label`, plus a one-time `refreshAllSummaries()` — see "Transaction display/creation" section below; v11: `caisse.solde_ref_at` for the announced-balance tracking described below; v12: `transactions.match_confidence` for the fuzzy-matching tier, D17; v13: `operators.logo_url` — catalog operator logos are now downloaded once and cached on disk instead of re-fetched from the server on every render, see below; v14: `sms_messages.content_hash` + UNIQUE index — atomic SMS dedup, see "SMS Processing" below; v15: `transactions.category`/`note` + `expense_categories`/`category_rules`/`category_budgets` tables + `idx_tx_category`/`idx_tx_dir_status_date` — the D19 motive layer, seeded via `_seedExpenseCategories`; migration is purely additive). `DatabaseHelper.debugDatabaseName` (`@visibleForTesting`) lets each DB-touching test file use its own SQLite file so parallel `flutter test` runs don't delete each other's DB.
 - WAL mode enabled on open, foreign keys enforced
 - Key tables: `operators`, `transaction_types` (global catalog mirror), `operator_transaction_types` (junction, mirrors backend), `sms_patterns` (`operator_transaction_type_id`, `direction`, `tagged_zones_json`, `source`), `clients`, `transactions` (`transaction_type_id`, `direction`, `agence_id`, `category`, `note`), `sms_messages`, `caisse`, `caisse_operations`, `agences`, `agence_operators`, `daily_summaries` / `daily_summaries_v2`, `expense_categories` / `category_rules` / `category_budgets` (D19, local-only)
 - SQL View: `v_transactions_with_operator` for optimized queries
@@ -229,7 +246,8 @@ The catalog pivot (D3: global `TransactionType` + per-operator `OperatorTransact
 ### Licence System
 - **Non-blocking**: read actions (dashboard, history, clients, exports, SMS receive) are always free
 - **Write actions** (confirm transaction, add client, configure operator, etc.) require an active licence **for the current agence** (`LicenceGuard` checks `ActionType`)
-- Three activation modes: free trial (3 months, per-agence, D10), online request (admin validates), offline key (HMAC-SHA256 signed)
+- Particulier accounts are free forever (D23) — everything below concerns Agence accounts
+- Three activation modes: free trial (3 months, per-agence, D10), online request (admin validates), offline key (Ed25519-signed `MT2-`, D22)
 - `FlutterSecureStorage` stores licence data and phone number
 - `importerHistoriqueSMS` action type triggers a special purchase dialog (free ≤1 year, 200 FCFA/year beyond — D5). `ImportHistoriqueScreen` asks for the start date **first** (`date_debut` drives the price) before requesting a purchase — `HistoriqueImportService.demanderAchat(telephone, dateDebut)` sends it to `/historique/demander/`, which returns the real backend-computed `montant`; the mobile screen never hardcodes a price, only shows a client-side estimate (`estimerCout`, a pure mirror of `HistoriqueService.calculer_cout`) before the request confirms it.
 - An agent affiliated to a patron's agence (D-affiliation above) gets their own `Licence` row for that agence — same licence-check code, no special-casing
@@ -255,82 +273,39 @@ Token authentication (DRF `rest_framework.authtoken`) is used for the **admin** 
 ```
 web/
   app/
-    layout.tsx           # Root layout (html lang="fr", metadata, OpenGraph)
-    globals.css          # Tailwind + Inter font import + gradient-hero, pulse-dot, shimmer
-    (site)/
-      layout.tsx         # SiteLayout: Navbar + main + Footer
-      page.tsx           # Home: Hero, Comment ca marche, Features(limit=6), Pricing, Operateurs, CTA
-      features/page.tsx  # Features grid + detailed list + stats + CTA
-      pricing/page.tsx   # Pricing component + FAQ accordion
-      download/page.tsx  # Download hero + installation steps + requirements + versions + Google Play teaser
-      docs/page.tsx       # Accordion docs (client-side) with table of contents
+    layout.tsx            # next/font: Bricolage Grotesque (--font-display) + Inter (--font-body), metadata
+    globals.css           # gradient-hero, bg-grid, reveal, sms-toast, row-enter, fade-up, marquee (+ reduced-motion)
+    (site)/               # home, particuliers, agences, features, pricing, download (NEXT_PUBLIC_APK_URL), docs
     (admin)/
-      dashboard/page.tsx
-      licences/page.tsx
-      clients/page.tsx
-      demandes/page.tsx
-      notifications/page.tsx
-      achats-historique/page.tsx
-      catalog/
-        countries/page.tsx           # CRUD complet (create/edit/delete)
-        operators/page.tsx           # CRUD complet, upload logo (FormData)
-        operators/[id]/page.tsx      # Détail : types attachés (edit/delete), patterns SMS
-        transaction-types/page.tsx   # CRUD complet — catalogue global (D3)
-      login/page.tsx
+      layout.tsx          # shell: Sidebar + top bar + CommandPalette (Ctrl+K, « / »), AdminProvider
+      dashboard/ licences/ clients/ clients/[id]/ demandes/ achats-historique/ notifications/ login/
+      catalog/countries | operators | operators/[id] | transaction-types
   components/
-    site/
-      Navbar.tsx, Hero.tsx, Features.tsx, Pricing.tsx, Footer.tsx
+    site/                 # Navbar, Hero (toggle Pour moi / Pour mon agence), PhoneDemo, SmsDecoder (a real SMS,
+                          # fields highlighted then turned into a row), Showcase (Particulier/Agence screen compositions),
+                          # Story (day/week timeline), Comparison (cahier / tableur / app), MadeForHere, Privacy,
+                          # PatronView, SplitHeader, Chapter (editorial section header), Annotation (hand-drawn arrow),
+                          # Operators, Faq, CtaBand, Pricing, PageHeader, Footer, Icon (single SVG set), motion/Reveal
+    site/app/             # PhoneFrame + screens.tsx: app screens re-created in HTML (Mon argent, budget, dépenses,
+                          # commissions, clôture, notification) with numbers consistent across screens
+    ui/                   # Button (variants, loading, href), Badge (dot), Modal (sheet on mobile)
     admin/
-      Sidebar.tsx, StatCard.tsx, GenerateLicenceModal.tsx
-      CreateCountryModal.tsx / EditCountryModal.tsx
-      CreateOperatorModal.tsx / EditOperatorModal.tsx
-      CreateTransactionTypeModal.tsx / EditTransactionTypeModal.tsx
-      AttachTransactionTypeModal.tsx / EditOperatorTypeModal.tsx  # OperatorTransactionType (USSD/commission par paire)
-      CreateSmsPatternModal.tsx, SmsPatternTagger.tsx             # tagging start/end/fieldName, jamais de regex (D2)
-      ConfirmModal.tsx      # confirmation de suppression générique, affiche le message 409 RESTRICT du backend
-  lib/api.ts             # Axios client with Token auth interceptor + FormData Content-Type handling
-  public/
-    logo.png             # App logo (used in navbar, hero mockup, download page, footer)
-    icon.png             # Favicon/app icon
-    logo_.png, icon_.png # Alternate versions
-  tailwind.config.ts     # Custom colors, fonts, shadows
+      shell/              # nav.ts (single source: groups, badges, titles), Sidebar, CommandPalette, AdminContext (compteurs + toasts)
+      ui/                 # Card, PageHeader, KpiTile, Segmented, EmptyState, DataTable (search/sort/pagination), Field, CopyField
+      charts/             # AreaChart, BarChart (stacked), Donut, Sparkline — hand-written SVG, hover tooltips
+      GenerateLicenceModal, ConfirmModal, catalog CRUD modals, SmsPatternTagger
+  lib/
+    api.ts                # Axios, Token interceptor (401 → /login, except the login call itself)
+    admin-types.ts        # API response types + apiError()
+    useAsync.ts           # data/loading/error/reload for every admin page
+    format.ts             # fcfa, num, compact, dateFr, ago
+    licence-status.ts     # effectiveStatut (expired by date), statutBadge
+    site-content.ts       # site copy in one place (features, steps, plans, FAQ)
 ```
 
-**Catalog CRUD pattern** (`countries`/`operators`/`transaction-types` pages, and the operator detail page's `OperatorTransactionType`/`SmsPattern` rows): table with Modifier/Supprimer actions per row → `Edit*Modal` pre-filled from the row, or `ConfirmModal` for delete. Every delete is RESTRICT-aware: the backend returns 409 with a French message when dependents exist, and `ConfirmModal` surfaces `err.response.data.erreur` directly rather than a generic failure message.
+**Admin conventions**: every list uses `DataTable` + `useAsync`; never fake/demo data on API failure (show the error and a retry). Actions give feedback via `useAdmin().toast` and call `refreshCompteurs()` when they change a sidebar badge. Values the admin must pass to a user (MT2 key, import token) are shown with `CopyField`.
 
-### Web Components Detail
-
-**Navbar** (`components/site/Navbar.tsx`):
-- `use client` — scroll listener for transparent→white transition
-- Links: Accueil, Fonctionnalites, Tarifs, Documentation
-- Download CTA button: `bg-accent text-white`
-- Mobile: hamburger menu with full link list
-
-**Hero** (`components/site/Hero.tsx`):
-- `gradient-hero` background (blue gradient)
-- Left: h1 + description + 2 CTA buttons (green download + outline "Decouvrir") + 3 feature bullets
-- Right: Phone mockup (280x560px, `rounded-[2.5rem]`, gray-900 body, blue gradient screen)
-  - Logo inside phone + "MoneyTracking" + "Gestion Mobile Money"
-  - 3 transaction rows: Depot Orange +50,000 (green), Retrait Moov -25,000 (red), Depot Coris +100,000 (green)
-  - SVG arrow icons (down=deposit, up=withdrawal)
-  - **No floating animation** — static positioning only
-  - Hidden on mobile (`hidden lg:flex`)
-
-**Features** (`components/site/Features.tsx`):
-- 12 features, each with SVG icon + title + description + optional tag
-- Grid: `gap-px bg-gray-200 border border-gray-200 rounded-xl overflow-hidden`
-- Icon box: `w-9 h-9 rounded-lg bg-primary-50 text-primary`
-- Accepts `limit` prop (home page shows 6)
-
-**Pricing** (`components/site/Pricing.tsx`):
-- Plans built around 450 FCFA/mois/agence (D4/D8) with proportional discounted tiers (annual/2-year) and an SMS-import addon card (D5) — actual figures live in `PricingTier` (admin-editable), the site copy should be kept in sync manually when tiers change
-- Highlighted card: `bg-accent text-white ring-1 ring-accent`
-- Non-highlighted: `bg-white border border-gray-200`
-- Buttons: highlighted → `bg-white text-accent`, others → `bg-accent-50 text-accent`
-
-**Footer** (`components/site/Footer.tsx`):
-- `bg-dark text-gray-400` — explicitly black (user rejected green footer)
-- 4 columns: Brand, Navigation, Support, Contact
+**Catalog CRUD pattern** (`countries`/`operators`/`transaction-types` pages, and the operator detail page's `OperatorTransactionType`/`SmsPattern` rows): table with Modifier/Supprimer actions per row → `Edit*Modal` pre-filled from the row, or `ConfirmModal` for delete. Every delete is RESTRICT-aware: the backend returns 409 with a French message when dependents exist, and `ConfirmModal` surfaces it via `apiError()`.
 
 ## Theme & Design
 
@@ -353,7 +328,7 @@ Muted text       : #64748B (Tailwind: `muted`)
 
 ### Tailwind Custom Config (`web/tailwind.config.ts`)
 ```
-colors: primary (DEFAULT/#1565C0, dark, light, 50-700), accent (DEFAULT/#2E7D32, hover/#1B5E20, light/#4CAF50, 50/#E8F5E9), success, warning, danger, dark, soft, muted
+colors: primary (DEFAULT/#1565C0, dark, light, 50-700), accent (DEFAULT/#2E7D32, hover/#1B5E20, light/#4CAF50, 50/#E8F5E9), success, warning, danger, dark, ink (#0B2545), soft, muted, sand (#F5EFE4, deep), clay (#B4532A, light)
 fontFamily: Inter, system-ui, sans-serif
 boxShadow: soft, medium, large, blue, green
 ```
@@ -366,24 +341,17 @@ boxShadow: soft, medium, large, blue, green
 - Theme preference stored in `SharedPreferences`, toggled from Settings
 
 ### Web Design Philosophy (CRITICAL)
-**No AI-generated look.** The site must look hand-crafted. Explicitly forbidden:
-- Emoji as icons — use inline SVG icons only (stroke style, strokeWidth 1.5-2)
-- Floating/animated elements (no float, no bounce, no pulse on site pages)
-- Glass morphism / frosted glass effects
-- Gradient text / gradient icon boxes
-- Pill badges with gradient backgrounds
-- Pulse animations on site pages (pulse-dot/shimmer kept only for admin dashboard)
-- Radial gradient backgrounds
-- Excessive box-shadows on cards
-- Sticker-like decorative elements
+**No AI-generated look** — modern, but hand-crafted. Forbidden:
+- Emoji as icons — use `components/site/Icon.tsx` (stroke SVG) only
+- Glass morphism, gradient text, gradient icon boxes, gradient pill badges, radial-gradient blobs
+- Decorative floating/bouncing elements, stickers, excessive shadows
+- Fake data presented as real (testimonials, counters) — `Stats` shows product facts only
 
-**Preferred patterns:**
-- Clean borders (`border border-gray-200`), `gap-px bg-gray-200` grid pattern for feature cards
-- Simple white cards on `bg-soft` or `bg-white` backgrounds
-- SVG icons inside small rounded boxes (`w-9 h-9 rounded-lg bg-primary-50 text-primary`)
-- Minimal typography: `text-dark` for headings, `text-muted` for descriptions
-- Green accent buttons everywhere: `bg-accent text-white hover:bg-accent-hover`
-- No animations on site pages except CSS transitions (`transition-colors`)
+**Motion is allowed when it explains the product** (user request, 2026-10): scroll reveal (`Reveal`, `.reveal`), the `PhoneDemo` (an SMS arrives and becomes a row), operator `marquee`, `CountUp`, `fade-up` on titles. All of it is CSS/IntersectionObserver, and **every animation is disabled under `prefers-reduced-motion`** (`globals.css`). `pulse-dot`/`shimmer` stay admin-only.
+
+**Show the product, don't describe it**: every section pairs copy with a real app screen (`site/app/screens.tsx`) or a concrete artefact (an operator SMS, a backup file, the patron view) — never generic icon-card grids alone. Stories use named, local, plausible people (« Awa, enseignante à Koudougou », « Issa, agent à Tampouy »); figures are illustrative but **no claim the product can't back** (no "le plus choisi", no invented user counts or testimonials). Warm tones `sand`/`clay` (Tailwind) alternate with `ink` and white sections; section headers use `Chapter` (rule + small uppercase mark + big title, text on the right), not centred eyebrow+title. Phone compositions are fixed-size and scaled down below `sm` (no horizontal scroll at 390 px).
+
+**Preferred patterns:** clean borders, `gap-px bg-gray-200` grids, white cards on `bg-soft`, `font-display` headings in `text-ink`, `text-muted` descriptions, green accent CTAs (`bg-accent`), `tabular-nums` for amounts.
 
 ### Footer
 - **Black background** (`bg-dark text-gray-400`) — user explicitly wants footer black, not green
@@ -413,15 +381,13 @@ Both paths write to the same `sms_patterns` schema (`tagged_zones_json` + real `
 | Trial | Free | 3 months, granted per new agence created (D10) |
 | Base rate | 450 FCFA/mois/agence | Billing unit is the agence (D8), not the account |
 | Longer tiers | Proportional discount | `PricingTier.remise_pct`, admin-editable (D4) |
-| SMS History Import | Free ≤ 1 year back, then 200 FCFA/year | Computed on demand (D5), not a flat fee |
+| SMS History Import | Free ≤ 1 year back, then 200 FCFA/year | Agence only — computed on demand (D5); free for Particulier (D23) |
 
 ### Licence Code Format
-`MT-{SIGNATURE}-{PAYLOAD}{DATE}` (e.g., `MT-A3F9BC12-KL82MN7P20260330`)
-- Signature: HMAC-SHA256 first 8 chars (uppercase)
-- Payload: base32-encoded device_id[:4] + telephone[-4:], **plus `agence_id` folded into the HMAC payload** to prevent collisions between agences created same-day/telephone/device
-- Date: YYYYMMDD expiration
-- `LICENCE_SECRET` env var must match between Django backend and Flutter `LicenceValidator`
-- `LicenceService.cloner_licence_pour_device()` mints a second code (same dates/statut, different device_id) for an agent affiliated to someone else's agence — same generation function, no new format
+- **Offline activation key: `MT2-<base64url>`** (D22) — 13-byte payload (agence id, expiry, device hash, statut) + 64-byte Ed25519 signature. Only the server can sign; the app verifies with the public key from `/api/licence/cle-publique/`.
+- `Licence.code` (`MT-{HMAC}-{PAYLOAD}{DATE}`) is still generated as a unique DB identifier, but is no longer an activation proof.
+- `LICENCE_SECRET` (backend `.env`) derives the signing key: changing it invalidates every MT2 key already sent.
+- `LicenceService.cloner_licence_pour_device()` mints a licence for another device of the same agence (affiliation, D13 login).
 
 ## Environment Variables
 
@@ -444,43 +410,20 @@ DB_PORT=3306
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-## CSS & Styling (`web/app/globals.css`)
-
-- Google Fonts: Inter (400, 500, 600, 700, 800)
-- Base: `scroll-behavior: smooth`, `body` = `text-dark antialiased`
-- Custom component classes:
-  - `gradient-hero` — blue gradient for hero/CTA sections: `linear-gradient(160deg, #0D47A1 0%, #1565C0 50%, #1976D2 100%)`
-  - `pulse-dot` — pulsing animation (admin pages only, NOT site)
-  - `shimmer` — shimmer loading effect (admin pages only, NOT site)
-- No other custom CSS classes — everything uses Tailwind utilities
-
-## Site Pages Summary
-
-| Route | Title | Key Sections |
-|-------|-------|-------------|
-| `/` | Home | Hero (phone mockup), Comment ca marche (3 steps), Features (6), Pricing, Operateurs, CTA |
-| `/features` | Fonctionnalites | Features grid (all 12), detailed list with bullet points, stats row, CTA |
-| `/pricing` | Tarifs | Pricing cards, FAQ (4 questions) |
-| `/download` | Telecharger | Logo + download button, installation steps, requirements, version history, Google Play teaser |
-| `/docs` | Documentation | Table of contents, 11 accordion sections (client-side useState) |
-
 ## Admin Pages
 
 | Route | Purpose |
 |-------|---------|
-| `/login` | Admin authentication |
-| `/dashboard` | Stats overview with donut chart (green #2E7D32) |
-| `/licences` | CRUD for licences |
-| `/clients` | Client management |
-| `/demandes` | Activation requests |
-| `/notifications` | Push notifications to agents |
-| `/achats-historique` | SMS history purchases |
-| `/catalog/countries` | Pays — CRUD complet |
-| `/catalog/operators` | Opérateurs — CRUD complet, filtrable par pays, upload logo |
-| `/catalog/operators/[id]` | Détail opérateur — types de transaction attachés (edit/delete), patterns SMS |
-| `/catalog/transaction-types` | Types de transaction — catalogue global (D3), CRUD complet |
+| `/login` | Admin authentication (staff accounts only, throttled) |
+| `/dashboard` | `GET /api/admin/analytics/?jours=` — to-do strip, KPIs with deltas/sparklines, revenue, sign-ups by type, synced volume, licence states, expiring soon, top agences/operators, activity |
+| `/licences` | Agence licences (Particuliers excluded): filters, MT2 key copy, suspend/reactivate, generate |
+| `/clients`, `/clients/[id]` | Accounts; detail = agences + licence, authorized phones (revoke), payments |
+| `/demandes` | Activation requests: expected amount, payment reference, validate (returns MT2 key) or reject |
+| `/achats-historique` | Agence SMS-history purchases |
+| `/notifications` | Compose with live preview; everyone or picked recipients (quick add all Particuliers/Agences) |
+| `/catalog/*` | Pays, opérateurs (+ détail, patterns SMS), types d'opération (D3) |
 
-Admin uses `Sidebar.tsx`, `StatCard.tsx`, `GenerateLicenceModal.tsx`, and the catalog CRUD modal set (see Web Components Detail). Admin pages may use `pulse-dot` and `shimmer` CSS classes.
+Backend: `licences/admin_analytics.py` (analytics, `recherche/`, `compteurs/`, client detail, licence suspend/reactivate, device revoke) next to the CRUD in `admin_views.py`; tests in `licences/tests_admin.py`.
 
 ## Key Conventions
 

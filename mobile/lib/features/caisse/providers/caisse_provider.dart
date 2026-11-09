@@ -54,6 +54,24 @@ class CaisseOperation {
   }) : createdAt = createdAt ?? DateTime.now();
 }
 
+/// Derniers rechargements et ajustements de float, tous opérateurs.
+final caisseOperationsProvider = FutureProvider<List<CaisseOperation>>((ref) async {
+  ref.watch(caissesProvider); // rafraîchi avec les soldes
+  final db = await DatabaseHelper.instance.database;
+  final rows = await db.query('caisse_operations', orderBy: 'created_at DESC', limit: 20);
+  return [
+    for (final r in rows)
+      CaisseOperation(
+        id: r['id'] as String,
+        operatorId: r['operator_id'] as String?,
+        type: r['type'] as String? ?? 'rechargement',
+        montant: (r['montant'] as num?)?.toDouble() ?? 0,
+        note: r['note'] as String?,
+        createdAt: DateTime.tryParse(r['created_at'] as String? ?? ''),
+      ),
+  ];
+});
+
 /// Provider pour les caisses
 final caissesProvider =
     StateNotifierProvider<CaissesNotifier, AsyncValue<List<CaisseModel>>>(

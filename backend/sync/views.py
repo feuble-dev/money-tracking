@@ -1,7 +1,13 @@
-from datetime import datetime
+from datetime import date, datetime, time
+
+from django.db.models import Count, Sum
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from licences.auth import (
+    ERREUR_APPAREIL, appareil_authentifie, appareil_connu, client_proprietaire,
+    emettre_jeton, exige_jeton,
+)
 from licences.models import Client, Agence, Licence
 from .models import AffiliationRequest, SyncedTransaction, SyncedClient, SyncedCaisseOperation
 from .services import AffiliationService
@@ -44,28 +50,43 @@ class DemanderAffiliationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Jeton d'appareil : un appareil inconnu en reçoit un (première
+        # installation d'un agent) ; un appareil connu doit présenter le sien.
+        jeton = None
+        if not appareil_authentifie(request, demandeur_device_id):
+            if appareil_connu(demandeur_device_id):
+                return Response({'erreur': ERREUR_APPAREIL},
+                                status=status.HTTP_403_FORBIDDEN)
+            jeton = emettre_jeton(demandeur_device_id, 'affiliation')
+
         existante = AffiliationRequest.objects.filter(
             demandeur_device_id=demandeur_device_id,
             patron=patron,
             statut='en_attente',
         ).first()
         if existante:
-            return Response({
+            reponse = {
                 'demande_id': existante.id,
                 'statut': 'en_attente',
                 'message': 'Demande déjà en attente de validation',
-            })
+            }
+            if jeton:
+                reponse['device_token'] = jeton
+            return Response(reponse)
 
         demande = AffiliationRequest.objects.create(
             demandeur_telephone=demandeur_telephone,
             demandeur_device_id=demandeur_device_id,
             patron=patron,
         )
-        return Response({
+        reponse = {
             'demande_id': demande.id,
             'statut': 'en_attente',
             'message': f'Demande envoyée à {patron_telephone} — en attente de validation',
-        }, status=status.HTTP_201_CREATED)
+        }
+        if jeton:
+            reponse['device_token'] = jeton
+        return Response(reponse, status=status.HTTP_201_CREATED)
 
 
 class AffiliationStatutView(APIView):
@@ -73,6 +94,7 @@ class AffiliationStatutView(APIView):
     GET /api/sync/affiliation-statut/?device_id=...
     Le mobile du demandeur poll cet endpoint jusqu'à approbation/rejet.
     """
+    @exige_jeton
     def get(self, request):
         device_id = request.query_params.get('device_id', '').strip()
         if not device_id:
@@ -99,18 +121,20 @@ class AffiliationStatutView(APIView):
 
 class DemandesEnAttenteView(APIView):
     """
-    GET /api/sync/demandes-en-attente/?telephone=patron_telephone
+    GET /api/sync/demandes-en-attente/?telephone=patron_telephone&device_id=...
     Le patron consulte les demandes d'affiliation reçues, pour approuver
-    depuis son propre téléphone.
+    depuis son propre téléphone (appareil du propriétaire exigé —
+    licences.auth).
     """
+    @exige_jeton
     def get(self, request):
         telephone = request.query_params.get('telephone', '').strip()
+        device_id = request.query_params.get('device_id', '').strip()
         if not telephone:
             return Response({'erreur': 'telephone requis'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            patron = Client.objects.get(telephone=telephone)
-        except Client.DoesNotExist:
+        patron = client_proprietaire(telephone, device_id)
+        if patron is None:
             return Response({'demandes': []})
 
         demandes = AffiliationRequest.objects.filter(
@@ -131,11 +155,19 @@ class DemandesEnAttenteView(APIView):
 class ApprouverAffiliationView(APIView):
     """
     POST /api/sync/affiliation/<id>/approuver/
-    Body: { telephone (patron), agence_id }
+    Body: { telephone (patron), device_id (du patron), agence_id }
     """
+    @exige_jeton
     def post(self, request, pk):
         telephone = request.data.get('telephone', '').strip()
+        device_id = request.data.get('device_id', '').strip()
         agence_id = request.data.get('agence_id')
+
+        # Sans ce contrôle, un tiers pouvait demander l'affiliation au
+        # numéro d'un patron puis l'approuver lui-même avec ce numéro, et
+        # obtenir une licence sur son agence.
+        if client_proprietaire(telephone, device_id) is None:
+            return Response({'erreur': ERREUR_APPAREIL}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             demande = AffiliationRequest.objects.get(id=pk, patron__telephone=telephone)
@@ -158,9 +190,13 @@ class ApprouverAffiliationView(APIView):
 
 
 class RejeterAffiliationView(APIView):
-    """POST /api/sync/affiliation/<id>/rejeter/  Body: { telephone (patron) }"""
+    """POST /api/sync/affiliation/<id>/rejeter/  Body: { telephone, device_id (patron) }"""
+    @exige_jeton
     def post(self, request, pk):
         telephone = request.data.get('telephone', '').strip()
+        device_id = request.data.get('device_id', '').strip()
+        if client_proprietaire(telephone, device_id) is None:
+            return Response({'erreur': ERREUR_APPAREIL}, status=status.HTTP_403_FORBIDDEN)
         try:
             demande = AffiliationRequest.objects.get(id=pk, patron__telephone=telephone)
         except AffiliationRequest.DoesNotExist:
@@ -174,18 +210,19 @@ class RejeterAffiliationView(APIView):
 
 class MesAgencesView(APIView):
     """
-    GET /api/sync/mes-agences/?telephone=patron_telephone
+    GET /api/sync/mes-agences/?telephone=patron_telephone&device_id=...
     Vue "patron" : toutes ses agences (qu'il les opère lui-même ou via un
     agent affilié) avec un résumé de synchronisation.
     """
+    @exige_jeton
     def get(self, request):
         telephone = request.query_params.get('telephone', '').strip()
+        device_id = request.query_params.get('device_id', '').strip()
         if not telephone:
             return Response({'erreur': 'telephone requis'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            patron = Client.objects.get(telephone=telephone)
-        except Client.DoesNotExist:
+        patron = client_proprietaire(telephone, device_id)
+        if patron is None:
             return Response({'agences': []})
 
         agences_data = []
@@ -200,25 +237,57 @@ class MesAgencesView(APIView):
         return Response({'agences': agences_data})
 
 
+def _resume_agence(agence):
+    """Activité du jour et du mois (opérations terminées seulement : une
+    transaction annulée sur le téléphone de l'agent ne compte plus)."""
+    today = datetime.combine(date.today(), time.min)
+    month = today.replace(day=1)
+    base = SyncedTransaction.objects.filter(agence=agence, status='completed')
+
+    def bloc(since):
+        agg = base.filter(transaction_created_at__gte=since).aggregate(
+            n=Count('id'), volume=Sum('amount'), commissions=Sum('commission'))
+        return {
+            'operations': agg['n'] or 0,
+            'volume': float(agg['volume'] or 0),
+            'commissions': float(agg['commissions'] or 0),
+        }
+
+    derniere = SyncedTransaction.objects.filter(agence=agence).order_by('-synced_at').first()
+    return {
+        'aujourdhui': bloc(today),
+        'mois': bloc(month),
+        'derniere_synchro': derniere.synced_at.isoformat() if derniere else None,
+    }
+
+
 class AgenceSyncDetailView(APIView):
     """
-    GET /api/sync/agence-detail/<id>/?telephone=patron_telephone
+    GET /api/sync/agence-detail/<id>/?telephone=patron_telephone&device_id=...
     Détail complet en lecture seule (droits confirmés) d'une agence pour
     son patron — transactions/clients/opérations caisse synchronisés.
+    Avant, le seul numéro du patron suffisait pour lire tout ce détail.
     """
+    @exige_jeton
     def get(self, request, pk):
         telephone = request.query_params.get('telephone', '').strip()
+        device_id = request.query_params.get('device_id', '').strip()
+        patron = client_proprietaire(telephone, device_id)
         try:
-            agence = Agence.objects.get(id=pk, client__telephone=telephone)
+            if patron is None:
+                raise Agence.DoesNotExist
+            agence = Agence.objects.get(id=pk, client=patron)
         except Agence.DoesNotExist:
             return Response({'erreur': 'Agence introuvable pour ce compte'}, status=status.HTTP_404_NOT_FOUND)
 
         transactions = SyncedTransaction.objects.filter(agence=agence)[:200]
+        resume = _resume_agence(agence)
         clients = SyncedClient.objects.filter(agence=agence)[:200]
         caisse_operations = SyncedCaisseOperation.objects.filter(agence=agence)[:200]
 
         return Response({
             'agence': {'id': agence.id, 'nom': agence.nom},
+            'resume': resume,
             'transactions': [
                 {
                     'local_id': t.local_id,
@@ -268,6 +337,7 @@ class PushSyncView(APIView):
     réseau sans dupliquer. N'existe que pour les comptes Agence : le mobile
     ne déclenche jamais ça pour un compte Particulier.
     """
+    @exige_jeton
     def post(self, request):
         agence_id = request.data.get('agence_id')
         device_id = request.data.get('device_id', '').strip()

@@ -6,3 +6,4 @@ gunicorn==21.2
 whitenoise==6.6
 Pillow==11.0.0
 PyMySQL==1.1.2
+cryptography==43.0.3

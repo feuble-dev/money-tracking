@@ -61,4 +61,35 @@ void main() {
     expect(await svc.verifyPin('9999'), isTrue);
     expect(await svc.verifyPin('1234'), isFalse);
   });
+
+  test('blocage progressif après 5 erreurs, levé par le bon PIN', () async {
+    final svc = PinService();
+    await svc.setPin('2580');
+    for (var i = 0; i < PinService.freeAttempts - 1; i++) {
+      expect(await svc.verifyPin('0000'), isFalse);
+      expect(await svc.lockRemaining(), Duration.zero);
+    }
+    expect(await svc.verifyPin('0000'), isFalse); // 5e erreur → bloqué
+    expect(await svc.lockRemaining(), greaterThan(Duration.zero));
+    // Pendant le blocage, même le bon PIN est refusé.
+    expect(await svc.verifyPin('2580'), isFalse);
+  });
+
+  test('durées de blocage : 30 s puis doublées, max 15 min', () {
+    expect(PinService.lockoutFor(4), Duration.zero);
+    expect(PinService.lockoutFor(5), const Duration(seconds: 30));
+    expect(PinService.lockoutFor(6), const Duration(seconds: 60));
+    expect(PinService.lockoutFor(20), const Duration(minutes: 15));
+  });
+
+  test('un succès remet le compteur à zéro', () async {
+    final svc = PinService();
+    await svc.setPin('2580');
+    for (var i = 0; i < PinService.freeAttempts - 1; i++) {
+      await svc.verifyPin('0000');
+    }
+    expect(await svc.verifyPin('2580'), isTrue);
+    expect(await svc.verifyPin('0000'), isFalse);
+    expect(await svc.lockRemaining(), Duration.zero);
+  });
 }

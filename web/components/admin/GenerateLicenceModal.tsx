@@ -3,18 +3,17 @@
 import React, { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
+import Field, { FormError, inputCls } from '@/components/admin/ui/Field';
+import CopyField from '@/components/admin/ui/CopyField';
 import { genererLicence, getAgences, getPricingTiers } from '@/lib/api';
-
-interface GenerateLicenceModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onGenerated: () => void;
-}
+import { apiError } from '@/lib/admin-types';
+import { fcfa } from '@/lib/format';
 
 interface AgenceOption {
   id: number;
   nom: string;
   telephone_client: string;
+  account_type: 'particulier' | 'agence';
 }
 
 interface TierOption {
@@ -24,158 +23,131 @@ interface TierOption {
   is_essai: boolean;
 }
 
+/**
+ * Licence payée hors application (ex. paiement reçu en direct) : l'admin
+ * choisit l'agence et la durée, et transmet la clé MT2 à l'agent, qui la
+ * colle dans l'app (elle fonctionne même hors ligne).
+ */
 export default function GenerateLicenceModal({
   isOpen,
   onClose,
   onGenerated,
-}: GenerateLicenceModalProps) {
+  agenceId: presetAgence,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onGenerated: () => void;
+  /** Agence présélectionnée (depuis une fiche client). */
+  agenceId?: number;
+}) {
   const [agences, setAgences] = useState<AgenceOption[]>([]);
   const [tiers, setTiers] = useState<TierOption[]>([]);
   const [agenceId, setAgenceId] = useState<number | ''>('');
-  const [dureeMois, setDureeMois] = useState<number>(1);
+  const [dureeMois, setDureeMois] = useState(1);
   const [montant, setMontant] = useState(450);
   const [loading, setLoading] = useState(false);
-  const [generatedCode, setGeneratedCode] = useState('');
+  const [result, setResult] = useState<{ cle: string; date_fin: string } | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
+    setAgenceId(presetAgence ?? '');
     (async () => {
       try {
         const [agencesData, tiersData] = await Promise.all([getAgences(), getPricingTiers()]);
-        setAgences(agencesData);
-        const payantsTiers = (tiersData as TierOption[]).filter((t) => !t.is_essai);
-        setTiers(payantsTiers);
-        if (payantsTiers.length > 0) {
-          setDureeMois(payantsTiers[0].duree_mois);
-          setMontant(payantsTiers[0].montant);
+        // Un Particulier est gratuit : son agence cachée n'a pas de licence à vendre.
+        setAgences((agencesData as AgenceOption[]).filter((a) => a.account_type !== 'particulier'));
+        const payants = (tiersData as TierOption[]).filter((t) => !t.is_essai);
+        setTiers(payants);
+        if (payants.length > 0) {
+          setDureeMois(payants[0].duree_mois);
+          setMontant(payants[0].montant);
         }
-      } catch {
-        setError("Impossible de charger les agences/tarifs");
+      } catch (e) {
+        setError(apiError(e, 'Impossible de charger les agences et les tarifs'));
       }
     })();
-  }, [isOpen]);
+  }, [isOpen, presetAgence]);
 
-  const handleDureeChange = (value: number) => {
+  const onDuree = (value: number) => {
     setDureeMois(value);
     const tier = tiers.find((t) => t.duree_mois === value);
     if (tier) setMontant(tier.montant);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!agenceId) {
-      setError('Sélectionnez une agence');
-      return;
-    }
+    if (!agenceId) return setError('Choisissez une agence');
     setLoading(true);
     setError('');
-
     try {
-      const result = await genererLicence({
-        agence_id: Number(agenceId),
-        duree_mois: dureeMois,
-        montant_paye: montant,
-      });
-      setGeneratedCode(result.code || 'XXXX-XXXX-XXXX');
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Erreur lors de la génération';
-      setError(message);
+      const r = await genererLicence({ agence_id: Number(agenceId), duree_mois: dureeMois, montant_paye: montant });
+      setResult({ cle: r.cle_hors_ligne || r.code, date_fin: r.date_fin });
+      onGenerated();
+    } catch (err) {
+      setError(apiError(err, 'La génération a échoué'));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleClose = () => {
-    if (generatedCode) {
-      onGenerated();
-    }
-    setAgenceId('');
-    setGeneratedCode('');
+  const close = () => {
+    setResult(null);
     setError('');
     onClose();
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Générer une licence">
-      {generatedCode ? (
-        <div className="text-center py-4">
-          <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-bold text-dark mb-2">Licence générée avec succès</h3>
-          <div className="bg-soft rounded-xl p-4 mb-4">
-            <p className="text-xs text-gray-500 mb-1">Code licence</p>
-            <p className="text-2xl font-mono font-bold text-primary tracking-wider">{generatedCode}</p>
-          </div>
-          <p className="text-sm text-gray-500 mb-6">
-            Communiquez ce code au client pour activer sa licence.
+    <Modal
+      isOpen={isOpen}
+      onClose={close}
+      title={result ? 'Licence créée' : 'Nouvelle licence'}
+      description={result ? undefined : 'Pour un paiement reçu en dehors de l’application.'}
+    >
+      {result ? (
+        <div className="space-y-5">
+          <p className="text-sm text-muted">
+            Valable jusqu’au <span className="font-semibold text-ink">{new Date(result.date_fin).toLocaleDateString('fr-FR')}</span>.
+            Envoyez cette clé à l’agent : il la colle dans Licence → Activer avec une clé.
           </p>
-          <Button variant="primary" onClick={handleClose} className="w-full">
-            Fermer
-          </Button>
+          <CopyField label="Clé d’activation" value={result.cle} />
+          <Button onClick={close} className="w-full">Terminé</Button>
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {error && (
-            <div className="p-3 bg-red-50 text-red-700 text-sm rounded-xl">{error}</div>
-          )}
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Agence</label>
+        <form onSubmit={submit} className="space-y-4">
+          <FormError>{error}</FormError>
+          <Field label="Agence" hint="La licence est attachée à l’agence et à son téléphone actuel.">
             <select
               value={agenceId}
               onChange={(e) => setAgenceId(e.target.value ? Number(e.target.value) : '')}
+              className={inputCls}
               required
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm bg-white"
             >
-              <option value="">Sélectionner une agence...</option>
+              <option value="">Choisir une agence…</option>
               {agences.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.nom} - {a.telephone_client}
+                  {a.nom} — {a.telephone_client}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-400 mt-1">
-              La licence est facturée par agence (D8) - l&apos;appareil est repris de sa dernière licence.
-            </p>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Durée">
+              <select value={dureeMois} onChange={(e) => onDuree(Number(e.target.value))} className={inputCls}>
+                {tiers.map((t) => (
+                  <option key={t.id} value={t.duree_mois}>
+                    {t.duree_mois} mois — {fcfa(t.montant)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Montant reçu (FCFA)">
+              <input type="number" min={0} value={montant} onChange={(e) => setMontant(Number(e.target.value))} className={inputCls} />
+            </Field>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Durée</label>
-            <select
-              value={dureeMois}
-              onChange={(e) => handleDureeChange(Number(e.target.value))}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm bg-white"
-            >
-              {tiers.map((tier) => (
-                <option key={tier.id} value={tier.duree_mois}>
-                  {tier.duree_mois} mois - {tier.montant.toLocaleString('fr-FR')} FCFA
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Montant (FCFA)</label>
-            <input
-              type="number"
-              value={montant}
-              onChange={(e) => setMontant(Number(e.target.value))}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm"
-            />
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <Button type="button" variant="ghost" onClick={handleClose} className="flex-1">
-              Annuler
-            </Button>
-            <Button type="submit" variant="primary" disabled={loading} className="flex-1">
-              {loading ? 'Génération...' : 'Générer'}
-            </Button>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={close}>Annuler</Button>
+            <Button type="submit" loading={loading}>Créer la licence</Button>
           </div>
         </form>
       )}

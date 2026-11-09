@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/licence/licence_storage.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/widgets/amount_text.dart';
+import '../../../core/format/formats.dart';
 import '../services/patron_api.dart';
 
 /// Détail complet en lecture seule d'une agence affiliée/possédée (droits
@@ -25,6 +27,13 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
   bool _loading = true;
   late final TabController _tabController;
   final _fcfa = NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+
+  /// Les dates arrivent du serveur en ISO brut (« 2026-10-27T14:03:22 ») —
+  /// affichées au format habituel de l'app.
+  static String _date(Object? v) {
+    final d = DateTime.tryParse('${v ?? ''}');
+    return d == null ? '${v ?? ''}' : AppFormats.dateTime.format(d);
+  }
 
   @override
   void initState() {
@@ -84,29 +93,56 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
   }
 
   Widget _buildTransactionsList(List<Map<String, dynamic>> items) {
-    if (items.isEmpty) return const Center(child: Text('Aucune transaction'));
-    return ListView.builder(
+    final resume = _data?['resume'] as Map?;
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.builder(
       padding: const EdgeInsets.all(12),
-      itemCount: items.length,
-      itemBuilder: (context, i) {
-        final t = items[i];
+      itemCount: items.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Column(children: [
+            if (resume != null) _Resume(resume: resume, fcfa: _fcfa, date: _date),
+            if (items.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 48),
+                child: Text('Aucune transaction synchronisée pour le moment'),
+              ),
+          ]);
+        }
+        final t = items[index - 1];
         final isIn = t['direction'] == 'in';
+        final cancelled = t['status'] == 'cancelled' || t['status'] == 'rejected';
         return Card(
           child: ListTile(
             leading: Icon(
               isIn ? Icons.arrow_downward : Icons.arrow_upward,
-              color: isIn ? AppColors.depositColor : AppColors.withdrawColor,
+              color: cancelled
+                  ? Colors.grey
+                  : isIn ? AppColors.depositColor : AppColors.withdrawColor,
             ),
-            title: Text('${t['transaction_type_label']} - ${t['operator_name']}'),
-            subtitle: Text('${t['client_name'] ?? ''} ${t['client_phone'] ?? ''}\n${t['created_at']}'),
+            title: Text('${t['transaction_type_label']} - ${t['operator_name']}',
+                style: TextStyle(decoration: cancelled ? TextDecoration.lineThrough : null)),
+            subtitle: Text('${t['client_name'] ?? ''} ${t['client_phone'] ?? ''}\n'
+                '${_date(t['created_at'])}${cancelled ? ' · annulée' : t['status'] == 'pending' ? ' · à vérifier' : ''}'),
             isThreeLine: true,
-            trailing: Text(
-              _fcfa.format(num.tryParse(t['amount'].toString()) ?? 0),
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            trailing: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.sizeOf(context).width * 0.32),
+              child: AmountText(
+                _fcfa.format(num.tryParse(t['amount'].toString()) ?? 0),
+                alignment: AlignmentDirectional.centerEnd,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: cancelled ? Colors.grey : null,
+                  decoration: cancelled ? TextDecoration.lineThrough : null,
+                ),
+              ),
             ),
           ),
         );
       },
+      ),
     );
   }
 
@@ -139,12 +175,72 @@ class _AgenceSyncDetailScreenState extends State<AgenceSyncDetailScreen>
           child: ListTile(
             leading: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.accentColor),
             title: Text('${o['type']} - ${o['operator_name']}'),
-            subtitle: Text('${o['note'] ?? ''}\n${o['created_at']}'),
+            subtitle: Text('${o['note'] ?? ''}\n${_date(o['created_at'])}'),
             isThreeLine: true,
-            trailing: Text(_fcfa.format(num.tryParse(o['montant'].toString()) ?? 0)),
+            trailing: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.sizeOf(context).width * 0.32),
+              child: AmountText(
+                _fcfa.format(num.tryParse(o['montant'].toString()) ?? 0),
+                alignment: AlignmentDirectional.centerEnd,
+              ),
+            ),
           ),
         );
       },
+    );
+  }
+}
+
+/// Ce que l'agence a fait aujourd'hui et ce mois-ci (annulées exclues).
+class _Resume extends StatelessWidget {
+  final Map resume;
+  final NumberFormat fcfa;
+  final String Function(Object?) date;
+  const _Resume({required this.resume, required this.fcfa, required this.date});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget bloc(String title, Map? b) => Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: theme.cardTheme.color,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: theme.textTheme.bodySmall),
+                const SizedBox(height: 4),
+                AmountText(fcfa.format(b?['commissions'] ?? 0),
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+                const SizedBox(height: 2),
+                Text('${b?['operations'] ?? 0} op. · ${fcfa.format(b?['volume'] ?? 0)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+        );
+    final last = resume['derniere_synchro'];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            bloc("Commissions aujourd'hui", resume['aujourdhui'] as Map?),
+            const SizedBox(width: 10),
+            bloc('Commissions du mois', resume['mois'] as Map?),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            last == null ? 'Pas encore de synchronisation' : 'Dernière mise à jour : ${date(last)}',
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
+      ),
     );
   }
 }

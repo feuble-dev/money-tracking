@@ -21,7 +21,9 @@ class UssdLauncher {
 
     String code = template;
     if (numero != null) {
-      code = code.replaceAll('{numero}', numero);
+      // Un numéro saisi « 70 12 34 56 » ou « +226 70… » casserait le code
+      // USSD (espaces, « + ») : on n'injecte que les chiffres.
+      code = code.replaceAll('{numero}', numero.replaceAll(RegExp(r'[^0-9]'), ''));
     }
     if (montant != null) {
       code = code.replaceAll('{montant}', montant.toInt().toString());

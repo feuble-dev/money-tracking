@@ -1,30 +1,25 @@
-import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+import '../config/api_config.dart';
+import '../network/api_client.dart';
+import '../security/device_identity.dart';
 import 'licence_storage.dart';
-import 'licence_validator.dart';
+import 'offline_key.dart';
+import '../sms/sms_processing_pipeline.dart' show replayPendingSms;
 
-// Changer par l'URL réelle du backend en production
-const String _baseUrl = 'https://api.money-tracking.site/api/licence';
-// const String _baseUrl = 'http://localhost:8000/api/licence';
+const String _baseUrl = ApiConfig.licence;
+const _erreurReseau = 'Impossible de se connecter au serveur';
 
 class LicenceService {
-  // ── Device ID unique Android ──────────────────────────────
-  static Future<String> getDeviceId() async {
-    final info = DeviceInfoPlugin();
-    final android = await info.androidInfo;
-    return android.id;
-  }
+  /// Identifiant de cette installation (voir [DeviceIdentity]).
+  static Future<String> getDeviceId() => DeviceIdentity.id();
 
   // ── Vérification au démarrage ─────────────────────────────
   static Future<LicenceStatut> verifierAuDemarrage() async {
     // 1. Vérifier d'abord en local (fonctionne offline)
     final statut = await LicenceStorage.verifierLocalement();
 
-    if (statut == LicenceStatut.active ||
-        statut == LicenceStatut.expireBientot ||
-        statut == LicenceStatut.essaiActif) {
+    if (statut.permetEcriture) {
       // Licence locale valide → sync en arrière-plan
       _syncEnArrierePlan();
       return statut;
@@ -33,6 +28,7 @@ class LicenceService {
     // 2. Si pas de licence locale → tenter récupération en ligne
     final connecte = await _estConnecte();
     if (connecte) {
+      await ensureDeviceRegistered();
       final telephone = await LicenceStorage.getTelephone();
       if (telephone != null) {
         final recuperee = await recupererLicence(telephone);
@@ -48,58 +44,61 @@ class LicenceService {
     try {
       final connecte = await _estConnecte();
       if (!connecte) return;
+      await ensureDeviceRegistered();
+      await OfflineKey.refreshPublicKey();
       final telephone = await LicenceStorage.getTelephone();
       if (telephone == null) return;
       await recupererLicence(telephone);
     } catch (_) {}
   }
 
+  /// Installation antérieure au jeton d'appareil : réclame son jeton une
+  /// seule fois (backend `appareil/enregistrer/`). Sans effet si l'appareil
+  /// en a déjà un ou n'a jamais été inscrit.
+  static Future<void> ensureDeviceRegistered() async {
+    if (await DeviceIdentity.hasToken()) return;
+    if (await LicenceStorage.getTelephone() == null) return;
+    try {
+      final res = await ApiClient.post('$_baseUrl/appareil/enregistrer/',
+          {'device_id': await getDeviceId()});
+      if (!res.ok) {
+        debugPrint('[Licence] Enregistrement appareil : ${res.statusCode} ${res.error()}');
+      }
+    } catch (_) {}
+  }
+
   // ── MODE 1 : Essai gratuit ────────────────────────────────
   static Future<ResultatActivation> demarrerEssai(String telephone) async {
-    final deviceId = await getDeviceId();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/essai/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'telephone': telephone, 'device_id': deviceId}),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 201) {
-        await LicenceStorage.sauvegarder(data);
+      final res = await ApiClient.post('$_baseUrl/essai/', {
+        'telephone': telephone,
+        'device_id': await getDeviceId(),
+      });
+      if (res.statusCode == 201) {
+        await LicenceStorage.sauvegarder(res.data);
         await LicenceStorage.saveTelephone(telephone);
-        return ResultatActivation.succes(
-          'Essai gratuit activé pour 30 jours !',
-        );
+        return ResultatActivation.succes(res.data['message'] as String? ??
+            'Essai gratuit activé');
       }
-      return ResultatActivation.erreur(data['erreur'] ?? 'Erreur inconnue');
-    } catch (e) {
-      return ResultatActivation.erreur('Impossible de se connecter au serveur');
+      return ResultatActivation.erreur(res.error());
+    } catch (_) {
+      return ResultatActivation.erreur(_erreurReseau);
     }
   }
 
   // ── MODE 2 : Récupération en ligne (polling) ──────────────
   static Future<bool> recupererLicence(String telephone) async {
-    final deviceId = await getDeviceId();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/recuperer/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'telephone': telephone, 'device_id': deviceId}),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['statut'] == 'active' || data['statut'] == 'essai') {
-          await LicenceStorage.sauvegarder(data);
-          await LicenceStorage.saveTelephone(telephone);
-          return true;
-        }
+      final res = await ApiClient.post('$_baseUrl/recuperer/', {
+        'telephone': telephone,
+        'device_id': await getDeviceId(),
+      }, timeout: const Duration(seconds: 10));
+      if (res.ok &&
+          (res.data['statut'] == 'active' || res.data['statut'] == 'essai')) {
+        await LicenceStorage.sauvegarder(res.data);
+        await LicenceStorage.saveTelephone(telephone);
+        _apresActivation();
+        return true;
       }
     } catch (_) {}
     return false;
@@ -121,37 +120,73 @@ class LicenceService {
     yield StatutDemande.timeout;
   }
 
-  // ── MODE 3 : Activation avec clé manuelle (offline) ───────
+  // ── MODE 3 : Activation avec clé ──────────────────────────
+  /// En ligne, le serveur vérifie la clé (ancien format `MT-…` comme
+  /// nouveau `MT2-…`). Hors ligne, seule une clé signée `MT2-…` est
+  /// acceptée, vérifiée avec la clé publique du serveur : l'ancien format
+  /// n'était pas signé, n'importe quelle clé bien formée passait.
   static Future<ResultatActivation> activerAvecCle(
     String cle,
     String telephone,
   ) async {
     final deviceId = await getDeviceId();
-    final resultat = LicenceValidator.valider(
-      cle: cle.trim().toUpperCase(),
-      deviceId: deviceId,
-    );
+    final saisie = cle.trim();
+    final signee = OfflineKey.looksLike(saisie);
+    final code = signee ? saisie : saisie.toUpperCase();
 
-    if (resultat.valide) {
-      await LicenceStorage.sauvegarder({
-        'statut': 'active',
-        'code': cle.trim().toUpperCase(),
-        'date_fin': resultat.dateFin!.toIso8601String(),
-        'jours_restants': resultat.joursRestants,
-        'source': 'cle_manuelle',
-      });
-      await LicenceStorage.saveTelephone(telephone);
-      return ResultatActivation.succes(
-        'Licence activée - expire dans '
-        '${resultat.joursRestants} jours',
-      );
+    try {
+      final res = await ApiClient.post('$_baseUrl/verifier-cle/',
+          {'code': code, 'device_id': deviceId},
+          timeout: const Duration(seconds: 10));
+      if (res.ok) {
+        if (res.data['valide'] != true) {
+          return ResultatActivation.erreur(
+              res.data['message'] as String? ?? 'Clé invalide');
+        }
+        final jours = (res.data['jours_restants'] as num?)?.toInt() ?? 0;
+        await LicenceStorage.sauvegarder({
+          'statut': res.data['statut'] ?? 'active',
+          'code': code,
+          'date_fin': res.data['date_fin'],
+          'jours_restants': jours,
+          'source': 'cle_manuelle',
+        });
+        await LicenceStorage.saveTelephone(telephone);
+        _apresActivation();
+        return ResultatActivation.succes(
+            'Licence activée - expire dans $jours jours');
+      }
+      if (!res.needsDeviceAuth) return ResultatActivation.erreur(res.error());
+      // Appareil pas encore authentifié : la vérification locale suffit
+      // pour une clé signée.
+    } catch (_) {
+      // Pas de réseau : vérification locale ci-dessous.
     }
-    return ResultatActivation.erreur(resultat.message);
+
+    if (!signee) {
+      return ResultatActivation.erreur(
+          'Connectez-vous à Internet pour activer cette clé.');
+    }
+    final licence = await OfflineKey.verify(code, deviceId);
+    if (licence == null) {
+      return ResultatActivation.erreur('Clé invalide pour cet appareil');
+    }
+    final jours = licence.dateFin.difference(DateTime.now()).inDays;
+    if (jours < 0) return ResultatActivation.erreur('Cette clé a expiré');
+    await LicenceStorage.sauvegarder({
+      'statut': licence.statut,
+      'code': code,
+      'agence_id': licence.agenceId,
+      'date_fin': licence.dateFin.toIso8601String(),
+      'jours_restants': jours,
+      'source': 'cle_hors_ligne',
+    });
+    await LicenceStorage.saveTelephone(telephone);
+    _apresActivation();
+    return ResultatActivation.succes('Licence activée - expire dans $jours jours');
   }
 
   // ── Onboarding : compte + 1ère agence + essai (D7/D8/D10) ─
-  // Additif — n'affecte pas demarrerEssai() ni les écrans d'activation
-  // existants (Phase 6 les rendra agence-aware).
   static Future<ResultatEssaiAgence> demarrerEssaiAvecAgence({
     required String telephone,
     required String accountType,
@@ -161,37 +196,25 @@ class LicenceService {
     // ci-dessous) sans passer par l'affiliation/approbation.
     required String password,
   }) async {
-    final deviceId = await getDeviceId();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/essai/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'telephone': telephone,
-              'device_id': deviceId,
-              'account_type': accountType,
-              'agence_nom': agenceNom,
-              'password': password,
-            }),
-          )
-          .timeout(const Duration(seconds: 15));
-
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 201) {
-        await LicenceStorage.sauvegarder(data);
+      final res = await ApiClient.post('$_baseUrl/essai/', {
+        'telephone': telephone,
+        'device_id': await getDeviceId(),
+        'account_type': accountType,
+        'agence_nom': agenceNom,
+        'password': password,
+      });
+      if (res.statusCode == 201) {
+        await LicenceStorage.sauvegarder(res.data);
         await LicenceStorage.saveTelephone(telephone);
         return ResultatEssaiAgence.succes(
-          agenceBackendId: data['agence_id'] as int,
-          message: data['message'] as String? ?? 'Essai gratuit activé',
+          agenceBackendId: res.data['agence_id'] as int,
+          message: res.data['message'] as String? ?? 'Compte créé',
         );
       }
-      return ResultatEssaiAgence.erreur(data['erreur'] ?? 'Erreur inconnue');
-    } catch (e) {
-      return ResultatEssaiAgence.erreur(
-        'Impossible de se connecter au serveur',
-      );
+      return ResultatEssaiAgence.erreur(res.error());
+    } catch (_) {
+      return ResultatEssaiAgence.erreur(_erreurReseau);
     }
   }
 
@@ -200,67 +223,60 @@ class LicenceService {
     required String telephone,
     required int dureeMois,
   }) async {
-    final deviceId = await getDeviceId();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/demander/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'telephone': telephone,
-              'device_id': deviceId,
-              'duree_mois': dureeMois,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 201) {
+      final res = await ApiClient.post('$_baseUrl/demander/', {
+        'telephone': telephone,
+        'device_id': await getDeviceId(),
+        'duree_mois': dureeMois,
+      });
+      if (res.statusCode == 201) {
         await LicenceStorage.saveTelephone(telephone);
-        return ResultatActivation.succes(data['message']);
+        return ResultatActivation.succes(res.data['message'] as String? ??
+            'Demande envoyée');
       }
-      return ResultatActivation.erreur(data['erreur'] ?? 'Erreur');
-    } catch (e) {
-      return ResultatActivation.erreur('Impossible de se connecter');
+      return ResultatActivation.erreur(res.error());
+    } catch (_) {
+      return ResultatActivation.erreur(_erreurReseau);
     }
   }
 
   // ── Connexion à un compte existant depuis un nouvel appareil (D13) ──
   // Le mot de passe prouve la propriété du compte : aucune approbation
-  // manuelle nécessaire (contrairement à AffiliationService.demander), à
-  // la différence d'un agent qui rejoint l'agence de quelqu'un d'autre.
+  // manuelle nécessaire (contrairement à AffiliationService.demander). Le
+  // serveur émet au passage le jeton de cet appareil.
   static Future<ResultatLogin> login({
     required String telephone,
     required String password,
   }) async {
-    final deviceId = await getDeviceId();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/login/'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'telephone': telephone,
-              'password': password,
-              'device_id': deviceId,
-            }),
-          )
-          .timeout(const Duration(seconds: 15));
-
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final agences = ((data['agences'] as List?) ?? [])
+      final res = await ApiClient.post('$_baseUrl/login/', {
+        'telephone': telephone,
+        'password': password,
+        'device_id': await getDeviceId(),
+      });
+      if (res.ok) {
+        final agences = ((res.data['agences'] as List?) ?? [])
             .map((a) => AgenceLogin.fromJson(a as Map<String, dynamic>))
             .toList();
         return ResultatLogin.succes(
-          accountType: data['account_type'] as String? ?? 'agence',
+          accountType: res.data['account_type'] as String? ?? 'agence',
           agences: agences,
         );
       }
-      return ResultatLogin.erreur(data['erreur'] ?? 'Identifiants incorrects');
-    } catch (e) {
-      return ResultatLogin.erreur('Impossible de se connecter au serveur');
+      if (res.statusCode == 429) {
+        return ResultatLogin.erreur(
+            'Trop de tentatives. Réessayez dans une minute.');
+      }
+      return ResultatLogin.erreur(res.error('Identifiants incorrects'));
+    } catch (_) {
+      return ResultatLogin.erreur(_erreurReseau);
     }
+  }
+
+  /// Licence (re)devenue active : les SMS reçus entre-temps deviennent des
+  /// transactions.
+  static void _apresActivation() {
+    replayPendingSms().catchError((_) => 0);
   }
 
   static Future<bool> _estConnecte() async {

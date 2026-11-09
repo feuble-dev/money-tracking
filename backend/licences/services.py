@@ -11,6 +11,9 @@ from django.conf import settings
 
 class LicenceService:
 
+    # Licence « à vie » des comptes Particulier (gratuits).
+    DATE_FIN_GRATUIT = date(2099, 12, 31)
+
     @staticmethod
     def _get_secret() -> str:
         return settings.LICENCE_SECRET
@@ -143,14 +146,19 @@ class LicenceService:
         """
         from .models import Agence, Licence, PricingTier
 
-        essai_tier = PricingTier.objects.filter(
-            is_essai=True, is_active=True
-        ).first()
-        duree_mois = essai_tier.essai_duree_mois if essai_tier else 3
-
         agence = Agence.objects.create(client=client, nom=nom_agence)
 
-        date_fin = date.today() + timedelta(days=30 * duree_mois)
+        if client.account_type == 'particulier':
+            # MoneyTracking est gratuit pour les particuliers : licence
+            # permanente, jamais d'expiration ni de paiement.
+            duree_mois, statut, date_fin = 0, 'active', LicenceService.DATE_FIN_GRATUIT
+        else:
+            essai_tier = PricingTier.objects.filter(
+                is_essai=True, is_active=True
+            ).first()
+            duree_mois = essai_tier.essai_duree_mois if essai_tier else 3
+            statut = 'essai'
+            date_fin = date.today() + timedelta(days=30 * duree_mois)
         code = LicenceService.generer_code(device_id, client.telephone, date_fin, agence.id)
 
         licence = Licence.objects.create(
@@ -161,7 +169,7 @@ class LicenceService:
             date_fin=date_fin,
             duree_mois=duree_mois,
             montant_paye=0,
-            statut='essai',
+            statut=statut,
         )
         return {'agence': agence, 'licence': licence}
 
@@ -209,6 +217,28 @@ class HistoriqueService:
         annees_totales = math.ceil(jours / 365) if jours > 0 else 0
         annees_payantes = max(0, annees_totales - 1)
         return annees_payantes * 200
+
+    @staticmethod
+    def couverture(device_id: str):
+        """(date la plus ancienne couverte, achat) parmi les achats actifs de
+        l'appareil, ou None. Date `None` = achat antérieur à la tarification
+        par période (sans date enregistrée) : il couvre tout l'historique,
+        comme à l'époque."""
+        from .models import AchatHistorique
+        meilleure = None
+        for achat in AchatHistorique.objects.filter(
+            device_id=device_id, statut='active'
+        ):
+            d = achat.date_debut_demandee
+            if d is None:
+                return (None, achat)
+            if meilleure is None or d < meilleure[0]:
+                meilleure = (d, achat)
+        return meilleure
+
+    @staticmethod
+    def calculer_cout_couverture(date_couverte) -> int:
+        return 0 if date_couverte is None else HistoriqueService.calculer_cout(date_couverte)
 
     @staticmethod
     def generer_token(device_id: str, telephone: str) -> str:

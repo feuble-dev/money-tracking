@@ -267,3 +267,38 @@ class AchatHistorique(models.Model):
         verbose_name = "Achat Historique SMS"
         verbose_name_plural = "Achats Historique SMS"
         ordering = ['-created_at']
+
+
+class AppareilAutorise(models.Model):
+    """
+    Jeton secret propre à une installation de l'app. Le `device_id` seul ne
+    prouve rien : il se devine (ancien `Build.ID`, identique sur tous les
+    téléphones d'un même firmware). Chaque appel client sensible présente
+    son jeton (en-tête `X-Device-Token`), dont seul le hash est stocké.
+
+    Plusieurs jetons peuvent coexister pour un même `device_id` (anciennes
+    installations qui partagent le même Build.ID) : chacun ne vaut que
+    pour celui qui le détient.
+    """
+    device_id = models.CharField(max_length=200, db_index=True)
+    jeton_hash = models.CharField(max_length=64, unique=True)
+    client = models.ForeignKey(
+        Client, null=True, blank=True,
+        on_delete=models.SET_NULL,  # informatif : le jeton reste valable
+        related_name='appareils',
+    )
+    origine = models.CharField(max_length=20, choices=[
+        ('creation', 'Création de compte'),
+        ('connexion', 'Connexion par mot de passe'),
+        ('affiliation', "Demande d'affiliation"),
+        ('migration', 'Installation antérieure'),
+    ])
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.device_id[:12]}… ({self.get_origine_display()})"
+
+    class Meta:
+        verbose_name = "Appareil autorisé"
+        verbose_name_plural = "Appareils autorisés"

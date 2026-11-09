@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:another_telephony/telephony.dart';
 import 'package:flutter/material.dart';
+import 'features/money/providers/money_providers.dart';
+import 'core/sms/sms_processing_pipeline.dart';
+import 'core/licence/licence_service.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -8,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/categories/category_providers.dart';
 import 'core/categories/monthly_summary_service.dart';
+import 'core/summary/daily_summary_service.dart';
 import 'core/database/database_helper.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/onboarding/catalog_sync_service.dart';
@@ -90,8 +94,10 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     // Particulier) : visibilité "détail complet" du patron sur ses agences.
     SyncService.pushIfNeeded();
     _resyncCatalog();
-    // Récap mensuel des dépenses (compte Particulier) — une fois par mois.
+    unawaited(_startupLicence());
+    // Bilans au démarrage : mois écoulé (Particulier), veille (Agence).
     unawaited(MonthlySummaryService.maybeShow());
+    unawaited(DailySummaryService.maybeShow());
     _syncSub = Stream.periodic(const Duration(minutes: 2)).listen((_) {
       SyncService.pushIfNeeded();
       markSmsForegroundAlive();
@@ -175,19 +181,46 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       } else if (payload.startsWith('tx:')) {
         router.push('/transactions/pending/${payload.substring(3)}');
       } else if (payload == 'summary') {
-        router.push('/budget');
+        router.go('/budget');
+      } else if (payload == 'licence') {
+        router.push('/licence/statut');
+      } else if (payload == 'transactions') {
+        router.go('/transactions');
+      } else if (payload == 'cloture') {
+        router.push('/caisse/cloture');
+      } else if (payload == 'commissions') {
+        router.go('/commissions');
+      } else if (payload == 'caisse') {
+        router.push('/settings/caisse');
       } else {
         router.push('/notifications');
       }
     };
     // Quand une action est effectuée depuis la notif (confirmer/rejeter)
-    notifService.onActionPerformed = () {
-      ref.read(transactionsProvider.notifier).loadTransactions();
-      ref.read(pendingTransactionsProvider.notifier).loadPending();
-      ref.invalidate(dashboardStatsProvider(null));
-      ref.invalidate(particulierDashboardProvider);
-      ref.invalidate(uncategorizedCountProvider);
-    };
+    notifService.onActionPerformed = _refreshAfterNewTransactions;
+  }
+
+  /// Licence au démarrage (rafraîchissement en ligne, migration du jeton
+  /// d'appareil, clé publique des licences hors ligne), puis rejeu des SMS
+  /// restés en attente pendant une licence inactive.
+  Future<void> _startupLicence() async {
+    try {
+      await LicenceService.verifierAuDemarrage();
+      final created = await replayPendingSms();
+      if (created > 0 && mounted) _refreshAfterNewTransactions();
+    } catch (e) {
+      debugPrint('[Licence] démarrage: $e');
+    }
+  }
+
+  void _refreshAfterNewTransactions() {
+    ref.read(transactionsProvider.notifier).loadTransactions();
+    ref.read(pendingTransactionsProvider.notifier).loadPending();
+    ref.invalidate(dashboardStatsProvider(null));
+    ref.invalidate(particulierDashboardProvider);
+    ref.invalidate(uncategorizedCountProvider);
+    ref.invalidate(movementsProvider);
+    ref.invalidate(walletsProvider);
   }
 
   /// Met à jour en arrière-plan les patterns SMS des opérateurs déjà
@@ -306,6 +339,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       ref.invalidate(commissionsStatsProvider);
       ref.invalidate(uncategorizedCountProvider);
       ref.invalidate(recurringPaymentsProvider);
+      ref.invalidate(movementsProvider);
       ref.read(caissesProvider.notifier).load();
     };
     await smsService.startListening();
@@ -342,6 +376,17 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
       darkTheme: AppTheme.darkTheme,
       themeMode: themeMode,
       routerConfig: router,
+      // La police système agrandie (fréquent sur les téléphones d'entrée de
+      // gamme) faisait déborder les cartes de montants. On la respecte
+      // jusqu'à ×1,3 — au-delà, les écrans chiffrés deviennent illisibles.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+              textScaler: mq.textScaler.clamp(maxScaleFactor: 1.3)),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       locale: const Locale('fr', 'FR'),
       supportedLocales: const [Locale('fr', 'FR')],
       localizationsDelegates: const [

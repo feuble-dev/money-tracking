@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import '../categories/category_repository.dart';
+import '../categories/expense_category.dart';
+import '../money/money_repository.dart';
 import '../database/caisse_repository.dart';
 import '../database/database_helper.dart';
 import '../database/transaction_repository.dart';
@@ -26,6 +28,19 @@ const _uuid = Uuid();
 /// [onTransactionDetected] est optionnel : sans UI à rafraîchir (cas
 /// headless), la transaction est simplement persistée et l'app la verra à
 /// sa prochaine ouverture.
+/// État d'un `sms_messages.processed` : le SMS attend d'être traité (ex.
+/// licence inactive au moment de la réception — il sera rejoué), a donné
+/// une transaction, ou n'en est pas une.
+abstract final class SmsStatus {
+  static const pending = 0;
+  static const transaction = 1;
+  static const ignored = 2;
+  static const inProgress = 3;
+}
+
+/// Résultat du traitement d'un SMS déjà enregistré.
+enum SmsOutcome { created, duplicate, ignored, licenceBlocked }
+
 Future<void> processIncomingSms(
   String sender,
   String body, {
@@ -54,7 +69,7 @@ Future<void> processIncomingSms(
     'sender': sender,
     'body': body,
     'received_at': now.toIso8601String(),
-    'processed': 0,
+    'processed': SmsStatus.inProgress,
     'content_hash': smsContentHash(sender, body),
     'created_at': now.toIso8601String(),
   }, conflictAlgorithm: ConflictAlgorithm.ignore);
@@ -63,6 +78,103 @@ Future<void> processIncomingSms(
     return;
   }
 
+  final outcome = await _processStoredSms(
+    db,
+    smsId: smsId,
+    sender: sender,
+    body: body,
+    receivedAt: now,
+    notify: true,
+    onTransactionDetected: onTransactionDetected,
+  );
+  if (outcome == SmsOutcome.licenceBlocked) {
+    // Rien n'est perdu : le SMS reste en attente et sera rejoué dès que la
+    // licence est de nouveau active (replayPendingSms).
+    await _notify(() => NotificationService().showLicenceRequiredNotification());
+  }
+}
+
+/// Rejoue les SMS restés en attente (reçus pendant une licence inactive —
+/// avant, ils étaient perdus pour toujours : ni le rattrapage au démarrage
+/// ni la déduplication ne les laissaient repasser). Appelé au démarrage et
+/// après chaque activation/renouvellement. Renvoie le nombre de
+/// transactions créées ; une seule notification récapitulative.
+Future<int> replayPendingSms({
+  ValueChanged<Map<String, dynamic>>? onTransactionDetected,
+}) async {
+  if (!(await LicenceStorage.verifierLocalement()).permetEcriture) return 0;
+  final db = await DatabaseHelper.instance.database;
+  final rows = await db.query('sms_messages',
+      columns: ['id', 'sender', 'body', 'received_at'],
+      where: 'processed = ?',
+      whereArgs: [SmsStatus.pending],
+      orderBy: 'received_at ASC',
+      limit: 500);
+
+  var created = 0;
+  for (final row in rows) {
+    final id = row['id'] as String;
+    // Réservation atomique : un autre isolate ne retraitera pas ce SMS.
+    final claimed = await db.update(
+        'sms_messages', {'processed': SmsStatus.inProgress},
+        where: 'id = ? AND processed = ?',
+        whereArgs: [id, SmsStatus.pending]);
+    if (claimed == 0) continue;
+    final outcome = await _processStoredSms(
+      db,
+      smsId: id,
+      sender: row['sender'] as String,
+      body: row['body'] as String,
+      receivedAt: DateTime.tryParse(row['received_at'] as String? ?? '') ??
+          DateTime.now(),
+      notify: false,
+      onTransactionDetected: onTransactionDetected,
+    );
+    if (outcome == SmsOutcome.created) created++;
+    if (outcome == SmsOutcome.licenceBlocked) break; // licence retombée
+  }
+  if (created > 0) {
+    await _notify(
+        () => NotificationService().showReplaySummaryNotification(created));
+    SyncService.pushIfNeeded();
+  }
+  return created;
+}
+
+/// Une notification qui échoue (canal indisponible dans l'isolate headless,
+/// permission refusée…) ne doit jamais interrompre l'enregistrement d'une
+/// transaction.
+Future<void> _notify(Future<void> Function() show) async {
+  try {
+    await show();
+  } catch (e) {
+    debugPrint('[SMS] notification non affichée : $e');
+  }
+}
+
+Future<void> _setSmsStatus(Database db, String smsId, int status,
+        {String? transactionId}) =>
+    db.update(
+        'sms_messages',
+        {
+          'processed': status,
+          'transaction_id': ?transactionId,
+        },
+        where: 'id = ?',
+        whereArgs: [smsId]);
+
+/// Cœur du pipeline : SMS déjà enregistré (`processed` = en cours) →
+/// transaction. Met toujours le statut final du SMS à jour.
+Future<SmsOutcome> _processStoredSms(
+  Database db, {
+  required String smsId,
+  required String sender,
+  required String body,
+  required DateTime receivedAt,
+  required bool notify,
+  ValueChanged<Map<String, dynamic>>? onTransactionDetected,
+}) async {
+  final now = receivedAt;
   // 3. Chercher l'opérateur par sender
   var operators = await db.query('operators',
     where: 'LOWER(sms_sender) = LOWER(?) AND is_active = 1',
@@ -79,7 +191,8 @@ Future<void> processIncomingSms(
 
   if (operators.isEmpty) {
     debugPrint('[SMS] Aucun opérateur pour: "$sender"');
-    return;
+    await _setSmsStatus(db, smsId, SmsStatus.ignored);
+    return SmsOutcome.ignored;
   }
 
   // 4. Essayer CHAQUE opérateur dont le sender correspond, pas seulement le
@@ -106,7 +219,8 @@ Future<void> processIncomingSms(
   // une transaction, ignorer
   if (op == null || smsMatch == null) {
     debugPrint('[SMS] Aucun pattern matché — pas une transaction, ignoré');
-    return;
+    await _setSmsStatus(db, smsId, SmsStatus.ignored);
+    return SmsOutcome.ignored;
   }
   final operatorId = op['id'] as String;
   final operatorName = op['name'] as String;
@@ -115,7 +229,10 @@ Future<void> processIncomingSms(
 
   final amount = SmsFieldExtractor.parseMontant(extracted['montant']);
   final clientPhone = SmsFieldExtractor.cleanPhone(extracted['numero_client']);
-  if (amount == null || amount <= 0) return;
+  if (amount == null || amount <= 0) {
+    await _setSmsStatus(db, smsId, SmsStatus.ignored);
+    return SmsOutcome.ignored;
+  }
   final soldeApres = SmsFieldExtractor.parseMontant(extracted['solde']);
 
   // Filet secondaire : si le SMS porte une référence de transaction
@@ -130,11 +247,10 @@ Future<void> processIncomingSms(
         whereArgs: [opTxRef, operatorId],
         limit: 1);
     if (dup.isNotEmpty) {
-      await db.update('sms_messages',
-          {'processed': 1, 'transaction_id': dup.first['id']},
-          where: 'id = ?', whereArgs: [smsId]);
+      await _setSmsStatus(db, smsId, SmsStatus.transaction,
+          transactionId: dup.first['id'] as String);
       debugPrint('[SMS] Réf transaction déjà connue ($opTxRef) — pas de doublon');
-      return;
+      return SmsOutcome.duplicate;
     }
   }
 
@@ -167,7 +283,19 @@ Future<void> processIncomingSms(
   String? autoCategory;
   final accountType = await OnboardingStatusService().getAccountType();
   final isParticulier = accountType == 'particulier';
-  if (isParticulier) {
+  final txId = _uuid.v4();
+  if (isParticulier &&
+      await MoneyRepository.claimTransferForSms(
+        transactionId: txId,
+        operatorId: operatorId,
+        direction: smsMatch.direction,
+        amount: amount,
+        at: now,
+      )) {
+    // Ce SMS est l'autre moitié d'un virement déjà saisi (ex. retrait vers
+    // les espèces) : ni dépense ni revenu.
+    autoCategory = kCategoryInternal;
+  } else if (isParticulier) {
     autoCategory = await CategoryRepository.autoCategoryFor(
       transactionTypeCode: transactionType,
       clientPhone: clientPhone,
@@ -178,26 +306,17 @@ Future<void> processIncomingSms(
 
   // 7. Vérifier licence avant de créer la transaction
   final licenceStatut = await LicenceStorage.verifierLocalement();
-  final peutCreer = licenceStatut == LicenceStatut.active ||
-      licenceStatut == LicenceStatut.essaiActif ||
-      licenceStatut == LicenceStatut.expireBientot;
+  final peutCreer = licenceStatut.permetEcriture;
 
   if (!peutCreer) {
-    // SMS enregistré mais pas de transaction
-    debugPrint('[SMS] Licence inactive — SMS enregistré sans transaction');
-    await NotificationService().showPendingTransactionNotification(
-      transactionId: smsId,
-      type: transactionType,
-      typeLabel: smsMatch.typeLabel,
-      amount: amount,
-      clientPhone: clientPhone ?? '',
-      operatorName: 'Licence requise',
-    );
-    return;
+    // Le SMS reste EN ATTENTE : replayPendingSms() le transformera en
+    // transaction dès que la licence redevient active.
+    debugPrint('[SMS] Licence inactive — SMS mis en attente');
+    await _setSmsStatus(db, smsId, SmsStatus.pending);
+    return SmsOutcome.licenceBlocked;
   }
 
   // Créer la transaction (licence active)
-  final txId = _uuid.v4();
   final txData = {
     'id': txId,
     'operator_id': operatorId,
@@ -239,7 +358,7 @@ Future<void> processIncomingSms(
   // l'opération dans la plupart des cas (`soldeApres`) — c'est la valeur
   // qu'on applique directement, pas un delta cumulé qui dériverait au
   // moindre SMS manqué.
-  await CaisseRepository.updateSoldeAfterTransaction(
+  final floatAlert = await CaisseRepository.updateSoldeAfterTransaction(
     operatorId: operatorId,
     amount: amount,
     direction: smsMatch.direction,
@@ -247,8 +366,7 @@ Future<void> processIncomingSms(
     transactionAt: now,
   );
 
-  await db.update('sms_messages', {'processed': 1, 'transaction_id': txId},
-      where: 'id = ?', whereArgs: [smsId]);
+  await _setSmsStatus(db, smsId, SmsStatus.transaction, transactionId: txId);
 
   final typeLabel = smsMatch.typeLabel;
 
@@ -274,20 +392,33 @@ Future<void> processIncomingSms(
   } else {
     contexte = '$typeLabel - Nouveau client. Appuyez pour compléter.';
   }
-  await NotificationService().showPendingTransactionNotification(
-    transactionId: txId,
-    type: transactionType,
-    typeLabel: typeLabel,
-    amount: amount,
-    clientPhone: clientPhone ?? (clientExists ? '' : 'inconnu'),
-    operatorName: contexte,
-    offerCategorize: offerCategorize,
-  );
+  if (notify) {
+    await _notify(() => NotificationService().showPendingTransactionNotification(
+      transactionId: txId,
+      type: transactionType,
+      typeLabel: typeLabel,
+      amount: amount,
+      clientPhone: clientPhone ?? (clientExists ? '' : 'inconnu'),
+      operatorName: contexte,
+      offerCategorize: offerCategorize,
+    ));
+    // Agence : float sous le seuil fixé → prévenir tout de suite, avant que
+    // l'agent ne doive refuser un retrait faute de liquidité électronique.
+    if (floatAlert != null && !isParticulier) {
+      await _notify(() => NotificationService().showFloatAlertNotification(
+        operatorName: operatorName,
+        solde: floatAlert.solde,
+        seuil: floatAlert.seuil,
+      ));
+    }
+  }
 
   onTransactionDetected?.call({...txData, 'operator_name': operatorName});
   debugPrint('[SMS] ✅ $typeLabel ${amount.toInt()} FCFA — ${clientPhone ?? "?"} ($operatorName)');
 
   // Pousse la nouvelle transaction vers le backend sans attendre le
   // prochain tick du timer (D-sync) — no-op immédiat si compte Particulier.
-  SyncService.pushIfNeeded();
+  // Le rejeu groupé pousse une seule fois à la fin.
+  if (notify) SyncService.pushIfNeeded();
+  return SmsOutcome.created;
 }
