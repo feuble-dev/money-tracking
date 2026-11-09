@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Réseau : backend (compte, licence, catalogue, synchro). Les
+         manifestes debug/profile la déclaraient déjà, pas celui-ci : un APK
+         de release ne pouvait joindre aucun serveur (« Impossible de se
+         connecter au serveur »). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Permissions SMS -->
     <uses-permission android:name="android.permission.RECEIVE_SMS"/>
     <uses-permission android:name="android.permission.READ_SMS"/>
