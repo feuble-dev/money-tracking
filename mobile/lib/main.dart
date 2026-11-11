@@ -13,6 +13,8 @@ import 'core/categories/category_providers.dart';
 import 'core/categories/monthly_summary_service.dart';
 import 'core/summary/daily_summary_service.dart';
 import 'core/database/database_helper.dart';
+import 'core/historique/import_prompt.dart';
+import 'features/auth/providers/auth_provider.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/onboarding/catalog_sync_service.dart';
 import 'core/onboarding/onboarding_state.dart';
@@ -76,6 +78,7 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
   // ignore: cancel_subscriptions
   dynamic _syncSub;
   bool _smsListenersRegistered = false;
+  bool _importPromptAsked = false;
   bool _permanentlyDeniedDialogShown = false;
 
   @override
@@ -275,6 +278,35 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     }
   }
 
+  /// Propose l'import des anciens SMS, une seule fois par ouverture de
+  /// l'app, tant qu'il n'a pas été fait (voir [ImportPrompt]). Attend un
+  /// instant que l'écran d'accueil soit affiché.
+  Future<void> _maybeOfferHistoryImport() async {
+    if (_importPromptAsked) return;
+    _importPromptAsked = true;
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      final ask = await ImportPrompt.shouldAsk(
+          hasSmsPermission: await PermissionService.hasSmsPermissions());
+      if (!ask) {
+        // Permission pas encore accordée : on retentera au prochain
+        // déverrouillage de cette même session.
+        _importPromptAsked = false;
+        return;
+      }
+      final ctx = ref.read(routerProvider).routerDelegate.navigatorKey.currentContext;
+      if (ctx == null || !ctx.mounted) {
+        _importPromptAsked = false;
+        return;
+      }
+      final accountType = await OnboardingStatusService().getAccountType();
+      if (!ctx.mounted) return;
+      await ImportPrompt.show(ctx, isParticulier: accountType == 'particulier');
+    } catch (e) {
+      debugPrint('[MoneyTracking] Import prompt: $e');
+    }
+  }
+
   /// Explique l'usage des SMS avant le dialog système. Renvoie `true` si
   /// l'utilisateur accepte de continuer vers la demande de permission.
   Future<bool?> _showSmsPrimingDialog() async {
@@ -368,6 +400,11 @@ class _MoneyTrackingAppState extends ConsumerState<MoneyTrackingApp>
     debugPrint('[MoneyTracking] build()');
     final themeMode = ref.watch(themeModeProvider);
     final router = ref.watch(routerProvider);
+    // Une fois l'app déverrouillée (ou le PIN créé, à l'installation) :
+    // proposer de récupérer les anciens SMS si ce n'est pas encore fait.
+    ref.listen(isAuthenticatedProvider, (_, authenticated) {
+      if (authenticated) unawaited(_maybeOfferHistoryImport());
+    });
 
     return MaterialApp.router(
       title: 'MoneyTracking',

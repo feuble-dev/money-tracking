@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../import_prompt.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -164,6 +165,9 @@ class _ImportHistoriqueScreenState extends ConsumerState<ImportHistoriqueScreen>
         if (mounted) setState(() { _traites = t; _total = total; });
       },
     );
+
+    // Import terminé : l'app ne proposera plus de le faire à l'ouverture.
+    await ImportPrompt.markDone();
 
     if (mounted) {
       setState(() {
