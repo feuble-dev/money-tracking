@@ -33,7 +33,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 18,
+      version: 19,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -302,6 +302,24 @@ class DatabaseHelper {
     await _createSyncTracking(db);
     await _createCashClosings(db);
     await _createAgenceDefaults(db);
+  }
+
+  /// Vie privée (DB v19). Les versions précédentes enregistraient TOUS les
+  /// SMS reçus (messages personnels, codes de banque…) avec le statut
+  /// « ignoré ». Le pipeline ne garde plus que ceux des opérateurs
+  /// configurés ; on efface ici ceux déjà stockés qui ne correspondent à
+  /// aucun opérateur (2 = SmsStatus.ignored). Les SMS d'opérateur non
+  /// reconnus restent : ils servent au diagnostic.
+  Future<void> _purgeNonOperatorSms(Database db) async {
+    await db.execute('''
+      DELETE FROM sms_messages
+      WHERE processed = 2 AND transaction_id IS NULL AND NOT EXISTS (
+        SELECT 1 FROM operators o
+        WHERE o.sms_sender IS NOT NULL AND o.sms_sender != ''
+          AND (LOWER(sms_messages.sender) LIKE '%' || LOWER(o.sms_sender) || '%'
+               OR LOWER(o.sms_sender) LIKE '%' || LOWER(sms_messages.sender) || '%')
+      )
+    ''');
   }
 
   /// Agence des nouvelles lignes (DB v18). Aucun chemin d'insertion (SMS en
@@ -813,6 +831,9 @@ class DatabaseHelper {
     }
     if (oldVersion < 18) {
       await _createAgenceDefaults(db);
+    }
+    if (oldVersion < 19) {
+      await _purgeNonOperatorSms(db);
     }
   }
 

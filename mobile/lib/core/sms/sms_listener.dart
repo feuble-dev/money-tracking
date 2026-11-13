@@ -52,7 +52,6 @@ class SmsListenerService {
           // DÉDUPLICATION : ignorer si déjà reçu
           final hash = _smsHash(sender, body);
           if (_recentSmsHashes.contains(hash)) {
-            debugPrint('[SMS] Doublon ignoré: $sender');
             return;
           }
           _recentSmsHashes.add(hash);
@@ -60,11 +59,7 @@ class SmsListenerService {
             _recentSmsHashes.remove(_recentSmsHashes.first);
           }
 
-          debugPrint('[SMS] ╔═══ SMS REÇU ═══');
-          debugPrint('[SMS] ║ Sender: "$sender"');
-          debugPrint('[SMS] ║ Body: "${body.substring(0, body.length.clamp(0, 80))}..."');
-          debugPrint('[SMS] ╚════════════════');
-
+          // Jamais de contenu de SMS dans les journaux du téléphone.
           _ref?.read(lastSmsReceivedProvider.notifier).state =
               '$sender: ${body.substring(0, body.length.clamp(0, 50))}...';
 
