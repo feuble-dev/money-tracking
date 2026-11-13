@@ -55,6 +55,11 @@ Future<void> processIncomingSms(
   final db = await DatabaseHelper.instance.database;
   final now = receivedAt ?? DateTime.now();
 
+  // 0. Vie privée : un SMS qui ne vient pas d'un opérateur configuré
+  // (message personnel, code de banque…) n'est NI enregistré NI journalisé.
+  // L'app ne garde que ce qui sert à son usage déclaré.
+  if ((await _operatorsForSender(db, sender)).isEmpty) return;
+
   // 1+2. Enregistrer le SMS avec déduplication ATOMIQUE. Le même SMS peut
   // être livré en parallèle par deux BroadcastReceivers (EventChannel dans
   // l'isolate principal + isolate headless another_telephony), chacun avec
@@ -163,6 +168,23 @@ Future<void> _setSmsStatus(Database db, String smsId, int status,
         where: 'id = ?',
         whereArgs: [smsId]);
 
+/// Opérateurs actifs dont l'expéditeur SMS correspond à [sender] : d'abord
+/// à l'identique, sinon par inclusion (« OrangeMoney » / « Orange Money BF »).
+Future<List<Map<String, Object?>>> _operatorsForSender(
+    DatabaseExecutor db, String sender) async {
+  final s = sender.trim();
+  if (s.isEmpty) return const [];
+  final exact = await db.query('operators',
+      where: 'LOWER(sms_sender) = LOWER(?) AND is_active = 1', whereArgs: [s]);
+  if (exact.isNotEmpty) return exact;
+  return db.rawQuery('''
+    SELECT * FROM operators
+    WHERE is_active = 1 AND sms_sender IS NOT NULL AND sms_sender != ''
+      AND (LOWER(?) LIKE '%' || LOWER(sms_sender) || '%'
+           OR LOWER(sms_sender) LIKE '%' || LOWER(?) || '%')
+  ''', [s, s]);
+}
+
 /// Cœur du pipeline : SMS déjà enregistré (`processed` = en cours) →
 /// transaction. Met toujours le statut final du SMS à jour.
 Future<SmsOutcome> _processStoredSms(
@@ -176,21 +198,9 @@ Future<SmsOutcome> _processStoredSms(
 }) async {
   final now = receivedAt;
   // 3. Chercher l'opérateur par sender
-  var operators = await db.query('operators',
-    where: 'LOWER(sms_sender) = LOWER(?) AND is_active = 1',
-    whereArgs: [sender.trim()],
-  );
-  if (operators.isEmpty) {
-    operators = await db.rawQuery('''
-      SELECT * FROM operators
-      WHERE is_active = 1 AND sms_sender IS NOT NULL AND sms_sender != ''
-        AND (LOWER(?) LIKE '%' || LOWER(sms_sender) || '%'
-             OR LOWER(sms_sender) LIKE '%' || LOWER(?) || '%')
-    ''', [sender.trim(), sender.trim()]);
-  }
+  final operators = await _operatorsForSender(db, sender);
 
   if (operators.isEmpty) {
-    debugPrint('[SMS] Aucun opérateur pour: "$sender"');
     await _setSmsStatus(db, smsId, SmsStatus.ignored);
     return SmsOutcome.ignored;
   }

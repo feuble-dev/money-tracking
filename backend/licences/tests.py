@@ -341,3 +341,51 @@ class LimitationLoginTests(TestCase):
         ]
         self.assertEqual(codes[:10], [401] * 10)
         self.assertEqual(codes[-1], 429)
+
+
+class SuppressionCompteTests(Base):
+    """Suppression du compte depuis l'app (exigence Google Play)."""
+    URL = '/api/licence/compte/supprimer/'
+
+    def _corps(self, password='secret123', device_id=PATRON_DEVICE):
+        return {'telephone': PATRON_TEL, 'device_id': device_id, 'password': password}
+
+    def test_supprime_tout_et_garde_le_paiement_anonymise(self):
+        from licences.models import Agence, DemandeActivation
+        AffiliationRequest.objects.create(
+            demandeur_telephone='76000000', demandeur_device_id='d-agent',
+            patron=self.patron, agence=self.agence, statut='approuve')
+        AchatHistorique.objects.create(client=self.patron, device_id=PATRON_DEVICE)
+        payee = DemandeActivation.objects.create(
+            telephone=PATRON_TEL, device_id=PATRON_DEVICE, agence=self.agence,
+            licence=self.licence, statut='validee')
+        DemandeActivation.objects.create(
+            telephone=PATRON_TEL, device_id=PATRON_DEVICE, agence=self.agence)
+
+        r = self.patron_api.post(self.URL, self._corps(), format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(Client.objects.filter(telephone=PATRON_TEL).exists())
+        self.assertFalse(Agence.objects.exists())
+        self.assertFalse(Licence.objects.exists())
+        self.assertFalse(SyncedTransaction.objects.exists())
+        self.assertFalse(AffiliationRequest.objects.exists())
+        self.assertFalse(AchatHistorique.objects.exists())
+        self.assertFalse(AppareilAutorise.objects.filter(client__isnull=False).exists())
+        self.assertEqual(list(DemandeActivation.objects.values_list('pk', flat=True)), [payee.pk])
+        payee.refresh_from_db()
+        self.assertEqual((payee.telephone, payee.device_id, payee.agence_id), ('', '', None))
+
+    def test_mauvais_mot_de_passe_401(self):
+        r = self.patron_api.post(self.URL, self._corps(password='faux'), format='json')
+        self.assertEqual(r.status_code, 401)
+        self.assertTrue(Client.objects.filter(telephone=PATRON_TEL).exists())
+
+    def test_autre_appareil_403(self):
+        r = self.intrus_api.post(self.URL, self._corps(device_id=INTRUS_DEVICE), format='json')
+        self.assertEqual(r.status_code, 403)
+        self.assertTrue(Client.objects.filter(telephone=PATRON_TEL).exists())
+
+    def test_sans_jeton_401(self):
+        r = APIClient().post(self.URL, self._corps(), format='json')
+        self.assertEqual(r.status_code, 401)
+        self.assertTrue(Client.objects.filter(telephone=PATRON_TEL).exists())

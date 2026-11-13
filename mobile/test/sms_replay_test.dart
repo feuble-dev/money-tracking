@@ -113,4 +113,19 @@ void main() {
     await processIncomingSms(sender, body);
     expect((await txs()).length, 1);
   });
+
+  test('vie privée : un SMS hors opérateur n\'est jamais enregistré', () async {
+    await licence('2099-01-01');
+    await processIncomingSms('+22670998877', 'Salut, on se voit demain ?');
+    await processIncomingSms('MaBanque', 'Votre code de validation est 482913');
+
+    final db = await DatabaseHelper.instance.database;
+    expect(await db.query('sms_messages'), isEmpty);
+    expect(await txs(), isEmpty);
+
+    // Un SMS d'opérateur, lui, est bien traité.
+    await processIncomingSms(sender, body);
+    expect((await db.query('sms_messages')).single['sender'], sender);
+    expect((await txs()).length, 1);
+  });
 }

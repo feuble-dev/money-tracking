@@ -19,6 +19,7 @@ const columns = [
       { href: '/docs', label: 'Guide d’utilisation' },
       { href: '/docs#installation', label: 'Installation' },
       { href: '/pricing#faq', label: 'Questions fréquentes' },
+      { href: '/confidentialite', label: 'Confidentialité' },
     ],
   },
 ];

@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
-import android.util.Log
 
 /**
  * BroadcastReceiver natif pour capter les SMS entrants.
@@ -13,7 +12,6 @@ import android.util.Log
 class SmsReceiver : BroadcastReceiver() {
 
     companion object {
-        private const val TAG = "SmsReceiver"
         var onSmsReceived: ((sender: String, body: String) -> Unit)? = null
     }
 
@@ -32,8 +30,7 @@ class SmsReceiver : BroadcastReceiver() {
         }
 
         for ((sender, body) in grouped) {
-            Log.d(TAG, "SMS reçu de: $sender")
-            Log.d(TAG, "Corps: ${body.toString().take(80)}...")
+            // Ni expéditeur ni contenu dans les journaux du téléphone.
             onSmsReceived?.invoke(sender, body.toString())
         }
     }
