@@ -220,11 +220,10 @@ sans casser l'app (la détection continue, moins fiable sur ces téléphones).
 
 ## 8. Ce qui peut encore bloquer
 
-1. **Suppression de compte dans l'app.** Google exige, pour toute app où
-   l'on crée un compte, un moyen de demander la suppression **depuis l'app**
-   en plus de l'URL. Aujourd'hui seule la page web existe. À ajouter avant
-   la mise en production (un bouton « Supprimer mon compte » dans les
-   paramètres et le point d'entrée serveur correspondant).
+1. **Suppression de compte dans l'app** — faite : Paramètres → Mon compte →
+   « Supprimer mon compte ». Dans le formulaire « Sécurité des données »,
+   indiquez ce chemin et l'URL de la page web (pour ceux qui n'ont plus
+   l'app). **Le backend doit être redéployé** pour que le bouton fonctionne.
 2. **Test fermé.** Un compte développeur personnel créé après novembre 2023
    doit faire tourner un test fermé avec 12 testeurs pendant 14 jours avant
    de pouvoir publier en production.
@@ -242,4 +241,4 @@ sans casser l'app (la détection continue, moins fiable sur ces téléphones).
 - [ ] Sécurité des données remplie (§ 5)
 - [ ] Compte de démonstration créé et identifiants collés (§ 4.3)
 - [ ] Fiche : descriptions, icône 512 px, image 1024 × 500, au moins 2 captures
-- [ ] Suppression de compte dans l'app (§ 8.1)
+- [x] Suppression de compte dans l'app (§ 8.1) — backend redéployé

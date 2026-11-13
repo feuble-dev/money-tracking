@@ -124,7 +124,14 @@ const sections: Section[] = [
     body: (
       <>
         <p>
-          Pour supprimer votre compte et les données associées sur nos serveurs, écrivez-nous à{' '}
+          <strong>Depuis l’application</strong> : Paramètres → Mon compte → « Supprimer mon compte ». Le compte, ses
+          agences, ses licences, ses téléphones autorisés et les opérations synchronisées sont effacés de nos
+          serveurs immédiatement, puis toutes les données de l’application sont effacées du téléphone. Les
+          paiements de licence déjà validés sont conservés pour notre comptabilité, sans numéro ni lien avec le
+          compte.
+        </p>
+        <p>
+          Vous n’avez plus accès à l’application ? Écrivez-nous à{' '}
           <a href={`mailto:${CONTACT}?subject=Suppression%20de%20mon%20compte%20MoneyTracking`}>{CONTACT}</a> depuis
           l’adresse de votre choix, en indiquant le numéro de téléphone du compte. Nous vérifions que la demande
           vient bien du titulaire, puis supprimons le compte, ses agences, ses licences, ses téléphones autorisés et

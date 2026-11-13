@@ -11,6 +11,7 @@ import '../features/backup/screens/restore_screen.dart';
 import '../features/caisse/screens/caisse_screen.dart';
 import '../features/caisse/screens/cash_closing_screen.dart';
 import '../features/dashboard/screens/advanced_settings_screen.dart';
+import '../features/dashboard/screens/delete_account_screen.dart';
 import '../features/dashboard/screens/detection_help_screen.dart';
 import '../features/clients/screens/client_detail_screen.dart';
 import '../features/clients/screens/client_form_screen.dart';
@@ -187,6 +188,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/settings/avances',
         builder: (context, state) => const AdvancedSettingsScreen(),
+      ),
+      GoRoute(
+        path: '/settings/supprimer-compte',
+        builder: (context, state) => const DeleteAccountScreen(),
       ),
       GoRoute(
         path: '/settings/aide-detection',

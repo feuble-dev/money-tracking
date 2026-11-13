@@ -1078,4 +1078,10 @@ class DatabaseHelper {
     await db.close();
     _database = null;
   }
+
+  /// Ferme puis supprime le fichier de la base (suppression du compte).
+  Future<void> deleteDatabaseFile() async {
+    if (_database != null) await close();
+    await deleteDatabase(join(await getDatabasesPath(), debugDatabaseName));
+  }
 }

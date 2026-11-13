@@ -669,3 +669,36 @@ class ClePubliqueView(APIView):
     vérifier HORS LIGNE les clés `MT2-…` (voir licences/signature.py)."""
     def get(self, request):
         return Response({'algorithme': 'ed25519', 'cle': signature.cle_publique_b64()})
+
+
+class SupprimerCompteView(APIView):
+    """
+    POST /api/licence/compte/supprimer/
+    Body: { telephone, device_id, password }
+
+    Supprime le compte et tout ce qui lui appartient sur le serveur
+    (`suppression.supprimer_compte`). Réservé à un appareil du propriétaire
+    (jamais un agent affilié) ; le mot de passe est exigé quand le compte en
+    a un (comptes antérieurs à D13 : l'appareil du propriétaire suffit).
+    """
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
+    @exige_jeton
+    def post(self, request):
+        telephone = str(request.data.get('telephone', '')).strip()
+        device_id = str(request.data.get('device_id', '')).strip()
+        password = str(request.data.get('password', ''))
+
+        client = client_proprietaire(telephone, device_id)
+        if client is None:
+            return Response({'erreur': ERREUR_APPAREIL}, status=status.HTTP_403_FORBIDDEN)
+        if client.password_hash and not check_password(password, client.password_hash):
+            return Response(
+                {'erreur': 'Mot de passe incorrect', 'code': 'mot_de_passe'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        from .suppression import supprimer_compte
+        supprimer_compte(client)
+        return Response({'supprime': True})

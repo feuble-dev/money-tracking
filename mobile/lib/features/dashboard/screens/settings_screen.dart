@@ -112,6 +112,16 @@ class SettingsScreen extends ConsumerWidget {
               onTap: () => context.push('/settings/avances'),
             ),
           ]),
+
+          SettingsSection(title: 'Mon compte', children: [
+            SettingsTile(
+              icon: Icons.delete_forever_outlined,
+              title: 'Supprimer mon compte',
+              subtitle: 'Efface le compte et toutes ses données',
+              color: Theme.of(context).colorScheme.error,
+              onTap: () => context.push('/settings/supprimer-compte'),
+            ),
+          ]),
         ],
       ),
     );
